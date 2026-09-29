@@ -134,7 +134,7 @@ PERSISTENCE_WINDOW = 3
 
 
 def flag_persistent(results, min_consecutive=PERSISTENCE_WINDOW):
-    """Escalate windows that are part of a run of >= min_consecutive flags."""
+    """Count consecutive flags so alerts need sustained deviations, not one-off spikes."""
     flagged = results["anomaly"].fillna(False).astype(bool)
     run_id = (flagged != flagged.shift()).cumsum()
     run_len = flagged.groupby(run_id).cumsum()
@@ -145,6 +145,7 @@ def flag_persistent(results, min_consecutive=PERSISTENCE_WINDOW):
 
 
 def sweep_thresholds(results, benign_results, thresholds=(1.5, 2.0, 3.0, 4.0)):
+    """Flag counts at a few cutoffs, to sanity-check the 3-sigma default."""
     print(f"\n   {'Threshold':>9} {'Benign flags':>13} {'Attack flags':>13}")
     for t in thresholds:
         b = int(benign_results["anomaly_score"].gt(t).sum())
@@ -173,9 +174,9 @@ def print_summary(results, benign_results, baseline_features, evaluation_note):
         print(f"   {label:<20} {len(frame):>7} {int(frame['anomaly'].sum()):>8}"
               f" {int(frame['anomaly'].isna().sum()):>8} {peak_text:>11}")
     print("\n   Empty windows are included; unavailable scores are marked unknown.")
-    print(f"\n   Persistent flags require {PERSISTENCE_WINDOW} consecutive flagged windows:")
-    print(f"   Held-out benign: {int(benign_results['persistent_flag'].sum())}"
-          f"  |  Attack scenario: {int(results['persistent_flag'].sum())}")
+    print(f"\n   Requiring {PERSISTENCE_WINDOW} consecutive flagged windows")
+    print(f"   cuts this to {int(benign_results['persistent_flag'].sum())} persistent on benign,"
+          f" {int(results['persistent_flag'].sum())} on attack")
     sweep_thresholds(results, benign_results)
     print("\n3. EXPLAIN THE ATTACK-SCENARIO ALERTS")
     flagged = results.loc[results["anomaly"].fillna(False)]
@@ -205,8 +206,8 @@ def print_summary(results, benign_results, baseline_features, evaluation_note):
             print(f"   - {FEATURE_LABELS[feature][0]}: {count} windows")
     persistent = results.loc[results["persistent_flag"]]
     if not persistent.empty:
-        print(f"\n   Persistent anomaly spans {(persistent.index.max() - persistent.index.min()) * WINDOW_SIZE:g} s")
-        print("   (this duration supports the Assessment -> Clear Issue escalation path).")
+        span = (persistent.index.max() - persistent.index.min()) * WINDOW_SIZE
+        print(f"\n   Longest sustained deviation lasts about {span:g} s.")
     print("\n   Times are relative to each evaluation segment, not a shared timeline.")
     print("   Flags indicate deviations, not confirmed attacks or detection accuracy.")
     print("\nOUTPUTS  anomaly_results.png | results.csv | benign_results.csv")
