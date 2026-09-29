@@ -1,0 +1,7 @@
+# Local CSV paths
+Threat_Detection/local_paths.py
+
+# Python
+__pycache__/
+*.pyc
+.venv/
