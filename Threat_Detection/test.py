@@ -216,7 +216,10 @@ def print_summary(results, benign_results, baseline_features, evaluation_note):
 
 def plot_results(results, benign_results, mean, std, baseline_windows, show=True):
     fig, axes = plt.subplots(2, 2, figsize=(12, 7))
-    (ax_benign, ax_attack), (_, ax_feature) = axes
+    (ax_benign, ax_attack), (ax_empty, ax_feature) = axes
+    ax_feature.remove()
+    ax_feature = fig.add_subplot(2, 1, 2)
+    ax_empty.axis("off")
 
     fig.suptitle(f"Anomaly scores per {WINDOW_SIZE:g}s window "
                  f"(baseline: {baseline_windows} benign windows, alert > {THRESHOLD:g} sigma)",
