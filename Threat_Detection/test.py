@@ -215,60 +215,37 @@ def print_summary(results, benign_results, baseline_features, evaluation_note):
 
 
 def plot_results(results, benign_results, mean, std, baseline_windows, show=True):
-    blue, red, ink = "#2563a6", "#ba3b32", "#172b42"
-    fig = plt.figure(figsize=(14, 9), facecolor="#f5f7fb")
-    grid = fig.add_gridspec(2, 2, left=0.075, right=0.97, top=0.79,
-                           bottom=0.12, hspace=0.55, wspace=0.20)
-    fig.text(0.075, 0.945, "THREAT DETECTION  /  MVP", color=blue, fontsize=11, weight="bold")
-    fig.text(0.075, 0.897, "Compare traffic. Flag deviations. Explain why.",
-             color=ink, fontsize=22, weight="bold")
-    fig.text(0.075, 0.855,
-             f"REFERENCE  {baseline_windows} benign windows     |     "
-             f"{len(mean)} features     |     {WINDOW_SIZE:g}-second windows     |     "
-             f"Alert when score > {THRESHOLD:g}", color="#536479", fontsize=11)
+    fig, axes = plt.subplots(2, 2, figsize=(12, 7))
+    (ax_benign, ax_attack), (_, ax_feature) = axes
 
-    all_scores = pd.concat([benign_results["anomaly_score"], results["anomaly_score"]])
-    finite = all_scores[np.isfinite(all_scores)]
-    ceiling = max(THRESHOLD, finite.max() if len(finite) else 0) * 1.18
-    for position, frame, title, color in [
-        (0, benign_results, "1  |  HELD-OUT BENIGN", blue),
-        (1, results, "2  |  ATTACK SCENARIO", red),
+    fig.suptitle(f"Anomaly scores per {WINDOW_SIZE:g}s window "
+                 f"(baseline: {baseline_windows} benign windows, alert > {THRESHOLD:g} sigma)",
+                 fontsize=12)
+
+    for ax, frame, title in [
+        (ax_benign, benign_results, "Held-out benign"),
+        (ax_attack, results, "Attack scenario"),
     ]:
-        ax = fig.add_subplot(grid[0, position])
         times = (frame.index - frame.index.min()) * WINDOW_SIZE
         scores = frame["anomaly_score"]
-        displayed = scores.replace(np.inf, ceiling)
+        finite = scores[np.isfinite(scores)]
+        displayed = scores.replace(np.inf, finite.max() * 1.1 if len(finite) else THRESHOLD)
         flagged = frame["anomaly"].fillna(False)
-        ax.axhspan(THRESHOLD, ceiling * 1.15, color="#fff0ed")
-        ax.plot(times, displayed, color=color, linewidth=1.8, label="Window score")
-        ax.scatter(times[flagged], displayed[flagged], color=red, s=19,
-                   zorder=3, label="Flagged window")
-        infinite = np.isinf(scores)
-        if infinite.any():
-            ax.scatter(times[infinite], displayed[infinite], marker="^", s=70,
-                       color=red, label="Infinite score (constant changed)", zorder=4)
-        unknown = scores.isna()
-        if unknown.any():
-            ax.scatter(times[unknown], [0] * int(unknown.sum()), marker="x",
-                       color="#6b7280", label="Unknown (no score)", zorder=4)
-        ax.axhline(THRESHOLD, color="#8b605a", linestyle="--", linewidth=1,
-                   label=f"Alert cutoff: {THRESHOLD:g}")
-        ax.set_title(title, loc="left", color=ink, fontsize=11, weight="bold", pad=14)
-        ax.set_title(f"{int(flagged.sum())} / {len(frame)} flagged", loc="right", fontsize=11,
-                     color=color, pad=14)
-        ax.set_ylim(-0.3, ceiling * 1.15)
-        ax.set_xlim(0, max(float(times.max()), WINDOW_SIZE))
-        ax.set_xlabel("Seconds into this evaluation segment", fontsize=10)
-        if position == 0:
-            ax.set_ylabel("Anomaly score (largest |z|)", fontsize=10)
-        ax.legend(loc="upper left", fontsize=8, frameon=False)
+        ax.plot(times, displayed, color="#1f77b4", linewidth=1.2)
+        ax.scatter(times[flagged], displayed[flagged], color="#d62728", s=15,
+                   zorder=3, label="flagged")
+        ax.axhline(THRESHOLD, color="gray", linestyle="--", linewidth=1,
+                   label=f"threshold = {THRESHOLD:g}")
+        ax.set_title(f"{title} — {int(flagged.sum())}/{len(frame)} flagged", fontsize=10)
+        ax.set_xlabel("seconds", fontsize=9)
+        ax.set_ylabel("score (max |z|)", fontsize=9)
+        ax.legend(fontsize=8)
 
-    ax = fig.add_subplot(grid[1, :])
     scored = results.loc[results["anomaly_score"].notna()]
     if scored.empty:
-        ax.text(0.5, 0.5, "No attack-scenario scores available to explain.",
-                transform=ax.transAxes, ha="center", fontsize=14, color=ink)
-        ax.set_axis_off()
+        ax_feature.text(0.5, 0.5, "no scored windows", transform=ax_feature.transAxes,
+                        ha="center", fontsize=11)
+        ax_feature.set_axis_off()
     else:
         index = scored["anomaly_score"].idxmax()
         row = scored.loc[index]
@@ -276,44 +253,20 @@ def plot_results(results, benign_results, mean, std, baseline_windows, show=True
         name, unit = FEATURE_LABELS[feature]
         times = (results.index - results.index.min()) * WINDOW_SIZE
         time = (index - results.index.min()) * WINDOW_SIZE
-        lower, upper = mean[feature] - THRESHOLD * std[feature], mean[feature] + THRESHOLD * std[feature]
-        ax.axhspan(lower, upper, color="#deebf7", label=f"Baseline mean +/- {THRESHOLD:g} std")
-        ax.axhline(mean[feature], color=blue, linestyle="--", linewidth=1.5, label="Baseline mean")
-        ax.plot(times, results[feature], color=red, linewidth=1.8, marker=".", markersize=3,
-                label="Attack-scenario measurement")
-        ax.scatter([time], [row["observed_value"]], color="#c98c14", edgecolor="white",
-                   s=130, zorder=5, label="Explained window")
-        title = "EXPLAIN THE STRONGEST FLAG" if bool(row["anomaly"]) else "EXPLAIN THE LARGEST SCORE (NO FLAGS)"
-        ax.set_title(f"3  |  {title}", loc="left", color=ink, fontsize=11, weight="bold", pad=14)
-        ax.set_ylabel(f"{name}\n({unit})", fontsize=10)
-        ax.set_xlabel("Seconds into the attack-scenario capture", fontsize=10)
-        ax.set_xlim(0, max(float(times.max()), WINDOW_SIZE))
-        ax.legend(loc="upper left", fontsize=9, frameon=False, ncol=2)
-        explanation = (f"At {time:g} s: {row['observed_value']:,.2f} {unit}\n"
-                       f"Baseline mean: {mean[feature]:,.2f} {unit}\n")
-        if std[feature] == 0:
-            explanation += ("Changed from a constant baseline" if row["observed_value"] != mean[feature]
-                            else "Matches a constant baseline")
-        else:
-            direction = "above" if row["feature_z_score"] > 0 else "below"
-            explanation += f"{abs(row['feature_z_score']):.2f} standard deviations {direction} the mean"
-        ax.text(0.985, 0.96, explanation, transform=ax.transAxes, ha="right", va="top",
-                fontsize=10, color=ink, bbox=dict(boxstyle="round,pad=0.6", facecolor="white",
-                                               edgecolor="#dce3ec", alpha=0.96))
-        ax.margins(y=0.35)
+        ax_feature.plot(times, results[feature], color="#1f77b4", linewidth=1.2,
+                        marker=".", markersize=3)
+        ax_feature.axhspan(mean[feature] - THRESHOLD * std[feature],
+                           mean[feature] + THRESHOLD * std[feature],
+                           color="#deebf7", label=f"baseline ± {THRESHOLD:g} std")
+        ax_feature.scatter([time], [row["observed_value"]], color="#d62728", s=60,
+                           zorder=5, label=f"max score ({time:g}s)")
+        ax_feature.set_title(f"{name} — attack scenario vs baseline", fontsize=10)
+        ax_feature.set_xlabel("seconds", fontsize=9)
+        ax_feature.set_ylabel(f"{name} ({unit})", fontsize=9)
+        ax_feature.legend(fontsize=8)
 
-    for ax in fig.axes:
-        ax.set_facecolor("white")
-        ax.spines[["top", "right"]].set_visible(False)
-        ax.spines[["left", "bottom"]].set_color("#cbd5e1")
-        ax.tick_params(colors="#536479", labelsize=9)
-        ax.grid(axis="y", color="#dce3ec", linewidth=0.6, alpha=0.6)
-        ax.set_axisbelow(True)
-    fig.text(0.075, 0.055, "HOW TO READ  Top: red dots mark flags. Bottom: the gold marker explains the largest score using one traffic feature.",
-             color=ink, fontsize=10)
-    fig.text(0.075, 0.025, "Each evaluation segment starts at 0 s; durations differ. Empty windows are included. Deviations are not confirmed attacks.",
-             color="#536479", fontsize=9)
-    fig.savefig("anomaly_results.png", dpi=160, facecolor=fig.get_facecolor())
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.savefig("anomaly_results.png", dpi=150)
     if show:
         plt.show()
     plt.close(fig)
