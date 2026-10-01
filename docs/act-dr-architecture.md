@@ -1,5 +1,7 @@
+![Team 1 ACT-DR architecture](act-dr-architecture.png)
+
 ```mermaid
-%%{init: {"theme": "base", "themeVariables": {"fontFamily": "-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif", "fontSize": "15px", "primaryTextColor": "#111827", "secondaryTextColor": "#111827", "tertiaryTextColor": "#111827", "lineColor": "#475569", "edgeLabelBackground": "#ffffff", "clusterBkg": "#f8fafc", "clusterBorder": "#cbd5e1"}}}%%
+%%{init: {"theme": "base", "flowchart": {"htmlLabels": false}, "themeVariables": {"fontFamily": "Helvetica, Arial", "fontSize": "15px", "primaryTextColor": "#111827", "secondaryTextColor": "#111827", "tertiaryTextColor": "#111827", "lineColor": "#475569", "edgeLabelBackground": "#ffffff", "clusterBkg": "#f8fafc", "clusterBorder": "#cbd5e1"}}}%%
 flowchart TB
 
     subgraph PIPE["Team 1 ACT-DR Pipeline"]
