@@ -14,7 +14,7 @@ flowchart TB
     end
 
     subgraph K8S["Kubernetes C2 Testbed"]
-        CP["RKE2 Control Plane"]
+        CP["K8s Control Plane"]
         W1["Worker 1 · LiDAR"]
         W2["Worker 2 · Camera"]
         W3["Worker 3 (RPi) · ROS 2"]
