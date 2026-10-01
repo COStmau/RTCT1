@@ -6,9 +6,9 @@ flowchart TB
 
     subgraph PIPE["Team 1 ACT-DR Pipeline"]
         direction LR
-        B["1. Baseline / Monitoring<br/>Expected-behavior model"]
-        DD["2. Detection &amp; Diagnosis<br/>Deviation → severity, cause"]
-        R["3. Response Agent<br/>Tiered, least-disruptive first"]
+        B["1. Baseline / Monitoring"]
+        DD["2. Detection &amp; Diagnosis"]
+        R["3. Response Agent"]
         B -->|"Baseline model"| DD
         DD -->|"Location, severity, cause"| R
     end
