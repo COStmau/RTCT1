@@ -223,7 +223,7 @@ def plot_results(results, benign_results, mean, std, baseline_windows, show=True
 
     fig.suptitle(f"Anomaly scores per {WINDOW_SIZE:g}s window "
                  f"(baseline: {baseline_windows} benign windows, alert > {THRESHOLD:g} sigma)",
-                 fontsize=12)
+                 fontsize=12, fontweight="bold")
 
     for ax, frame, title in [
         (ax_benign, benign_results, "Held-out benign"),
@@ -239,15 +239,16 @@ def plot_results(results, benign_results, mean, std, baseline_windows, show=True
                    zorder=3, label="flagged")
         ax.axhline(THRESHOLD, color="gray", linestyle="--", linewidth=1,
                    label=f"threshold = {THRESHOLD:g}")
-        ax.set_title(f"{title} — {int(flagged.sum())}/{len(frame)} flagged", fontsize=10)
-        ax.set_xlabel("seconds", fontsize=9)
-        ax.set_ylabel("score (max |z|)", fontsize=9)
-        ax.legend(fontsize=8)
+        ax.set_title(f"{title} — {int(flagged.sum())}/{len(frame)} flagged",
+                     fontsize=10, fontweight="bold")
+        ax.set_xlabel("seconds", fontsize=9, fontweight="bold")
+        ax.set_ylabel("score (max |z|)", fontsize=9, fontweight="bold")
+        ax.legend(fontsize=8, prop={"weight": "bold"})
 
     scored = results.loc[results["anomaly_score"].notna()]
     if scored.empty:
         ax_feature.text(0.5, 0.5, "no scored windows", transform=ax_feature.transAxes,
-                        ha="center", fontsize=11)
+                        ha="center", fontsize=11, fontweight="bold")
         ax_feature.set_axis_off()
     else:
         index = scored["anomaly_score"].idxmax()
@@ -263,10 +264,15 @@ def plot_results(results, benign_results, mean, std, baseline_windows, show=True
                            color="#deebf7", label=f"baseline ± {THRESHOLD:g} std")
         ax_feature.scatter([time], [row["observed_value"]], color="#d62728", s=60,
                            zorder=5, label=f"max score ({time:g}s)")
-        ax_feature.set_title(f"{name} — attack scenario vs baseline", fontsize=10)
-        ax_feature.set_xlabel("seconds", fontsize=9)
-        ax_feature.set_ylabel(f"{name} ({unit})", fontsize=9)
-        ax_feature.legend(fontsize=8)
+        ax_feature.set_title(f"{name} — attack scenario vs baseline",
+                             fontsize=10, fontweight="bold")
+        ax_feature.set_xlabel("seconds", fontsize=9, fontweight="bold")
+        ax_feature.set_ylabel(f"{name} ({unit})", fontsize=9, fontweight="bold")
+        ax_feature.legend(fontsize=8, prop={"weight": "bold"})
+
+    for ax in fig.axes:
+        for label in ax.get_xticklabels() + ax.get_yticklabels():
+            label.set_fontweight("bold")
 
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     fig.savefig("anomaly_results.png", dpi=150)
