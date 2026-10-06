@@ -11,9 +11,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-import manifest
-from test import (BENIGN_TRAIN_FRACTION, PERSISTENCE_WINDOW, THRESHOLD, WINDOW_SIZE,
-                  build_baseline, detect_anomalies, flag_persistent, make_features)
+import dataset
+from detector import (BENIGN_TRAIN_FRACTION, PERSISTENCE_WINDOW, THRESHOLD, WINDOW_SIZE,
+                      build_baseline, detect_anomalies, flag_persistent, flag_stats,
+                      make_features, output_path)
 
 FEATURE_GROUPS = {
     "volume": ["packet_count", "total_bytes"],
@@ -21,7 +22,7 @@ FEATURE_GROUPS = {
     "diversity": ["unique_dst_ips", "unique_dst_ports"],
     "flags": ["syn_count", "rst_count"],
 }
-MANIFEST_FILE = "capture_manifest.csv"
+MANIFEST_FILE = "capture_manifest.csv"   # inside outputs/
 
 
 def split_reference(features, train_fraction=BENIGN_TRAIN_FRACTION):
@@ -37,8 +38,8 @@ def load_features(described):
     features, notes = {}, {}
     for _, capture in described.iterrows():
         key = (capture["scenario"], capture["label"], capture["method"])
-        packets = manifest.load_capture(capture["path"])
-        issues = manifest.timebase_issues(packets)
+        packets = dataset.load_capture(capture["path"])
+        issues = dataset.timebase_issues(packets)
         if not issues["usable"]:
             features[key] = None
             notes[key] = (f"excluded: {issues['bad_ts']} bad timestamps of {issues['rows']} rows,"
@@ -48,28 +49,28 @@ def load_features(described):
     return features, notes
 
 
-def summary_row(scenario, label, method, group, results):
-    """One row of evidence for one scored capture."""
+def summary_row(scenario, label, method, group, results=None, note=""):
+    """One row of evidence for one capture.
+
+    results=None records a capture that could not be scored: the row stays, with the
+    reason in `note`, so nothing disappears quietly.
+    """
+    if results is None:
+        return {"group": group, "scenario": scenario, "label": label, "method": method,
+                "windows": 0, "flagged": 0, "persistent": 0, "flagged_fraction": np.nan,
+                "peak_score": np.nan, "top_feature": "", "note": note}
     flagged = results["anomaly"].fillna(False).astype(bool)
     finite = results["anomaly_score"].replace([np.inf, -np.inf], np.nan).dropna()
+    stats = flag_stats(flagged)
     return {
         "group": group, "scenario": scenario, "label": label, "method": method,
-        "windows": int(len(results)),
-        "flagged": int(flagged.sum()),
-        "persistent": int(results["persistent_flag"].sum()),
-        "flagged_fraction": round(float(flagged.mean()), 4) if len(results) else np.nan,
+        "windows": stats["windows"], "flagged": stats["flagged"], "persistent": stats["persistent"],
+        "flagged_fraction": stats["flagged_fraction"],
         "peak_score": round(float(finite.max()), 3) if len(finite) else np.nan,
         "top_feature": (results.loc[flagged, "top_feature"].value_counts().idxmax()
                         if flagged.any() else ""),
-        "note": "",
+        "note": note,
     }
-
-
-def blocked_row(scenario, label, method, group, note):
-    """A capture that could not be scored, kept visible with its reason."""
-    return {"group": group, "scenario": scenario, "label": label, "method": method,
-            "windows": 0, "flagged": 0, "persistent": 0, "flagged_fraction": np.nan,
-            "peak_score": np.nan, "top_feature": "", "note": note}
 
 
 def run_sweep(described, groups=(None,)):
@@ -86,16 +87,16 @@ def run_sweep(described, groups=(None,)):
                 targets = [("benign", None)] + [(s, features.get((s, label, method))) for s in attacks]
                 if reference_features is None:
                     for scenario, _ in targets:
-                        rows.append(blocked_row(scenario, label, method, group_name,
-                                                notes.get((scenario, label, method), "no capture")))
+                        rows.append(summary_row(scenario, label, method, group_name,
+                                                note=notes.get((scenario, label, method), "no capture")))
                     continue
                 reference, holdout = split_reference(reference_features)
                 mean, std = build_baseline(reference if columns is None else reference[columns])
                 for scenario, target in targets:
                     target = holdout if scenario == "benign" else target
                     if target is None:
-                        rows.append(blocked_row(scenario, label, method, group_name,
-                                                notes.get((scenario, label, method), "no capture")))
+                        rows.append(summary_row(scenario, label, method, group_name,
+                                                note=notes.get((scenario, label, method), "no capture")))
                         continue
                     scored = target if columns is None else target[columns]
                     results = flag_persistent(detect_anomalies(scored, mean, std))
@@ -122,8 +123,9 @@ def _fraction(view, label, scenario):
     return float(row["flagged_fraction"].iloc[0]) if len(row) else np.nan
 
 
-def plot_summary(results, path="sweep_summary.png"):
+def plot_summary(results, path=None):
     """Grouped bars: flagged fraction per capture label, one series per scenario."""
+    path = output_path(path or "sweep_summary.png")
     view = results[results["group"].eq("all") & results["method"].eq("tcp")]
     scenarios = ["benign"] + [s for s in view["scenario"].unique() if s != "benign"]
     labels = sorted(view["label"].unique())
@@ -156,14 +158,16 @@ def main():
     parser.add_argument("--manifest", default=MANIFEST_FILE)
     args = parser.parse_args()
 
-    described = (pd.read_csv(args.manifest) if Path(args.manifest).exists()
-                 else manifest.describe_captures(manifest.build_manifest(local_paths.KUBEDATA_ROOT)))
+    manifest_file = output_path(args.manifest)
+    described = (pd.read_csv(manifest_file) if manifest_file.exists()
+                 else dataset.describe_captures(dataset.build_manifest(local_paths.KUBEDATA_ROOT)))
     groups = [None] if args.groups == "all" else args.groups.split(",")
     results = run_sweep(described, groups=groups)
-    results.to_csv(args.out, index=False)
+    out_file = output_path(args.out)
+    results.to_csv(out_file, index=False)
     print_matrix(results)
     excluded = results[results["note"].str.startswith("excluded", na=False)]
-    print(f"\nWrote {args.out} | rows={len(results)}"
+    print(f"\nWrote {out_file} | rows={len(results)}"
           f" | excluded captures={excluded['label'].nunique()}")
     print(f"Times are per capture; windows are {WINDOW_SIZE:g}s. Flags are deviations, not confirmed attacks.")
     if len(groups) == 1 and groups[0] is None:
