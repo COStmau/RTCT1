@@ -1,4 +1,5 @@
 """Run from this folder with: python -m unittest -v test_mvp"""
+import importlib.util
 import unittest
 
 import numpy as np
@@ -201,6 +202,21 @@ class SweepChecks(unittest.TestCase):
         attack = results[results["scenario"].eq("nginx attack")].iloc[0]
         self.assertIn("excluded", attack["note"])
         self.assertEqual(int(attack["windows"]), 0)
+
+
+class IsolationChecks(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec("sklearn"), "scikit-learn not installed")
+    def test_isolation_forest_flags_a_shifted_rate_and_spares_held_out_benign(self):
+        import iforest_compare
+        train = pd.DataFrame({"packet_count": [10, 11, 9, 10, 12, 10, 11, 9, 10, 10, 11, 12]})
+        holdout = pd.DataFrame({"packet_count": [10, 11, 9, 10, 12, 11, 10, 9]})
+        shifted = pd.DataFrame({"packet_count": [900, 950, 1000, 920, 880, 970, 910, 990, 930]})
+        model = iforest_compare.fit_isolation(train)
+        cutoff = iforest_compare.isolation_cutoff(model, holdout)
+        shifted_flags = iforest_compare.isolation_flags(model, shifted, cutoff)
+        benign_flags = iforest_compare.isolation_flags(model, holdout, cutoff)
+        self.assertGreater(int(shifted_flags.sum()), len(shifted) // 2)
+        self.assertLessEqual(int(benign_flags.sum()), 1)
 
 
 if __name__ == "__main__":
