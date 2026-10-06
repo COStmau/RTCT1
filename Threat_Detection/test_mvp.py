@@ -4,6 +4,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
+import manifest
 from test import build_baseline, detect_anomalies, flag_persistent, make_features, split_benign, sweep_thresholds
 
 
@@ -100,6 +101,60 @@ class DetectorChecks(unittest.TestCase):
             detect_anomalies(pd.DataFrame({"x": [1]}), pd.Series({"y": 1}), pd.Series({"y": 1}))
         with self.assertRaisesRegex(ValueError, "finite"):
             detect_anomalies(pd.DataFrame({"x": [1]}), pd.Series({"x": 1}), pd.Series({"x": np.nan}))
+
+
+class ManifestChecks(unittest.TestCase):
+    def test_parse_capture_keeps_label_and_method(self):
+        self.assertEqual(manifest.parse_capture("pod-nginx-tcp.csv"), ("pod-nginx", "tcp"))
+        self.assertEqual(manifest.parse_capture("/x/y/pod-robot-controller-ptcp.csv"),
+                         ("pod-robot-controller", "ptcp"))
+        with self.assertRaises(ValueError):
+            manifest.parse_capture("router-any.csv")
+
+    def test_level_comes_from_the_label_prefix(self):
+        self.assertEqual(manifest.level_from_label("pod-lidar"), "pod")
+        self.assertEqual(manifest.level_from_label("node-gchild9"), "node")
+        self.assertEqual(manifest.level_from_label("router-flannel"), "router")
+        with self.assertRaises(ValueError):
+            manifest.level_from_label("child4")
+
+    def _tree(self):
+        import tempfile
+        from pathlib import Path
+        root = Path(tempfile.mkdtemp())
+        for scenario, folder in [("benign", "csv files/tcp/pod level"),
+                                 ("injection attack", "csv files")]:
+            target = root / scenario / folder
+            target.mkdir(parents=True)
+            (target / "pod-nginx-tcp.csv").write_text(
+                "ts,iat,frame_len,dst_ip,dst_port,tcp_syn,tcp_rst\n"
+                + "\n".join(f"{10.0 + i},0.1,100,::1,8080,0,0" for i in range(30)) + "\n")
+        (root / "benign" / "csv files" / "ptcp" / "router level").mkdir(parents=True)
+        (root / "benign" / "csv files" / "ptcp" / "router level" / "router-any-ptcp.csv").write_text(
+            "ts,iat,frame_len,dst_ip,dst_port,tcp_syn,tcp_rst\n"
+            + "\n".join(f"{10.0 + i},0.1,100,::1,8080,0,0" for i in range(10)) + "\n")
+        return root
+
+    def test_manifest_finds_both_tree_layouts(self):
+        frame = manifest.build_manifest(self._tree())
+        self.assertEqual(len(frame), 3)
+        self.assertEqual(frame["scenario"].tolist(), ["benign", "benign", "injection attack"])
+        self.assertEqual(set(frame["level"]), {"pod", "router"})
+        self.assertEqual(set(frame["method"]), {"tcp", "ptcp"})
+
+    def test_describe_captures_counts_packets_and_flags_bad_timebase(self):
+        root = self._tree()
+        bad = root / "injection attack" / "csv files" / "pod-nginx-tcp.csv"
+        bad.write_text("ts,iat,frame_len,dst_ip,dst_port,tcp_syn,tcp_rst\n"
+                       + "\n".join("0.0,0.1,100,::1,8080,0,0" for _ in range(12)) + "\n")
+        described = manifest.describe_captures(manifest.build_manifest(root))
+        broken = described[described["scenario"].eq("injection attack")].iloc[0]
+        self.assertEqual(int(broken["rows"]), 12)
+        self.assertEqual(int(broken["bad_ts"]), 12)
+        self.assertFalse(bool(broken["usable"]))
+        whole = described[described["label"].eq("pod-nginx")].iloc[0]
+        self.assertEqual(int(whole["rows"]), 30)
+        self.assertTrue(bool(whole["usable"]))
 
 
 if __name__ == "__main__":
