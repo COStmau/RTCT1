@@ -12,16 +12,18 @@ Written 2026-10-06 for the TA checkpoint and the Friday feature-selection meetin
 
 ```bash
 cd /Users/cos/Documents/school/ECEN403/RTCT1/Threat_Detection
-.venv/bin/python -m unittest -v test_mvp                         # 17 tests
-.venv/bin/python sweep.py                                        # capture_manifest dependency, sweep_results.csv, sweep_summary.png
+.venv/bin/python -m unittest -v tests                            # 18 tests
+.venv/bin/python detector.py --no-show                           # results.csv, benign_results.csv, anomaly_results.png
+.venv/bin/python sweep.py                                        # capture_manifest.csv, sweep_results.csv, sweep_summary.png
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags --out ablation_results.csv
-.venv/bin/python iforest_compare.py                              # detector_comparison.csv + detector_comparison_nu<nu>.png
-.venv/bin/python test.py --no-show                               # the original single-pair run, still unchanged
+.venv/bin/python compare.py                                      # detector_comparison.csv + detector_comparison_nu<nu>.png
+
+Every generated file lands in `outputs/` (see README.md for the file map).
 ```
 
 The sweep reads 88 CSVs / ~53 MB and finishes in about 8 seconds.
 
-## Capture inventory (`capture_manifest.csv`)
+## Capture inventory (`outputs/capture_manifest.csv`)
 
 88 captures = 4 scenarios × 11 labels × 2 capture methods. Levels: 20 pod, 16 node, 8 router per method.
 All 88 parsed; 1 unusable (above). Capture spans are 42–69 s for every usable capture, i.e. roughly 42–69
@@ -63,7 +65,7 @@ Three things fall out of this table:
 Top features in flagged attack windows: `total_bytes` 9 strata, `unique_dst_ips` 7, `mean_packet_size` 5,
 `packet_count` 5, `rst_count` 2, `unique_dst_ports` 2, `mean_iat` 1.
 
-## Feature-group ablation (`ablation_results.csv`, 352 rows)
+## Feature-group ablation (`outputs/ablation_results.csv`, 352 rows)
 
 Mean flagged fraction over the 22 strata, by feature group:
 
@@ -81,7 +83,7 @@ false-alarm (0.02) and barely detect anything either. On the clean case the grou
 `nginx attack` at `pod-nginx` (tcp), `size_timing` flags 0.77 of windows, `volume` 0.43, `diversity` 0.08,
 `flags` 0.00.
 
-## Detector comparison (`detector_comparison.csv`, 261 rows; chart `detector_comparison_nu0.1.png`)
+## Detector comparison (`outputs/detector_comparison.csv`, 261 rows; chart `outputs/detector_comparison_nu0.1.png`)
 
 Same windows, same matched benign reference, same 70/30 split, and all three detectors followed by the same
 3-window persistence rule. The forest and the SVM take their cutoff from the 5th percentile of held-out benign
@@ -104,7 +106,7 @@ nginx 0.26 against 0.12) and ties it on lidar. The z-score still finds the most 
 a 30% false-alarm fraction, so it is not the same comparison: matching the z-score threshold to a 5% budget and
 re-running is the next measurement, not a claim. Nothing here yet justifies replacing the transparent detector,
 and nothing here yet justifies claiming a learned model is needed. All three are charted in
-`detector_comparison_nu0.1.png`, written by the same command. The chart name carries the SVM `nu` for that run
+`outputs/detector_comparison_nu0.1.png`, written by the same command. The chart name carries the SVM `nu` for that run
 (`nu=0.10` in this run), so two settings cannot overwrite each other's chart; at nu 0.05 and 0.10 the measured
 numbers above differ by one window in one stratum, so the tables hold for both.
 

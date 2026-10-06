@@ -14,7 +14,7 @@ files turned out to be damaged, and the run flags it rather than quietly working
 it."
 
 **2. Point at the screen, step 5 (about 45 seconds).**
-"[run: `.venv/bin/python ta_walkthrough.py` — scroll to step 5.] Each second of traffic
+"[run: `.venv/bin/python walkthrough.py` — scroll to step 5.] Each second of traffic
 is compared against what normal looks like, and that normal is learned only from normal
 traffic. The last thirty percent of the normal recording is held back, so the detector is
 never graded on the seconds it learned from. Of the normal seconds it had never seen,
