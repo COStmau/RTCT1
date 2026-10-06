@@ -12,10 +12,10 @@ Written 2026-10-06 for the TA checkpoint and the Friday feature-selection meetin
 
 ```bash
 cd /Users/cos/Documents/school/ECEN403/RTCT1/Threat_Detection
-.venv/bin/python -m unittest -v test_mvp                         # 15 tests
+.venv/bin/python -m unittest -v test_mvp                         # 17 tests
 .venv/bin/python sweep.py                                        # capture_manifest dependency, sweep_results.csv, sweep_summary.png
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags --out ablation_results.csv
-.venv/bin/python iforest_compare.py                              # detector_comparison.csv
+.venv/bin/python iforest_compare.py                              # detector_comparison.csv + detector_comparison.png
 .venv/bin/python test.py --no-show                               # the original single-pair run, still unchanged
 ```
 
@@ -81,26 +81,30 @@ false-alarm (0.02) and barely detect anything either. On the clean case the grou
 `nginx attack` at `pod-nginx` (tcp), `size_timing` flags 0.77 of windows, `volume` 0.43, `diversity` 0.08,
 `flags` 0.00.
 
-## Detector comparison (`detector_comparison.csv`, 174 rows)
+## Detector comparison (`detector_comparison.csv`, 261 rows; chart `detector_comparison.png`)
 
-Same windows, same matched benign reference, same 70/30 split, both detectors followed by the same 3-window
-persistence rule. The forest's cutoff is the 5th percentile of held-out benign scores, so its benign fraction is
-5% by construction.
+Same windows, same matched benign reference, same 70/30 split, and all three detectors followed by the same
+3-window persistence rule. The forest and the SVM take their cutoff from the 5th percentile of held-out benign
+scores, so their benign column is 5% by construction and only their detection columns are comparable.
 
 ```
 detector             benign  injection  lidar  nginx     (flagged fraction)
 z_score                0.30       0.56   0.29   0.41
+one_class_svm          0.05       0.44   0.18   0.26
 isolation_forest       0.05       0.30   0.18   0.12
 
 detector             benign  injection  lidar  nginx     (persistent fraction)
 z_score                0.19       0.35   0.18   0.23
+one_class_svm          0.00       0.23   0.11   0.18
 isolation_forest       0.00       0.16   0.13   0.03
 ```
 
-This is not yet an apples-to-apples comparison: the z-score detector is running at a 30% false-alarm fraction
-and still finds more than the forest at 5%. The fair version is to set the 3σ threshold so its benign fraction
-matches 5% and compare again, which is the next measurement, not a claim. What it does already show is that the
-transparent detector is competitive on this data, so there is no case yet for replacing it.
+At the same 5% budget the SVM finds more than the forest on two of three scenarios (injection 0.44 against 0.30,
+nginx 0.26 against 0.12) and ties it on lidar. The z-score still finds the most of the three, but it is running at
+a 30% false-alarm fraction, so it is not the same comparison: matching the z-score threshold to a 5% budget and
+re-running is the next measurement, not a claim. Nothing here yet justifies replacing the transparent detector,
+and nothing here yet justifies claiming a learned model is needed. All three are charted in
+`detector_comparison.png`, written by the same command.
 
 ## Sample sizes and what I am not claiming
 
@@ -109,6 +113,10 @@ transparent detector is competitive on this data, so there is no case yet for re
   validated rates.
 - Four strata have under 10 windows and their rows are noise: `injection attack` ptcp `node-child2` (3 windows),
   `node-child1` (6), `pod-nginx` (7), and tcp `pod-nginx` (9).
+- Both learned detectors are calibrated to a 5% held-out benign budget by construction, so their benign column
+  is not evidence of anything; only the detection columns at that budget are comparable.
+- Both learned detectors drop windows where `mean_packet_size`/`mean_iat` are undefined (empty seconds) while the
+  z-score keeps them as `insufficient_data`, so the three are close to, but not exactly, the same window set.
 - I am not claiming: generalization from 60-second captures; a calibrated false-alarm rate; that a flag is an
   attack; network-origin attribution from resource metrics; or any live connection to Subsystem 1's baseline or
   Subsystem 3's response. Nothing here is wired to S1 or S3.
