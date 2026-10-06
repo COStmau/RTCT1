@@ -93,7 +93,7 @@ one_class_svm,nginx attack,node-child1,ptcp,69,20,0.2899,5,0.0725
 one_class_svm,benign,node-child1,tcp,19,1,0.0526,0,0.0
 one_class_svm,injection attack,node-child1,tcp,11,7,0.6364,3,0.2727
 one_class_svm,lidar attack,node-child1,tcp,64,46,0.7188,40,0.625
-one_class_svm,nginx attack,node-child1,tcp,72,11,0.1528,0,0.0
+one_class_svm,nginx attack,node-child1,tcp,72,12,0.1667,0,0.0
 one_class_svm,benign,node-child2,ptcp,19,1,0.0526,0,0.0
 one_class_svm,injection attack,node-child2,ptcp,3,1,0.3333,0,0.0
 one_class_svm,lidar attack,node-child2,ptcp,61,2,0.0328,0,0.0
