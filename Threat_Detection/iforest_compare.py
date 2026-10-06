@@ -1,4 +1,4 @@
-"""Compare the transparent z-score detector with an Isolation Forest on the same windows.
+"""
 
 Both detectors see the same windows, the same matched benign reference and the same
 split. The forest is fit on benign training windows only; its alert cutoff comes from
@@ -32,7 +32,7 @@ def fit_isolation(train, columns=None, seed=RANDOM_STATE):
     return model
 
 
-SVM_NU = 0.05
+SVM_NU = 0.10
 
 
 def fit_one_class_svm(train, columns=None, nu=SVM_NU):
@@ -120,8 +120,14 @@ def compare_detectors(described):
 def print_summary(comparison):
     """One block per detector: held-out benign false alarms, then detection per scenario."""
 
-def plot_comparison(comparison, path="detector_comparison.png"):
+def comparison_chart_name(nu=SVM_NU):
+    """Chart file name for one run, carrying the SVM nu so two nu settings never overwrite each other."""
+    return f"detector_comparison_nu{nu:g}.png"
+
+
+def plot_comparison(comparison, path=None):
     """Two panels: flagged fraction and sustained fraction, one bar series per detector."""
+    path = path or comparison_chart_name()
     detectors = sorted(comparison["detector"].unique())
     scenarios = ["benign"] + sorted(s for s in comparison["scenario"].unique() if s != "benign")
     positions = np.arange(len(scenarios))
@@ -152,7 +158,7 @@ def plot_comparison(comparison, path="detector_comparison.png"):
     print(f"\nWrote {path}")
     print(f"\n{comparison['detector'].nunique()} detectors | {THRESHOLD:g} sigma z-score alert"
           f" | forest and SVM cutoffs = {BENIGN_QUANTILE:.0%} of held-out benign scores"
-          f" | {PERSISTENCE_WINDOW}-window persistence")
+          f" | SVM nu={SVM_NU:g} | {PERSISTENCE_WINDOW}-window persistence")
     for detector, view in comparison.groupby("detector"):
         benign = view[view["scenario"].eq("benign")]["flagged_fraction"].mean()
         print(f"\n{detector}: held-out benign flagged fraction {benign:.2f}")

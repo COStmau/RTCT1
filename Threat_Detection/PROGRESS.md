@@ -15,7 +15,7 @@ cd /Users/cos/Documents/school/ECEN403/RTCT1/Threat_Detection
 .venv/bin/python -m unittest -v test_mvp                         # 17 tests
 .venv/bin/python sweep.py                                        # capture_manifest dependency, sweep_results.csv, sweep_summary.png
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags --out ablation_results.csv
-.venv/bin/python iforest_compare.py                              # detector_comparison.csv + detector_comparison.png
+.venv/bin/python iforest_compare.py                              # detector_comparison.csv + detector_comparison_nu<nu>.png
 .venv/bin/python test.py --no-show                               # the original single-pair run, still unchanged
 ```
 
@@ -81,7 +81,7 @@ false-alarm (0.02) and barely detect anything either. On the clean case the grou
 `nginx attack` at `pod-nginx` (tcp), `size_timing` flags 0.77 of windows, `volume` 0.43, `diversity` 0.08,
 `flags` 0.00.
 
-## Detector comparison (`detector_comparison.csv`, 261 rows; chart `detector_comparison.png`)
+## Detector comparison (`detector_comparison.csv`, 261 rows; chart `detector_comparison_nu0.1.png`)
 
 Same windows, same matched benign reference, same 70/30 split, and all three detectors followed by the same
 3-window persistence rule. The forest and the SVM take their cutoff from the 5th percentile of held-out benign
@@ -104,7 +104,9 @@ nginx 0.26 against 0.12) and ties it on lidar. The z-score still finds the most 
 a 30% false-alarm fraction, so it is not the same comparison: matching the z-score threshold to a 5% budget and
 re-running is the next measurement, not a claim. Nothing here yet justifies replacing the transparent detector,
 and nothing here yet justifies claiming a learned model is needed. All three are charted in
-`detector_comparison.png`, written by the same command.
+`detector_comparison_nu0.1.png`, written by the same command. The chart name carries the SVM `nu` for that run
+(`nu=0.10` in this run), so two settings cannot overwrite each other's chart; at nu 0.05 and 0.10 the measured
+numbers above differ by one window in one stratum, so the tables hold for both.
 
 ## Sample sizes and what I am not claiming
 

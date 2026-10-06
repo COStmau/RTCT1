@@ -238,6 +238,19 @@ class DetectorComparisonChecks(unittest.TestCase):
                         "every detector must see the same windows")
         self.assertEqual(len(comparison), 2 * 3)  # two scenarios x three detectors
 
+    def test_default_chart_name_carries_the_svm_nu(self):
+        import inspect
+        import iforest_compare
+        # the run's nu is the module constant, and the fitter's default must be the same value
+        self.assertEqual(iforest_compare.SVM_NU,
+                         inspect.signature(iforest_compare.fit_one_class_svm).parameters["nu"].default)
+        self.assertEqual(iforest_compare.comparison_chart_name(),
+                         f"detector_comparison_nu{iforest_compare.SVM_NU:g}.png")
+        self.assertRegex(iforest_compare.comparison_chart_name(), r"^detector_comparison_nu[\d.]+\.png$")
+        self.assertEqual(iforest_compare.comparison_chart_name(nu=0.1), "detector_comparison_nu0.1.png")
+        self.assertNotEqual(iforest_compare.comparison_chart_name(nu=0.05),
+                            iforest_compare.comparison_chart_name(nu=0.10))
+
     @unittest.skipUnless(importlib.util.find_spec("sklearn"), "scikit-learn not installed")
     def test_plot_comparison_writes_a_chart(self):
         import tempfile
