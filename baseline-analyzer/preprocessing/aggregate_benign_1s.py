@@ -181,6 +181,58 @@ def aggregate_benign(input_file, output_file, window_seconds=1):
     if "proto" in df.columns:
         output["unique_protocols"] = grouped["proto"].nunique()
 
+
+
+
+        # ---------------------------------------------------------
+        # Add missing time windows
+        # ---------------------------------------------------------
+
+        start_window = int(output.index.min())
+        end_window = int(output.index.max())
+
+        all_windows = np.arange(
+            start_window,
+            end_window + window_seconds,
+            window_seconds
+        )
+
+        # Add rows for windows where no packets were recorded
+        output = output.reindex(all_windows)
+        output.index.name = "window_start"
+
+        # These features should genuinely be zero when there is no traffic
+        zero_when_idle = [
+            "packet_count",
+            "packets_per_second",
+            "total_bytes",
+            "bytes_per_second",
+
+            "tcp_syn_per_second",
+            "tcp_fin_per_second",
+            "tcp_rst_per_second",
+            "tcp_psh_per_second",
+            "tcp_ack_per_second",
+
+            "dns_packets_per_second",
+            "http_packets_per_second",
+            "https_packets_per_second",
+
+            "tcp_payload_bytes_per_second",
+            "udp_bytes_per_second",
+
+            "unique_src_ips",
+            "unique_dst_ips",
+            "unique_src_ports",
+            "unique_dst_ports",
+            "unique_protocols",
+        ]
+
+        for column in zero_when_idle:
+            if column in output.columns:
+                output[column] = output[column].fillna(0)
+
+                
     # Restore timestamp as a normal column.
     output = output.reset_index()
 
