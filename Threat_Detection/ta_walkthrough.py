@@ -122,11 +122,20 @@ def main():
     except FileNotFoundError:
         print("   sweep_results.csv is missing. Run: .venv/bin/python sweep.py")
         return
-    attacks = sweep[(sweep["method"] == "tcp") & (sweep["scenario"] != "benign")]
-    attacks = attacks[attacks["windows"] > 10].sort_values("flagged_fraction", ascending=False)
-    print("\n   Easiest places to see an attack (fraction of seconds flagged):")
+    attacks = sweep[(sweep["method"] == "tcp") & (sweep["scenario"] != "benign")
+                    & (sweep["windows"] > 10)].copy()
+    reference = (sweep[(sweep["method"] == "tcp") & (sweep["scenario"] == "benign")]
+                 [["label", "flagged_fraction"]]
+                 .rename(columns={"flagged_fraction": "normal_flag_rate"}))
+    attacks = attacks.merge(reference, on="label", how="left")
+    attacks["above_normal"] = attacks["flagged_fraction"] - attacks["normal_flag_rate"]
+    attacks = attacks.sort_values("above_normal", ascending=False)
+    print("\n   Where an attack stands out beyond that place's own normal noise.")
+    print("   Second number is how often the same recording point flags on normal")
+    print("   traffic with these settings, so a big first number alone proves nothing:")
     for _, row in attacks.head(6).iterrows():
-        print(f"      {row['label']:<22} {row['scenario']:<17} {row['flagged_fraction']:.2f}")
+        print(f"      {row['label']:<22} {row['scenario']:<17} {row['flagged_fraction']:.2f} flagged,"
+              f" normal {row['normal_flag_rate']:.2f}")
     benign = sweep[(sweep["method"] == "tcp") & (sweep["scenario"] == "benign")]
     print(f"\n   But the same settings also flag {benign['flagged_fraction'].mean():.0%} of unseen")
     print("   NORMAL seconds on average, so the alarm level still needs calibrating per")
