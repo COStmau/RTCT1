@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 import manifest
+import sweep
 from test import build_baseline, detect_anomalies, flag_persistent, make_features, split_benign, sweep_thresholds
 
 
@@ -155,6 +156,51 @@ class ManifestChecks(unittest.TestCase):
         whole = described[described["label"].eq("pod-nginx")].iloc[0]
         self.assertEqual(int(whole["rows"]), 30)
         self.assertTrue(bool(whole["usable"]))
+
+
+class SweepChecks(unittest.TestCase):
+    def _stratum(self, label="pod-nginx", method="tcp", active=40, windows=60):
+        """One fake stratum: benign reference plus a target whose traffic is `active` packets/s."""
+        import tempfile
+        from pathlib import Path
+        root = Path(tempfile.mkdtemp())
+        rows = []
+        for name, rate in [("benign", 5), ("nginx attack", active)]:
+            target = root / name / "csv files" / method / "pod level"
+            target.mkdir(parents=True)
+            path = target / f"{label}-{method}.csv"
+            lines = ["ts,iat,frame_len,dst_ip,dst_port,tcp_syn,tcp_rst"]
+            for window in range(windows):
+                for index in range(rate):
+                    stamp = 1.0 + window + index / rate  # exactly `rate` packets inside each 1 s bin
+                    lines.append(f"{stamp:.4f},{1.0 / rate:.4f},100,::1,8080,0,0")
+            path.write_text("\n".join(lines) + "\n")
+            rows.append((name, path))
+        return rows
+
+    def test_run_sweep_flags_a_matched_view_and_spares_benign(self):
+        rows = self._stratum(active=40)
+        described = pd.DataFrame([{"scenario": name, "level": "pod", "label": "pod-nginx",
+                                   "method": "tcp", "path": str(path)} for name, path in rows])
+        results = sweep.run_sweep(described)
+        attack = results[results["scenario"].eq("nginx attack")].iloc[0]
+        benign = results[results["scenario"].eq("benign")].iloc[0]
+        self.assertGreater(attack["flagged_fraction"], 0.9)   # 8x rate shift, same view
+        self.assertLess(benign["flagged_fraction"], 0.2)       # holdout windows, matched reference
+        self.assertEqual(attack["group"], "all")
+        self.assertEqual(int(attack["windows"]), 60)
+
+    def test_unusable_capture_is_recorded_not_dropped(self):
+        rows = self._stratum(active=5)
+        described = pd.DataFrame([{"scenario": name, "level": "pod", "label": "pod-nginx",
+                                   "method": "tcp", "path": str(path)} for name, path in rows])
+        bad_path = rows[1][1]
+        bad_path.write_text("ts,iat,frame_len,dst_ip,dst_port,tcp_syn,tcp_rst\n"
+                            + "\n".join("0.0,0.05,100,::1,8080,0,0" for _ in range(60)) + "\n")
+        results = sweep.run_sweep(described)
+        attack = results[results["scenario"].eq("nginx attack")].iloc[0]
+        self.assertIn("excluded", attack["note"])
+        self.assertEqual(int(attack["windows"]), 0)
 
 
 if __name__ == "__main__":
