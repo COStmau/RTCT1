@@ -133,13 +133,22 @@ def detect_anomalies(features, mean, std):
 PERSISTENCE_WINDOW = 3
 
 
+def persistent_mask(flags, min_consecutive=PERSISTENCE_WINDOW):
+    """Mark flags that sit inside a run of >= min_consecutive consecutive flags.
+
+    Uses a running count within each run: transform("sum") would return the whole
+    run length for every row and escalate the first windows of a run too.
+    """
+    flags = pd.Series(flags).fillna(False).astype(bool)
+    run_id = (flags != flags.shift()).cumsum()
+    run_len = flags.groupby(run_id).cumsum()
+    return flags & run_len.ge(min_consecutive)
+
+
 def flag_persistent(results, min_consecutive=PERSISTENCE_WINDOW):
     """Count consecutive flags so alerts need sustained deviations, not one-off spikes."""
-    flagged = results["anomaly"].fillna(False).astype(bool)
-    run_id = (flagged != flagged.shift()).cumsum()
-    run_len = flagged.groupby(run_id).cumsum()
     results = results.copy()
-    results["persistent_flag"] = flagged & run_len.ge(min_consecutive)
+    results["persistent_flag"] = persistent_mask(results["anomaly"], min_consecutive)
     results["status"] = results["status"].mask(results["persistent_flag"], "persistent_anomaly")
     return results
 
