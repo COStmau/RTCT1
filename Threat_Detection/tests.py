@@ -209,6 +209,19 @@ class SweepChecks(unittest.TestCase):
         self.assertEqual(int(attack["windows"]), 0)
 
 
+class FeatureValueChecks(unittest.TestCase):
+    def test_auc_and_budget_detection_behave(self):
+        import feature_value
+        self.assertEqual(feature_value.separation_auc([1, 2, 3], [4, 5, 6]), 1.0)
+        self.assertEqual(feature_value.separation_auc([4, 5, 6], [1, 2, 3]), 0.0)
+        self.assertEqual(feature_value.separation_auc([1, 2, 3], [1, 2, 3]), 0.5)
+        self.assertTrue(pd.isna(feature_value.separation_auc([1], [2])))
+        # a clean shift is flagged; attack windows that look benign are not
+        benign = list(range(100, 120))
+        self.assertGreater(feature_value.detection_at_budget(benign, benign, [1000, 1050, 1100]), 0.9)
+        self.assertLess(feature_value.detection_at_budget(benign, benign, benign[8:11]), 0.5)
+
+
 class DetectorComparisonChecks(unittest.TestCase):
     def setUp(self):
         self.train = pd.DataFrame({"packet_count": [10, 11, 9, 10, 12, 10, 11, 9, 10, 10, 11, 12]})

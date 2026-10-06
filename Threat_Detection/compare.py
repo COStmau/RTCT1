@@ -1,6 +1,5 @@
 """
-
-Both detectors see the same windows, the same matched benign reference and the same
+detectors see the same windows, the same matched benign reference and the same
 split. The forest is fit on benign training windows only; its alert cutoff comes from
 held-out benign windows, so the benign false-alarm fraction is set by construction
 rather than by looking at the attacks.

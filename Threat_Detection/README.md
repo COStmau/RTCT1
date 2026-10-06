@@ -11,6 +11,7 @@ the project virtualenv: `.venv/bin/python`.
 | `dataset.py` | Reads the dataset: names every capture (scenario / level / label / method), loads the packet columns, checks the timebase. |
 | `sweep.py` | Runs the detector over every capture against its own matched benign reference. `--groups` runs the feature-group ablation. |
 | `compare.py` | Same windows, three detectors: z-score, Isolation Forest, One-Class SVM. |
+| `feature_value.py` | Per-feature value: threshold-free separation (auc) and detection at a 5% benign budget, per scenario and capture stratum. |
 | `walkthrough.py` | Plain-language walk-through of one result, for showing someone. |
 | `tests.py` | All unit tests. |
 | `local_paths.py` | Your local dataset paths. Not committed; copy `local_paths.example.py` and fill it in. |
@@ -27,6 +28,7 @@ cd /Users/cos/Documents/school/ECEN403/RTCT1/Threat_Detection
 .venv/bin/python sweep.py                             # all 88 captures, about 8 seconds
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags --out ablation_results.csv
 .venv/bin/python compare.py                           # z-score vs Isolation Forest vs One-Class SVM
+.venv/bin/python feature_value.py                     # what each single feature is worth
 .venv/bin/python walkthrough.py                       # the demo walk-through
 ```
 

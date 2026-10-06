@@ -17,6 +17,7 @@ cd /Users/cos/Documents/school/ECEN403/RTCT1/Threat_Detection
 .venv/bin/python sweep.py                                        # capture_manifest.csv, sweep_results.csv, sweep_summary.png
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags --out ablation_results.csv
 .venv/bin/python compare.py                                      # detector_comparison.csv + detector_comparison_nu<nu>.png
+.venv/bin/python feature_value.py                                # feature_value.csv: per-feature value
 
 Every generated file lands in `outputs/` (see README.md for the file map).
 ```
@@ -64,6 +65,74 @@ Three things fall out of this table:
 
 Top features in flagged attack windows: `total_bytes` 9 strata, `unique_dst_ips` 7, `mean_packet_size` 5,
 `packet_count` 5, `rst_count` 2, `unique_dst_ports` 2, `mean_iat` 1.
+
+## Feature set: a starting point, not a requirement
+
+The eight features are not a requirement and are not fixed. They were written into the first
+version of the detector (`detector.py`), and they trace to two places only:
+
+- Team CONOPS §3.3 names the *categories* to observe: "source and destination addresses,
+  communication protocols, port usage, packet sizes, and connection frequency", plus traffic
+  volume. It then delegates the choice: "the specific traffic characteristics used in the
+  analysis will depend on what is available from the existing telemetry collection system".
+- The dataset's packet columns decide the concrete form. Everything in `FEATURE_LABELS` is an
+  aggregate over `ts`, `iat`, `frame_len`, `dst_ip`, `dst_port`, `tcp_syn`, `tcp_rst`.
+
+So 5 of 8 map to a CONOPS category, 3 (`mean_iat`, `syn_count`, `rst_count`) come from columns
+rather than the CONOPS list, and one named CONOPS category has no feature at all: communication
+protocols (`proto`, `is_dns`, `is_http`, `is_https` are unused), and the source side of addresses
+and ports is unused. No commit, plan or measurement picked these; until 2026-10-06 nothing had
+ever been measured about them. Treat them as a candidate pool.
+
+## Feature value, measured (`outputs/feature_value.csv`, 520 rows)
+
+Two numbers per feature, per scenario, averaged over the 22 capture strata, each against that
+stratum's matched benign reference. `auc` is threshold-free ranking value; `detection at 5%` is
+how many attack windows one feature alone flags when its cutoff is set to flag 5% of held-out
+benign windows.
+
+```
+Separation (auc)                  injection  lidar  nginx   strata above 0.75 (of 22)
+packet_count                          0.624  0.383  0.578      12
+total_bytes                           0.612  0.419  0.594      13
+mean_packet_size                      0.553  0.461  0.625      17
+unique_dst_ips                        0.525  0.650  0.791      22
+rst_count                             0.494  0.614  0.542       6
+unique_dst_ports                      0.468  0.640  0.649      10
+syn_count                             0.445  0.553  0.513       0
+mean_iat                              0.291  0.545  0.383      11
+
+Attack windows flagged at a 5% benign budget
+rst_count                             0.579  0.408  0.513
+mean_packet_size                      0.417  0.228  0.336
+packet_count                          0.417  0.254  0.264
+total_bytes                           0.361  0.188  0.290
+unique_dst_ports                      0.305  0.164  0.247
+mean_iat                              0.304  0.158  0.050
+unique_dst_ips                        0.293  0.131  0.459
+syn_count                             0.186  0.203  0.198
+```
+
+What the two tables say together:
+
+1. `rst_count` is the worst ranker (auc 0.49-0.61) and the best single trigger in all three
+   scenarios. RST is almost always zero, so any RST is far from normal - useful as a cheap
+   precision trigger, useless as a graded score. Ranking value and trigger value are not the
+   same measurement.
+2. `syn_count` is worthless on both: auc at chance (0 of 22 strata above 0.75) and the lowest
+   detection. First drop candidate.
+3. `mean_iat` ranks below chance on injection (0.291) and flags 0.05 of nginx attack windows.
+   Second drop candidate, though it is mid-pack on lidar (0.545).
+4. `unique_dst_ips` is the strongest ranker on nginx attack (0.791, above 0.75 in all 22 strata)
+   and still weak as a lone trigger (0.459); `mean_packet_size` is the most consistent single
+   feature across all three scenarios (auc 0.46-0.63, above 0.75 in 17 strata).
+5. `packet_count` and `total_bytes` move together (0.62/0.61 on injection) and both invert on
+   lidar (0.383/0.419) - a redundancy worth measuring before keeping both.
+
+A feature earns its place if it clears the 5% budget test on at least one scenario, survives the
+redundancy check (it is not just a weaker copy of a sibling), and can actually be obtained at a
+vantage worth instrumenting. Nothing is dropped until those three are measured; the 8-feature
+set stays in the code as the current candidate pool.
 
 ## Feature-group ablation (`outputs/ablation_results.csv`, 352 rows)
 
