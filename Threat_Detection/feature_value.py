@@ -78,13 +78,13 @@ def rank_features(described):
 
 def print_ranking(values):
     """Mean value per feature and scenario, plus how many strata back it."""
-    for column, title in [("auc", f"Separation (AUC > {STRONG_AUC} counts as strong)"),
+    for column, title in [("auc", f"Separation (rows counting stratum x scenario, {STRONG_AUC} counts as strong)"),
                           ("detection_at_5pct", f"Attack windows flagged at a {BUDGET:.0%} benign budget")]:
         table = values.pivot_table(index="feature", columns="scenario", values=column, aggfunc="mean")
         if column == "auc":
-            table["strata_auc>%.2f" % STRONG_AUC] = (values.assign(hit=values["auc"].ge(STRONG_AUC))
-                                                    .groupby("feature")["hit"].sum())
-        print(f"\n{title}" + (" (of 22 capture strata per scenario)" if column == "auc" else ""))
+            table["rows_auc>%.2f" % STRONG_AUC] = (values.assign(hit=values["auc"].ge(STRONG_AUC))
+                                                  .groupby("feature")["hit"].sum())
+        print(f"\n{title}" + (" (65 rows per feature: 22 + 22 + 21 capture strata)" if column == "auc" else ""))
         print(table.sort_values(by=table.columns[0], ascending=False).round(3).to_string())
     benign = values["benign_windows"].mean()
     print(f"\nBudget check: each stratum has {benign:.0f} held-out benign windows on average,")
