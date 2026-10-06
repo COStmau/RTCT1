@@ -159,30 +159,35 @@ class ManifestChecks(unittest.TestCase):
         self.assertTrue(bool(whole["usable"]))
 
 
-class SweepChecks(unittest.TestCase):
-    def _stratum(self, label="pod-nginx", method="tcp", active=40, windows=60):
-        """One fake stratum: benign reference plus a target whose traffic is `active` packets/s."""
-        import tempfile
-        from pathlib import Path
-        root = Path(tempfile.mkdtemp())
-        rows = []
-        for name, rate in [("benign", 5), ("nginx attack", active)]:
-            target = root / name / "csv files" / method / "pod level"
-            target.mkdir(parents=True)
-            path = target / f"{label}-{method}.csv"
-            lines = ["ts,iat,frame_len,dst_ip,dst_port,tcp_syn,tcp_rst"]
-            for window in range(windows):
-                for index in range(rate):
-                    stamp = 1.0 + window + index / rate  # exactly `rate` packets inside each 1 s bin
-                    lines.append(f"{stamp:.4f},{1.0 / rate:.4f},100,::1,8080,0,0")
-            path.write_text("\n".join(lines) + "\n")
-            rows.append((name, path))
-        return rows
+def fake_stratum(label="pod-nginx", method="tcp", active=40, windows=60):
+    """One fake stratum: benign reference plus a target whose traffic is `active` packets/s."""
+    import tempfile
+    from pathlib import Path
+    root = Path(tempfile.mkdtemp())
+    rows = []
+    for name, rate in [("benign", 5), ("nginx attack", active)]:
+        target = root / name / "csv files" / method / "pod level"
+        target.mkdir(parents=True)
+        path = target / f"{label}-{method}.csv"
+        lines = ["ts,iat,frame_len,dst_ip,dst_port,tcp_syn,tcp_rst"]
+        for window in range(windows):
+            for index in range(rate):
+                stamp = 1.0 + window + index / rate  # exactly `rate` packets inside each 1 s bin
+                lines.append(f"{stamp:.4f},{1.0 / rate:.4f},100,::1,8080,0,0")
+        path.write_text("\n".join(lines) + "\n")
+        rows.append((name, path))
+    return rows
 
+
+def described_from(rows):
+    """The capture-manifest-shaped frame the comparison modules expect."""
+    return pd.DataFrame([{"scenario": name, "level": "pod", "label": "pod-nginx",
+                          "method": "tcp", "path": str(path)} for name, path in rows])
+
+
+class SweepChecks(unittest.TestCase):
     def test_run_sweep_flags_a_matched_view_and_spares_benign(self):
-        rows = self._stratum(active=40)
-        described = pd.DataFrame([{"scenario": name, "level": "pod", "label": "pod-nginx",
-                                   "method": "tcp", "path": str(path)} for name, path in rows])
+        described = described_from(fake_stratum(active=40))
         results = sweep.run_sweep(described)
         attack = results[results["scenario"].eq("nginx attack")].iloc[0]
         benign = results[results["scenario"].eq("benign")].iloc[0]
@@ -192,9 +197,8 @@ class SweepChecks(unittest.TestCase):
         self.assertEqual(int(attack["windows"]), 60)
 
     def test_unusable_capture_is_recorded_not_dropped(self):
-        rows = self._stratum(active=5)
-        described = pd.DataFrame([{"scenario": name, "level": "pod", "label": "pod-nginx",
-                                   "method": "tcp", "path": str(path)} for name, path in rows])
+        rows = fake_stratum(active=5)
+        described = described_from(rows)
         bad_path = rows[1][1]
         bad_path.write_text("ts,iat,frame_len,dst_ip,dst_port,tcp_syn,tcp_rst\n"
                             + "\n".join("0.0,0.05,100,::1,8080,0,0" for _ in range(60)) + "\n")
@@ -204,19 +208,49 @@ class SweepChecks(unittest.TestCase):
         self.assertEqual(int(attack["windows"]), 0)
 
 
-class IsolationChecks(unittest.TestCase):
+class DetectorComparisonChecks(unittest.TestCase):
+    def setUp(self):
+        self.train = pd.DataFrame({"packet_count": [10, 11, 9, 10, 12, 10, 11, 9, 10, 10, 11, 12]})
+        self.holdout = pd.DataFrame({"packet_count": [10, 11, 9, 10, 12, 11, 10, 9]})
+        self.shifted = pd.DataFrame({"packet_count": [900, 950, 1000, 920, 880, 970, 910, 990, 930]})
+
     @unittest.skipUnless(importlib.util.find_spec("sklearn"), "scikit-learn not installed")
-    def test_isolation_forest_flags_a_shifted_rate_and_spares_held_out_benign(self):
+    def test_every_learned_detector_separates_a_shifted_rate_from_held_out_benign(self):
         import iforest_compare
-        train = pd.DataFrame({"packet_count": [10, 11, 9, 10, 12, 10, 11, 9, 10, 10, 11, 12]})
-        holdout = pd.DataFrame({"packet_count": [10, 11, 9, 10, 12, 11, 10, 9]})
-        shifted = pd.DataFrame({"packet_count": [900, 950, 1000, 920, 880, 970, 910, 990, 930]})
-        model = iforest_compare.fit_isolation(train)
-        cutoff = iforest_compare.isolation_cutoff(model, holdout)
-        shifted_flags = iforest_compare.isolation_flags(model, shifted, cutoff)
-        benign_flags = iforest_compare.isolation_flags(model, holdout, cutoff)
-        self.assertGreater(int(shifted_flags.sum()), len(shifted) // 2)
-        self.assertLessEqual(int(benign_flags.sum()), 1)
+        self.assertEqual(set(iforest_compare.LEARNED_FITTERS), {"isolation_forest", "one_class_svm"})
+        for name, fitter in iforest_compare.LEARNED_FITTERS.items():
+            with self.subTest(detector=name):
+                model = fitter(self.train)
+                cutoff = iforest_compare.detector_cutoff(model, self.holdout)
+                flagged = iforest_compare.detector_flags(model, self.shifted, cutoff)
+                benign = iforest_compare.detector_flags(model, self.holdout, cutoff)
+                self.assertGreater(int(flagged.sum()), len(self.shifted) // 2)
+                self.assertLessEqual(int(benign.sum()), 1)
+
+    @unittest.skipUnless(importlib.util.find_spec("sklearn"), "scikit-learn not installed")
+    def test_compare_detectors_scores_every_detector_on_the_same_windows(self):
+        import iforest_compare
+        comparison = iforest_compare.compare_detectors(described_from(fake_stratum(active=40)))
+        self.assertEqual(set(comparison["detector"]),
+                         {"z_score", "isolation_forest", "one_class_svm"})
+        per_detector = comparison.groupby("detector")["windows"].apply(list)
+        self.assertTrue(all(values == per_detector.iloc[0] for values in per_detector),
+                        "every detector must see the same windows")
+        self.assertEqual(len(comparison), 2 * 3)  # two scenarios x three detectors
+
+    @unittest.skipUnless(importlib.util.find_spec("sklearn"), "scikit-learn not installed")
+    def test_plot_comparison_writes_a_chart(self):
+        import tempfile
+        from pathlib import Path
+        import iforest_compare
+        rows = [{"detector": detector, "scenario": scenario, "label": "pod-nginx", "method": "tcp",
+                 "windows": 10, "flagged": 3, "flagged_fraction": 0.3,
+                 "persistent": 1, "persistent_fraction": 0.1}
+                for scenario in ["benign", "nginx attack"]
+                for detector in ["z_score", "isolation_forest", "one_class_svm"]]
+        path = Path(tempfile.mkdtemp()) / "chart.png"
+        iforest_compare.plot_comparison(pd.DataFrame(rows), path=str(path))
+        self.assertGreater(path.stat().st_size, 1000)
 
 
 if __name__ == "__main__":
