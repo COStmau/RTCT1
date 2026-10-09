@@ -109,6 +109,88 @@ class DetectorChecks(unittest.TestCase):
             detect_anomalies(pd.DataFrame({"x": [1]}), pd.Series({"x": 1}), pd.Series({"x": np.nan}))
 
 
+class DetectorProtocolChecks(unittest.TestCase):
+    def setUp(self):
+        self.train = pd.DataFrame({"packet_count": [10, 11, 9, 10, 12, 10, 11, 9, 10, 10, 11, 12]})
+        self.holdout = pd.DataFrame({"packet_count": [10, 11, 9, 10, 12, 11, 10, 9]})
+        self.shifted = pd.DataFrame({"packet_count": [900, 950, 1000, 920, 880, 970, 910, 990, 930]})
+
+    def test_registry_covers_the_three_documented_detectors(self):
+        import detectors
+        self.assertEqual(set(detectors.REGISTRY), {"z_score", "isolation_forest", "one_class_svm"})
+
+    def test_every_detector_flags_a_shift_and_spares_held_out_benign(self):
+        import detectors
+        for name, make in detectors.REGISTRY.items():
+            with self.subTest(detector=name):
+                det = make().fit(self.train).calibrate(self.holdout)
+                flagged = det.flag(self.shifted)
+                benign = det.flag(self.holdout)
+                self.assertGreater(int(flagged.sum()), len(self.shifted) // 2)
+                self.assertLessEqual(int(benign.sum()), max(1, len(self.holdout) // 8))
+
+    def test_higher_score_means_more_anomalous_for_every_detector(self):
+        """sklearn's decision_function runs the other way; the protocol must normalize it."""
+        import detectors
+        for name, make in detectors.REGISTRY.items():
+            with self.subTest(detector=name):
+                det = make().fit(self.train).calibrate(self.holdout)
+                self.assertGreater(float(det.score(self.shifted).mean()),
+                                   float(det.score(self.holdout).mean()),
+                                   f"{name} scores the attack lower than benign")
+
+    def test_flagging_before_calibration_is_an_error(self):
+        import detectors
+        for name, make in detectors.REGISTRY.items():
+            with self.subTest(detector=name):
+                with self.assertRaises(RuntimeError):
+                    make().fit(self.train).flag(self.shifted)
+
+    def test_only_z_score_explains_which_feature_moved(self):
+        import detectors
+        self.assertIsNotNone(detectors.REGISTRY["z_score"]().explain)
+        for name in ("isolation_forest", "one_class_svm"):
+            with self.subTest(detector=name):
+                self.assertIsNone(detectors.REGISTRY[name]().explain,
+                                  "learned detectors report no attribution by design")
+
+    def test_z_score_explain_names_the_feature_and_its_baseline(self):
+        import detectors
+        # Real baseline spread, so the strongest feature is decided by magnitude, not by a
+        # zero-std tie (a zero std scores infinite the moment its feature moves at all).
+        reference = pd.DataFrame({"packet_count": [9, 10, 11, 10],
+                                  "total_bytes": [90, 100, 110, 100]})
+        windows = pd.DataFrame({"packet_count": [10, 10], "total_bytes": [100, 400]})
+        det = detectors.build("z_score").fit(reference)
+        det.calibrate(reference)
+        evidence = det.explain(windows)
+        # Window 1 moves total_bytes far and packet_count not at all -> total_bytes is named.
+        # Window 0 changes neither feature, so every z is 0 and idxmax reports the first
+        # column; that is the documented tie-break, not a detection decision.
+        self.assertEqual(evidence["top_feature"].tolist(), ["packet_count", "total_bytes"])
+        # expected_mean/std follow the feature named for THAT window, not one fixed feature.
+        self.assertEqual(evidence["expected_mean"].tolist(), [10.0, 100.0])
+        self.assertEqual(evidence["observed_value"].tolist(), [10, 400])
+        self.assertAlmostEqual(float(evidence["feature_z_score"].iloc[0]), 0.0)
+
+    def test_persistence_needs_consecutive_flags(self):
+        """A run of L flags marks its last L-1: the first flag of a run is not yet an alert."""
+        import detectors
+        flags = pd.Series([False, True, True, True, True, False])
+        self.assertEqual(detectors.persistent_mask(flags).tolist(),
+                         [False, False, False, True, True, False])
+        # a run of exactly PERSISTENCE_WINDOW marks only its final window
+        exact = pd.Series([True, True, True, False, False])
+        self.assertEqual(detectors.persistent_mask(exact).tolist(),
+                         [False, False, True, False, False])
+
+    def test_insufficient_baseline_is_rejected(self):
+        import detectors
+        for name in detectors.REGISTRY:
+            with self.subTest(detector=name), self.assertRaisesRegex(ValueError, "Insufficient"):
+                detectors.build(name).fit(pd.DataFrame({"packet_count": [1]}))
+
+
 class FeatureLayerChecks(unittest.TestCase):
     def test_features_module_does_not_import_local_paths(self):
         script = "import sys; sys.path.insert(0, '.'); import features; print(features.WINDOW_SIZE)"
