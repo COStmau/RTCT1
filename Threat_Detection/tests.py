@@ -109,6 +109,50 @@ class DetectorChecks(unittest.TestCase):
             detect_anomalies(pd.DataFrame({"x": [1]}), pd.Series({"x": 1}), pd.Series({"x": np.nan}))
 
 
+class FeatureLayerChecks(unittest.TestCase):
+    def test_features_module_does_not_import_local_paths(self):
+        script = "import sys; sys.path.insert(0, '.'); import features; print(features.WINDOW_SIZE)"
+        out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_windows_keep_empty_seconds_and_leave_averages_undefined(self):
+        import features
+        packets = pd.DataFrame({"ts": [10.0, 12.0], "frame_len": [100, 200], "iat": [0.0, 2.0],
+                                "dst_ip": ["a", "b"], "dst_port": [80, 443], "tcp_syn": [1, 0]})
+        windows = features.make_windows(packets)
+        self.assertEqual(windows.index.tolist(), [0, 1, 2])
+        self.assertEqual(windows.loc[1, "packet_count"], 0)
+        self.assertEqual(windows.loc[1, "total_bytes"], 0)
+        self.assertEqual(windows.loc[1, "syn_count"], 0)
+        self.assertTrue(pd.isna(windows.loc[1, "mean_packet_size"]))
+        self.assertTrue(pd.isna(windows.loc[1, "mean_iat"]))
+        self.assertEqual(windows.loc[0, "unique_dst_ips"], 1)
+        # tcp_rst is absent from this frame, so no rst_count column is invented.
+        self.assertNotIn("rst_count", windows.columns)
+
+    def test_flag_features_appear_when_the_columns_are_present(self):
+        import features
+        packets = pd.DataFrame({"ts": [10.0, 10.5], "frame_len": [100, 200], "iat": [0.0, 0.5],
+                                "dst_ip": ["a", "b"], "dst_port": [80, 443],
+                                "tcp_syn": [1, 0], "tcp_rst": [0, 1]})
+        windows = features.make_windows(packets)
+        self.assertEqual(windows.loc[0, "syn_count"], 1)
+        self.assertEqual(windows.loc[0, "rst_count"], 1)
+
+    def test_feature_groups_cover_every_feature_exactly_once(self):
+        import features
+        grouped = {f for members in features.FEATURE_GROUPS.values() for f in members}
+        self.assertEqual(grouped, set(features.FEATURE_LABELS))
+
+    def test_split_reference_holds_out_the_last_thirty_percent(self):
+        import features
+        windows = pd.DataFrame({"packet_count": range(100)})
+        reference, holdout = features.split_reference(windows)
+        self.assertEqual(len(reference), 70)
+        self.assertEqual(len(holdout), 30)
+        self.assertEqual(holdout.index.tolist(), list(range(70, 100)))
+
+
 class DataIoChecks(unittest.TestCase):
     def test_io_layer_does_not_need_local_paths(self):
         """data_io must import with no machine-specific path file present."""
