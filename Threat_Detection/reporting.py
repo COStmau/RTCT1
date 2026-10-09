@@ -12,9 +12,9 @@ from detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, SVM_NU, THRESHOLD, W
                        flag_stats, persistent_mask)
 from features import FEATURE_LABELS
 
-__all__ = ["flag_stats", "persistent_mask", "print_detection_summary", "threshold_table",
+__all__ = ["flag_stats", "persistent_mask", "summarize_flags", "threshold_table",
            "plot_detection", "print_matrix", "plot_matrix", "plot_comparison",
-           "print_comparison", "summarize_flags"]
+           "print_comparison"]
 
 
 # --- one capture, printed and plotted ---------------------------------------------

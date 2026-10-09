@@ -6,7 +6,7 @@ feature set, and nothing about what counts as an anomaly.
 import numpy as np
 import pandas as pd
 
-from data_io import PACKET_COLUMNS  # noqa: F401  re-exported: callers ask features for the format
+from data_io import PACKET_COLUMNS, load_capture, timebase_issues  # noqa: F401  re-exported: callers ask features for the format
 
 WINDOW_SIZE = 1.0
 
@@ -76,6 +76,28 @@ def make_windows(packets, window_size=WINDOW_SIZE):
     counts = windows.columns.difference(["mean_packet_size", "mean_iat"])
     windows[counts] = windows[counts].fillna(0)
     return windows
+
+
+def load_all_windows(manifest):
+    """Window every capture in the manifest. Key is (scenario, label, method).
+
+    An unusable capture comes back as None plus a stated reason, so nothing disappears
+    quietly: callers keep the row and print the reason. This lives here rather than in
+    data_io because it is the seam between the two -- data_io knows the CSV format, this
+    knows the window shape, and data_io must not have to know what a window is.
+    """
+    windows, notes = {}, {}
+    for _, capture in manifest.iterrows():
+        key = (capture["scenario"], capture["label"], capture["method"])
+        packets = load_capture(capture["path"])
+        issues = timebase_issues(packets)
+        if not issues["usable"]:
+            windows[key] = None
+            notes[key] = (f"excluded: {issues['bad_ts']} bad timestamps of {issues['rows']} rows,"
+                          f" span {issues['span_s']}s")
+            continue
+        windows[key] = make_windows(packets)
+    return windows, notes
 
 
 def split_reference(windows, train_fraction=BENIGN_TRAIN_FRACTION):

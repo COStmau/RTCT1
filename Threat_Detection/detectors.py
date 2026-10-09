@@ -16,6 +16,7 @@ Attribution is deliberately optional. Only the z-score can name the feature that
 learned models return None so that a comparison between them is not quietly biased toward
 the detector that explains itself.
 """
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -46,7 +47,11 @@ class Detector:
     """Base class: holds the calibrated cutoff and the shared train -> calibrate -> flag order."""
 
     name = "detector"
-    explain = None      # overridden by detectors that can attribute a flag
+
+    # Capability slot. None on detectors that cannot attribute a flag; a bound method on
+    # those that can. Checked as `detector.explain is not None`, never called on the base.
+    # Typed with ... so a bound method (self already applied) satisfies it.
+    explain: Callable[..., pd.DataFrame] | None = None
 
     def __init__(self):
         self.cutoff = None
@@ -69,6 +74,35 @@ class Detector:
     def pipeline(self, reference, held_out_benign):
         """The two steps that must happen in this order, in one call."""
         return self.fit(reference).calibrate(held_out_benign)
+
+    def annotate(self, windows):
+        """A full results table for one capture: features, score, flag, status, evidence.
+
+        The per-window result shape lives here so every script reports the same columns
+        and the same status vocabulary. An unscorable window is marked insufficient_data
+        rather than normal -- a NaN flag is deliberate, and .fillna(False) is what turns
+        it into a "not flagged" count at the call site.
+        """
+        score = self.score(windows)
+        results = windows.copy()
+        results["anomaly_score"] = score
+        results["anomaly"] = score.gt(self.cutoff).mask(score.isna())
+        results["status"] = "normal"
+        results.loc[score.gt(self.cutoff), "status"] = "anomaly"
+        results.loc[score.isna(), "status"] = "insufficient_data"
+
+        evidence = self.explain(windows) if self.explain is not None else None
+        if evidence is not None:
+            for column in evidence.columns:
+                results[column] = evidence[column]
+        else:
+            for column in ("top_feature", "observed_value", "expected_mean",
+                           "expected_std", "feature_z_score"):
+                results[column] = np.nan
+
+        results["persistent_flag"] = persistent_mask(results["anomaly"])
+        results["status"] = results["status"].mask(results["persistent_flag"], "persistent_anomaly")
+        return results
 
 
 class ZScoreDetector(Detector):
