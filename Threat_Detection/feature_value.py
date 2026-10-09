@@ -16,9 +16,9 @@ import argparse
 
 import pandas as pd
 
-import dataset
-import sweep
-from detector import OUTPUT_DIR, output_path
+import local_paths
+from data_io import load_manifest, resolve_output
+from features import load_all_windows, split_reference
 
 BUDGET = 0.05
 STRONG_AUC = 0.75
@@ -49,19 +49,19 @@ def detection_at_budget(benign_train, benign_holdout, attack, budget=BUDGET):
     return float((deviation(target) >= cutoff).mean())
 
 
-def rank_features(described):
+def rank_features(manifest):
     """One row per feature x scenario x capture stratum."""
-    features, _ = sweep.load_features(described)
-    scenarios = [s for s in sorted(described["scenario"].unique()) if s != "benign"]
+    windows, _ = load_all_windows(manifest)
+    scenarios = [s for s in sorted(manifest["scenario"].unique()) if s != "benign"]
     rows = []
-    for method in sorted(described["method"].unique()):
-        for label in sorted(described["label"].unique()):
-            reference = features.get(("benign", label, method))
+    for method in sorted(manifest["method"].unique()):
+        for label in sorted(manifest["label"].unique()):
+            reference = windows.get(("benign", label, method))
             if reference is None:
                 continue
-            train, holdout = sweep.split_reference(reference)
+            train, holdout = split_reference(reference)
             for scenario in scenarios:
-                target = features.get((scenario, label, method))
+                target = windows.get((scenario, label, method))
                 if target is None:
                     continue
                 for feature in reference.columns:
@@ -78,14 +78,21 @@ def rank_features(described):
 
 def print_ranking(values):
     """Mean value per feature and scenario, plus how many strata back it."""
-    for column, title in [("auc", f"Separation (rows counting stratum x scenario, {STRONG_AUC} counts as strong)"),
+    # Counted from the data, and labeled for what it counts: STRONG_AUC hits pooled across
+    # all scenarios, so it is NOT comparable to a single scenario's mean in the table.
+    strata = values.groupby(["label", "method"]).ngroups
+    per_feature = values.groupby("feature").size().max()
+    scenarios = values["scenario"].nunique()
+    for column, title in [("auc", f"Separation (mean per scenario; {STRONG_AUC} counts as strong)"),
                           ("detection_at_5pct", f"Attack windows flagged at a {BUDGET:.0%} benign budget")]:
         table = values.pivot_table(index="feature", columns="scenario", values=column, aggfunc="mean")
         if column == "auc":
-            table["rows_auc>%.2f" % STRONG_AUC] = (values.assign(hit=values["auc"].ge(STRONG_AUC))
-                                                  .groupby("feature")["hit"].sum())
-        print(f"\n{title}" + (" (65 rows per feature: 22 + 22 + 21 capture strata)" if column == "auc" else ""))
+            table[f"hits>={STRONG_AUC:g} (pooled)"] = (values.assign(hit=values["auc"].ge(STRONG_AUC))
+                                                      .groupby("feature")["hit"].sum())
+        print(f"\n{title}")
         print(table.sort_values(by=table.columns[0], ascending=False).round(3).to_string())
+    print(f"\nThe pooled hit count sums {scenarios} scenarios x {strata} capture strata"
+          f" = {per_feature} rows per feature, so it is not per-scenario.")
     benign = values["benign_windows"].mean()
     print(f"\nBudget check: each stratum has {benign:.0f} held-out benign windows on average,")
     print("so the 5% cutoff flags about 1 of them. Differences under 0.1 here are not measured.")
@@ -93,18 +100,16 @@ def print_ranking(values):
 
 def main():
     parser = argparse.ArgumentParser(description="Rank features by measured separation value.")
-    parser.add_argument("--manifest", default=sweep.MANIFEST_FILE)
+    parser.add_argument("--manifest", default="capture_manifest.csv")
     parser.add_argument("--out", default="feature_value.csv")
     args = parser.parse_args()
 
-    import local_paths
-    manifest_file = output_path(args.manifest)
-    described = (pd.read_csv(manifest_file) if manifest_file.exists()
-                 else dataset.describe_captures(dataset.build_manifest(local_paths.KUBEDATA_ROOT)))
-    values = rank_features(described)
-    values.to_csv(output_path(args.out), index=False)
+    manifest = load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest)
+    values = rank_features(manifest)
+    out_file = resolve_output(args.out)
+    values.to_csv(out_file, index=False)
     print_ranking(values)
-    print(f"\nWrote {output_path(args.out)} | rows={len(values)}")
+    print(f"\nWrote {out_file} | rows={len(values)}")
 
 
 if __name__ == "__main__":

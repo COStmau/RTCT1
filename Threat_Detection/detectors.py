@@ -136,6 +136,10 @@ class ZScoreDetector(Detector):
         return self
 
     def _z(self, windows):
+        if self.mean is None or self.std is None:
+            raise ValueError("Baseline statistics are unset; call fit() first.")
+        if not np.isfinite(self.mean).all() or not np.isfinite(self.std).all() or self.std.lt(0).any():
+            raise ValueError("Baseline statistics must be finite, with nonnegative deviations.")
         if set(windows.columns) != set(self.mean.index) or set(self.mean.index) != set(self.std.index):
             raise ValueError("Evaluation features must match the baseline feature names.")
         if np.isinf(windows.to_numpy()).any():
@@ -147,15 +151,34 @@ class ZScoreDetector(Detector):
         return self._z(windows).abs().max(axis=1)
 
     def explain(self, windows):
-        """Name the feature with the largest absolute z, and its observed and baseline values."""
+        """Name the feature with the largest absolute z, and its observed and baseline values.
+
+        A window where every feature is undefined has no strongest feature; it gets NA
+        rather than an arbitrary pick, which is also why idxmax is only asked of the rows
+        that have at least one usable feature.
+        """
         z = self._z(windows)
-        strongest = z.abs().idxmax(axis=1)
+        magnitudes = z.abs()
+        strongest = pd.Series(pd.NA, index=windows.index, dtype="object")
+        # idxmax only over rows with at least one usable feature: asked of an all-NA row it
+        # raises rather than answering.
+        available = magnitudes.notna().any(axis=1)
+        if available.any():
+            strongest.loc[available] = magnitudes.loc[available].idxmax(axis=1)
+
         evidence = pd.DataFrame(index=windows.index)
-        evidence["top_feature"] = strongest
-        evidence["observed_value"] = [windows.at[i, f] for i, f in strongest.items()]
-        evidence["expected_mean"] = [self.mean[f] for f in strongest]
-        evidence["expected_std"] = [self.std[f] for f in strongest]
-        evidence["feature_z_score"] = [z.at[i, f] for i, f in strongest.items()]
+        evidence["top_feature"] = strongest.astype("string")
+        named = strongest.notna()
+        evidence["observed_value"] = np.nan
+        evidence["expected_mean"] = np.nan
+        evidence["expected_std"] = np.nan
+        evidence["feature_z_score"] = np.nan
+        for feature in strongest.dropna().unique():
+            rows = named & strongest.eq(feature)
+            evidence.loc[rows, "observed_value"] = windows.loc[rows, feature]
+            evidence.loc[rows, "expected_mean"] = self.mean[feature]
+            evidence.loc[rows, "expected_std"] = self.std[feature]
+            evidence.loc[rows, "feature_z_score"] = z.loc[rows, feature]
         return evidence
 
 

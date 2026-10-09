@@ -8,10 +8,40 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-import dataset
+import data_io
 import sweep
-from detector import (build_baseline, detect_anomalies, flag_persistent, make_features,
-                      split_benign, sweep_thresholds)
+from detectors import build
+from features import make_windows, split_reference
+from reporting import threshold_table
+
+# The pre-refactor function names, mapped onto their layer homes. The old
+# DetectorChecks class pins behavior through these aliases so the assertions read the same
+# while the implementation lives in one place. New tests should import the layer directly.
+build_baseline = lambda benign: _fit_z(benign)
+detect_anomalies = lambda windows, mean, std: _score_z(windows, mean, std)
+flag_persistent = lambda results: _persist(results)
+make_features = make_windows
+split_benign = split_reference
+sweep_thresholds = threshold_table
+
+
+def _fit_z(benign):
+    """fit() and the (mean, std) the old build_baseline() returned."""
+    detector = build("z_score").fit(benign)
+    return detector.mean, detector.std
+
+
+def _score_z(windows, mean, std):
+    """score against a given (mean, std) pair, as the old detect_anomalies() did."""
+    detector = build("z_score")
+    detector.mean, detector.std = mean, std
+    detector.cutoff = detector.threshold
+    return detector.annotate(windows)
+
+
+def _persist(results):
+    """annotate() already applies persistence; this is the no-op seam for old tests."""
+    return results
 
 
 class DetectorChecks(unittest.TestCase):
@@ -269,18 +299,18 @@ class DataIoChecks(unittest.TestCase):
 
 class DatasetChecks(unittest.TestCase):
     def test_parse_capture_keeps_label_and_method(self):
-        self.assertEqual(dataset.parse_capture("pod-nginx-tcp.csv"), ("pod-nginx", "tcp"))
-        self.assertEqual(dataset.parse_capture("/x/y/pod-robot-controller-ptcp.csv"),
+        self.assertEqual(data_io.parse_capture("pod-nginx-tcp.csv"), ("pod-nginx", "tcp"))
+        self.assertEqual(data_io.parse_capture("/x/y/pod-robot-controller-ptcp.csv"),
                          ("pod-robot-controller", "ptcp"))
         with self.assertRaises(ValueError):
-            dataset.parse_capture("router-any.csv")
+            data_io.parse_capture("router-any.csv")
 
     def test_level_comes_from_the_label_prefix(self):
-        self.assertEqual(dataset.level_from_label("pod-lidar"), "pod")
-        self.assertEqual(dataset.level_from_label("node-gchild9"), "node")
-        self.assertEqual(dataset.level_from_label("router-flannel"), "router")
+        self.assertEqual(data_io.level_from_label("pod-lidar"), "pod")
+        self.assertEqual(data_io.level_from_label("node-gchild9"), "node")
+        self.assertEqual(data_io.level_from_label("router-flannel"), "router")
         with self.assertRaises(ValueError):
-            dataset.level_from_label("child4")
+            data_io.level_from_label("child4")
 
     def _tree(self):
         import tempfile
@@ -300,7 +330,7 @@ class DatasetChecks(unittest.TestCase):
         return root
 
     def test_manifest_finds_both_tree_layouts(self):
-        frame = dataset.build_manifest(self._tree())
+        frame = data_io.build_manifest(self._tree())
         self.assertEqual(len(frame), 3)
         self.assertEqual(frame["scenario"].tolist(), ["benign", "benign", "injection attack"])
         self.assertEqual(set(frame["level"]), {"pod", "router"})
@@ -311,7 +341,7 @@ class DatasetChecks(unittest.TestCase):
         bad = root / "injection attack" / "csv files" / "pod-nginx-tcp.csv"
         bad.write_text("ts,iat,frame_len,dst_ip,dst_port,tcp_syn,tcp_rst\n"
                        + "\n".join("0.0,0.1,100,::1,8080,0,0" for _ in range(12)) + "\n")
-        described = dataset.describe_captures(dataset.build_manifest(root))
+        described = data_io.describe_captures(data_io.build_manifest(root))
         broken = described[described["scenario"].eq("injection attack")].iloc[0]
         self.assertEqual(int(broken["rows"]), 12)
         self.assertEqual(int(broken["bad_ts"]), 12)
@@ -391,14 +421,14 @@ class DetectorComparisonChecks(unittest.TestCase):
 
     @unittest.skipUnless(importlib.util.find_spec("sklearn"), "scikit-learn not installed")
     def test_every_learned_detector_separates_a_shifted_rate_from_held_out_benign(self):
-        import compare
-        self.assertEqual(set(compare.LEARNED_FITTERS), {"isolation_forest", "one_class_svm"})
-        for name, fitter in compare.LEARNED_FITTERS.items():
+        import detectors
+        learned = [name for name in detectors.REGISTRY if name != "z_score"]
+        self.assertEqual(set(learned), {"isolation_forest", "one_class_svm"})
+        for name in learned:
             with self.subTest(detector=name):
-                model = fitter(self.train)
-                cutoff = compare.detector_cutoff(model, self.holdout)
-                flagged = compare.detector_flags(model, self.shifted, cutoff)
-                benign = compare.detector_flags(model, self.holdout, cutoff)
+                detector = detectors.build(name).pipeline(self.train, self.holdout)
+                flagged = detector.flag(self.shifted)
+                benign = detector.flag(self.holdout)
                 self.assertGreater(int(flagged.sum()), len(self.shifted) // 2)
                 self.assertLessEqual(int(benign.sum()), 1)
 
@@ -415,12 +445,31 @@ class DetectorComparisonChecks(unittest.TestCase):
 
     def test_chart_name_carries_the_svm_nu(self):
         import inspect
-        import compare
-        # the fitter's default nu and the chart name must both follow the one constant
-        self.assertEqual(compare.SVM_NU,
-                         inspect.signature(compare.fit_one_class_svm).parameters["nu"].default)
-        self.assertEqual(compare.CHART_NAME, f"detector_comparison_nu{compare.SVM_NU:g}.png")
-        self.assertNotEqual(compare.CHART_NAME, "detector_comparison.png")
+        import detectors
+        import data_io
+        import reporting
+        # the SVM default and the chart filename must both follow the one constant
+        self.assertEqual(detectors.SVM_NU,
+                         inspect.signature(detectors.OneClassSvmDetector).parameters["nu"].default)
+        # Let plot_comparison build its own default name, but redirect OUTPUT_DIR into a
+        # temp dir so the test cannot overwrite outputs/detector_comparison_nu0.1.png.
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            original, data_io.OUTPUT_DIR = data_io.OUTPUT_DIR, Path(folder)
+            try:
+                written = reporting.plot_comparison(self._rows())
+            finally:
+                data_io.OUTPUT_DIR = original
+            self.assertEqual(Path(written).name, f"detector_comparison_nu{detectors.SVM_NU:g}.png")
+            self.assertNotEqual(Path(written).name, "detector_comparison.png")
+
+    def _rows(self):
+        return pd.DataFrame([
+            {"detector": d, "scenario": s, "label": "pod-nginx", "method": "tcp",
+             "windows": 10, "flagged": 3, "flagged_fraction": 0.3,
+             "persistent": 1, "persistent_fraction": 0.1}
+            for d in ("z_score", "isolation_forest", "one_class_svm")
+            for s in ("benign", "nginx attack")])
 
     @unittest.skipUnless(importlib.util.find_spec("sklearn"), "scikit-learn not installed")
     def test_plot_comparison_writes_a_chart(self):
