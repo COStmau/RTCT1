@@ -1,6 +1,9 @@
 """Run from this folder with: python -m unittest -v tests"""
 import importlib.util
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -104,6 +107,38 @@ class DetectorChecks(unittest.TestCase):
             detect_anomalies(pd.DataFrame({"x": [1]}), pd.Series({"y": 1}), pd.Series({"y": 1}))
         with self.assertRaisesRegex(ValueError, "finite"):
             detect_anomalies(pd.DataFrame({"x": [1]}), pd.Series({"x": 1}), pd.Series({"x": np.nan}))
+
+
+class DataIoChecks(unittest.TestCase):
+    def test_io_layer_does_not_need_local_paths(self):
+        """data_io must import with no machine-specific path file present."""
+        script = ("import sys; sys.path.insert(0, '.');"
+                  " import data_io; print(len(data_io.PACKET_COLUMNS))")
+        out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_load_capture_normalizes_headers_and_keeps_needed_columns(self):
+        import tempfile
+        import data_io
+        path = Path(tempfile.mkdtemp()) / "pod-nginx-tcp.csv"
+        path.write_text("TS ,IAT,Frame Len,Dst IP,Dst Port,TCP SYN,TCP RST\n"
+                        "10.0,0.1,100,::1,8080,1,0\n")
+        frame = data_io.load_capture(str(path))
+        self.assertEqual(list(frame.columns), data_io.PACKET_COLUMNS)
+        self.assertEqual(int(frame.iloc[0]["tcp_syn"]), 1)
+
+    def test_load_capture_names_a_missing_column(self):
+        import tempfile
+        import data_io
+        path = Path(tempfile.mkdtemp()) / "pod-nginx-tcp.csv"
+        path.write_text("ts,iat,frame_len,dst_ip,dst_port\n10.0,0.1,100,::1,8080\n")
+        with self.assertRaisesRegex(ValueError, "Missing packet columns"):
+            data_io.load_capture(str(path))
+
+    def test_output_path_is_anchored_to_the_module_not_the_cwd(self):
+        import data_io
+        self.assertTrue(data_io.OUTPUT_DIR.is_absolute())
+        self.assertEqual(data_io.OUTPUT_DIR.parent, Path(data_io.__file__).resolve().parent)
 
 
 class DatasetChecks(unittest.TestCase):
