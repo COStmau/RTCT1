@@ -5,48 +5,18 @@ the same capture method, fitted on its first 70% of windows. The remaining 30% a
 scored too, so the false-alarm rows come from windows the baseline never saw.
 """
 import argparse
-from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-import dataset
-from detector import (BENIGN_TRAIN_FRACTION, PERSISTENCE_WINDOW, THRESHOLD, WINDOW_SIZE,
-                      build_baseline, detect_anomalies, flag_persistent, flag_stats,
-                      make_features, output_path)
+import local_paths
+from data_io import load_manifest, resolve_output
+from detectors import WINDOW_SIZE, build, flag_stats
+from features import FEATURE_GROUPS, load_all_windows, split_reference
+from reporting import plot_matrix, print_matrix
 
-FEATURE_GROUPS = {
-    "volume": ["packet_count", "total_bytes"],
-    "size_timing": ["mean_packet_size", "mean_iat"],
-    "diversity": ["unique_dst_ips", "unique_dst_ports"],
-    "flags": ["syn_count", "rst_count"],
-}
 MANIFEST_FILE = "capture_manifest.csv"   # inside outputs/
-
-
-def split_reference(features, train_fraction=BENIGN_TRAIN_FRACTION):
-    """First `train_fraction` of the benign windows fit the reference; the rest are held out."""
-    split = int(len(features) * train_fraction)
-    if split < 2 or split >= len(features):
-        raise ValueError("Insufficient benign windows for a matched reference")
-    return features.iloc[:split], features.iloc[split:]
-
-
-def load_features(described):
-    """make_features for every capture; unusable captures get None plus a stated reason."""
-    features, notes = {}, {}
-    for _, capture in described.iterrows():
-        key = (capture["scenario"], capture["label"], capture["method"])
-        packets = dataset.load_capture(capture["path"])
-        issues = dataset.timebase_issues(packets)
-        if not issues["usable"]:
-            features[key] = None
-            notes[key] = (f"excluded: {issues['bad_ts']} bad timestamps of {issues['rows']} rows,"
-                          f" span {issues['span_s']}s")
-            continue
-        features[key] = make_features(packets)
-    return features, notes
+DETECTOR = "z_score"
 
 
 def summary_row(scenario, label, method, group, results=None, note=""):
@@ -73,25 +43,28 @@ def summary_row(scenario, label, method, group, results=None, note=""):
     }
 
 
-def run_sweep(described, groups=(None,)):
+def run_sweep(manifest, groups=(None,)):
     """Score every (label, method) stratum in every scenario; `groups` selects feature subsets."""
-    features, notes = load_features(described)
-    attacks = [s for s in sorted(described["scenario"].unique()) if s != "benign"]
+    windows, notes = load_all_windows(manifest)
+    attacks = [s for s in sorted(manifest["scenario"].unique()) if s != "benign"]
     rows = []
     for group in groups:
         columns = None if group in (None, "all") else list(FEATURE_GROUPS[group])
         group_name = "all" if columns is None else group
-        for method in sorted(described["method"].unique()):
-            for label in sorted(described["label"].unique()):
-                reference_features = features.get(("benign", label, method))
-                targets = [("benign", None)] + [(s, features.get((s, label, method))) for s in attacks]
-                if reference_features is None:
+        for method in sorted(manifest["method"].unique()):
+            for label in sorted(manifest["label"].unique()):
+                reference_windows = windows.get(("benign", label, method))
+                targets = [("benign", None)] + [(s, windows.get((s, label, method))) for s in attacks]
+                if reference_windows is None:
                     for scenario, _ in targets:
                         rows.append(summary_row(scenario, label, method, group_name,
                                                 note=notes.get((scenario, label, method), "no capture")))
                     continue
-                reference, holdout = split_reference(reference_features)
-                mean, std = build_baseline(reference if columns is None else reference[columns])
+                reference, holdout = split_reference(reference_windows)
+                # For z_score, calibrate() installs the fixed 3-sigma design cutoff rather
+                # than fitting a quantile, so this is the sweep's original behavior.
+                detector = build(DETECTOR).pipeline(reference if columns is None else reference[columns],
+                                                     holdout if columns is None else holdout[columns])
                 for scenario, target in targets:
                     target = holdout if scenario == "benign" else target
                     if target is None:
@@ -99,58 +72,14 @@ def run_sweep(described, groups=(None,)):
                                                 note=notes.get((scenario, label, method), "no capture")))
                         continue
                     scored = target if columns is None else target[columns]
-                    results = flag_persistent(detect_anomalies(scored, mean, std))
-                    rows.append(summary_row(scenario, label, method, group_name, results))
+                    rows.append(summary_row(scenario, label, method, group_name,
+                                            detector.annotate(scored)))
     return (pd.DataFrame(rows)
             .sort_values(["group", "method", "label", "scenario"])
             .reset_index(drop=True))
 
 
-def print_matrix(results):
-    """One row per capture label, one column per scenario, for each group and capture method."""
-    for group in results["group"].unique():
-        for method in sorted(results["method"].unique()):
-            view = results[results["group"].eq(group) & results["method"].eq(method)]
-            table = view.pivot_table(index="label", columns="scenario", values="flagged_fraction")
-            print(f"\nFlagged fraction of windows | group={group} | method={method}"
-                  f" | {WINDOW_SIZE:g}s windows | alert > {THRESHOLD:g} sigma"
-                  f" | {PERSISTENCE_WINDOW}-window persistence")
-            print(table.to_string(float_format=lambda value: f"{value:5.2f}"))
-
-
-def _fraction(view, label, scenario):
-    row = view[view["label"].eq(label) & view["scenario"].eq(scenario)]
-    return float(row["flagged_fraction"].iloc[0]) if len(row) else np.nan
-
-
-def plot_summary(results, path=None):
-    """Grouped bars: flagged fraction per capture label, one series per scenario."""
-    path = output_path(path or "sweep_summary.png")
-    view = results[results["group"].eq("all") & results["method"].eq("tcp")]
-    scenarios = ["benign"] + [s for s in view["scenario"].unique() if s != "benign"]
-    labels = sorted(view["label"].unique())
-    positions = np.arange(len(labels))
-    width = 0.8 / len(scenarios)
-    fig, ax = plt.subplots(figsize=(12, 5))
-    for offset, scenario in enumerate(scenarios):
-        values = [_fraction(view, label, scenario) for label in labels]
-        ax.bar(positions + offset * width, values, width, label=scenario)
-    ax.set_xticks(positions + 0.4 - width / 2)
-    ax.set_xticklabels(labels, rotation=30, ha="right")
-    ax.set_ylabel("flagged fraction of windows")
-    ax.set_ylim(0, 1)
-    ax.legend(fontsize=8)
-    fig.suptitle(f"Matched benign reference per capture | {WINDOW_SIZE:g}s windows"
-                 f" | alert > {THRESHOLD:g} sigma | {PERSISTENCE_WINDOW}-window persistence"
-                 f" | tcp captures ({len(labels)} labels)", fontsize=11)
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    print(f"\nWrote {path}")
-
-
 def main():
-    import local_paths
     parser = argparse.ArgumentParser(description="Score every capture against its matched benign reference.")
     parser.add_argument("--groups", default="all",
                         help="'all', or a comma-separated subset of " + ", ".join(FEATURE_GROUPS))
@@ -158,12 +87,10 @@ def main():
     parser.add_argument("--manifest", default=MANIFEST_FILE)
     args = parser.parse_args()
 
-    manifest_file = output_path(args.manifest)
-    described = (pd.read_csv(manifest_file) if manifest_file.exists()
-                 else dataset.describe_captures(dataset.build_manifest(local_paths.KUBEDATA_ROOT)))
+    manifest = load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest)
     groups = [None] if args.groups == "all" else args.groups.split(",")
-    results = run_sweep(described, groups=groups)
-    out_file = output_path(args.out)
+    results = run_sweep(manifest, groups=groups)
+    out_file = resolve_output(args.out)
     results.to_csv(out_file, index=False)
     print_matrix(results)
     excluded = results[results["note"].str.startswith("excluded", na=False)]
@@ -171,7 +98,7 @@ def main():
           f" | excluded captures={excluded['label'].nunique()}")
     print(f"Times are per capture; windows are {WINDOW_SIZE:g}s. Flags are deviations, not confirmed attacks.")
     if len(groups) == 1 and groups[0] is None:
-        plot_summary(results)
+        print(f"\nWrote {plot_matrix(results)}")
 
 
 if __name__ == "__main__":
