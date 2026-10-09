@@ -243,8 +243,10 @@ def plot_comparison(comparison, path=None):
         ax.set_ylim(0, 1)
         ax.set_title(title)
         ax.legend(fontsize=8)
+    # Strata count from the data, not a number typed in by hand.
+    strata = comparison.groupby(["label", "method"]).ngroups
     fig.suptitle(f"Same windows and matched benign reference per capture stratum"
-                 f" | {WINDOW_SIZE:g}s windows | mean over strata\n"
+                 f" | {WINDOW_SIZE:g}s windows | mean over {strata} strata\n"
                  f"forest and SVM cutoffs = {BENIGN_QUANTILE:.0%} of held-out benign"
                  f" | z-score alert > {THRESHOLD:g} sigma"
                  f" | {PERSISTENCE_WINDOW}-window persistence", fontsize=10)
