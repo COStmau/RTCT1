@@ -297,7 +297,7 @@ class DataIoChecks(unittest.TestCase):
         self.assertEqual(data_io.OUTPUT_DIR.parent, Path(data_io.__file__).resolve().parent)
 
 
-class DatasetChecks(unittest.TestCase):
+class ManifestChecks(unittest.TestCase):
     def test_parse_capture_keeps_label_and_method(self):
         self.assertEqual(data_io.parse_capture("pod-nginx-tcp.csv"), ("pod-nginx", "tcp"))
         self.assertEqual(data_io.parse_capture("/x/y/pod-robot-controller-ptcp.csv"),

@@ -27,8 +27,12 @@ The sweep reads 88 CSVs / ~53 MB and finishes in about 8 seconds.
 ## Capture inventory (`outputs/capture_manifest.csv`)
 
 88 captures = 4 scenarios × 11 labels × 2 capture methods. Levels: 20 pod, 16 node, 8 router per method.
-All 88 parsed; 1 unusable (above). Capture spans are 42–69 s for every usable capture, i.e. roughly 42–69
-one-second windows each.
+All 88 parsed; 1 unusable (above). Capture spans are NOT uniform: benign captures run
+51.3–67.7 s, lidar attacks 53.5–68.9 s, nginx attacks 42.7–87.9 s, and injection attacks
+2.7–63.6 s. Across all 87 usable captures the span is 2.7–87.9 s. The short captures are
+injection attacks, not benign ones — so "about 15–20 held-out benign windows per stratum"
+below holds because *benign* captures are consistently ~50–68 s, not because every capture
+is.
 
 ## Sweep result: flagged fraction of windows, `group=all`, tcp captures
 
