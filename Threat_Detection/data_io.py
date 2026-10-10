@@ -13,8 +13,14 @@ from pathlib import Path
 import pandas as pd
 
 # The packet columns the feature layer reads, one row per packet. This describes the input
-# format, so it lives here rather than in a detector.
-PACKET_COLUMNS = ["ts", "iat", "frame_len", "dst_ip", "dst_port", "tcp_syn", "tcp_rst"]
+# format, so it lives here rather than in a detector. The CSVs carry 34 fields; these are
+# the ones turned into features. Order matters only for readability.
+PACKET_COLUMNS = ["ts", "iat", "frame_len", "dst_ip", "dst_port", "tcp_syn", "tcp_rst",
+                  "tcp_payload_len", "udp_length", "is_http", "is_dns", "is_https"]
+
+# The subset without which a capture cannot be windowed at all. Everything else in
+# PACKET_COLUMNS enriches the features but is not needed to produce a window.
+PACKET_REQUIRED = ["ts", "iat", "frame_len", "dst_ip", "dst_port", "tcp_syn", "tcp_rst"]
 
 # Capture names end in the method, so ptcp is tried first: "pod-nginx-ptcp.csv" also ends "-tcp.csv".
 METHODS = ("ptcp", "tcp")
@@ -51,16 +57,22 @@ def load_capture(path):
     The header is read first and normalized, so a synced capture whose columns arrive as
     'Dst IP' or 'Frame Len' works here and in the demo path alike. Only the needed columns
     are kept, so mixed-type text columns never reach the feature layer.
+
+    PACKET_REQUIRED must be present or the capture is unreadable. The optional columns are
+    read when the file has them and simply left out when it does not, so a capture without
+    payload or app-protocol fields still loads -- it just yields fewer features, which is
+    a narrower measurement rather than a wrong one.
     """
     written = list(pd.read_csv(path, nrows=0, low_memory=False).columns)
     # usecols matches the header as written, so map each needed column back to its original
     # spelling. normalize_columns edits in place, so snapshot the raw names first.
     original = dict(zip(normalize_columns(pd.DataFrame(columns=written)).columns, written))
-    missing = [column for column in PACKET_COLUMNS if column not in original]
+    missing = [column for column in PACKET_REQUIRED if column not in original]
     if missing:
         raise ValueError(f"Missing packet columns: {', '.join(missing)}")
-    frame = pd.read_csv(path, usecols=[original[c] for c in PACKET_COLUMNS], low_memory=False)
-    return normalize_columns(frame)[PACKET_COLUMNS]
+    present = [column for column in PACKET_COLUMNS if column in original]
+    frame = pd.read_csv(path, usecols=[original[c] for c in present], low_memory=False)
+    return normalize_columns(frame)[present]
 
 
 def parse_capture(path):
@@ -102,21 +114,33 @@ def build_manifest(root):
     return manifest
 
 
+SNAPLEN_CEILINGS = (65535, 65549, 65555)   # tcpdump default 65535 + eth header/FCS variants
+SNAPLEN_REPORT_AT = 0.01                   # >=1% of packets at the wall counts as truncated
+
+
 def timebase_issues(packets, gap_limit=MAX_CAPTURE_SPAN_S):
-    """Report timestamps that would corrupt 1-second binning."""
+    """Report timestamps that would corrupt 1-second binning, and snaplen saturation.
+
+    A capture truncated by the capture snaplen is still usable -- the packets are real --
+    but its size features are clipped, so the fraction at the ceiling is reported and the
+    reader decides. Silently scoring clipped lengths as if they were measured is what
+    makes a truncated vantage look like a false-alarming one.
+    """
     ts = pd.to_numeric(packets["ts"], errors="coerce")
     span = float(ts.max() - ts.min()) if len(ts) else 0.0
+    frame_len = pd.to_numeric(packets.get("frame_len", pd.Series(dtype=float)), errors="coerce")
     issues = {"rows": int(len(ts)),
               "bad_ts": int((ts.isna() | ts.le(0)).sum()),
-              "span_s": round(span, 3)}
+              "span_s": round(span, 3),
+              "at_snaplen": round(float(frame_len.isin(SNAPLEN_CEILINGS).mean()), 4) if len(frame_len) else 0.0}
     issues["usable"] = issues["bad_ts"] == 0 and 0.0 < issues["span_s"] <= gap_limit
     return issues
 
 
 def describe_captures(manifest):
-    """Add packet count, capture span and timebase usability to every manifest row."""
+    """Add packet count, capture span, timebase usability and snaplen saturation to every row."""
     described = manifest.copy()
-    for column in ("rows", "bad_ts", "span_s", "usable"):
+    for column in ("rows", "bad_ts", "span_s", "at_snaplen", "usable"):
         described[column] = pd.NA
     for index, path in described["path"].items():
         for column, value in timebase_issues(load_capture(path)).items():

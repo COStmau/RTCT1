@@ -23,10 +23,10 @@ testable on their own.
 
 | File | What it does |
 |---|---|
-| `data_io.py` | The input format and where output goes. Names every capture, reads the packet columns, checks the timebase, builds and caches the manifest, resolves `outputs/`. |
-| `features.py` | Packets → one row per second. The 8 features, the ablation groups, and the temporal train/held-out split. Stateless: no baseline, no thresholds, no detection. |
-| `detectors.py` | Every detection method behind one interface: `fit` → `calibrate` → `score` → `flag`, with optional `explain`. Add one by writing a class and adding it to `REGISTRY`. |
-| `reporting.py` | Console reports and charts. Takes results, renders them; computes no detection logic. |
+| `data_io.py` | The input format and where output goes. Names every capture, reads the packet columns, checks the timebase and snaplen saturation, builds and caches the manifest, resolves `outputs/`. |
+| `features.py` | Packets → one row per second. The 13 features, the ablation groups, and the temporal train/held-out split. Stateless: no baseline, no thresholds, no detection. |
+| `detectors.py` | Every detection method behind one interface: `fit` → `calibrate` → `score` → `flag`, with optional `explain`. The z-score baseline is median + MAD. Add one by writing a class and adding it to `REGISTRY`. |
+| `reporting.py` | Console reports, charts, and the `SHOWCASE.md` handover file. Takes results, renders them; computes no detection logic. Pins matplotlib to `Agg`, so nothing here opens a window. |
 
 **Entry points** — the experiments. Each one is now a short script that calls the layers
 above in order.
@@ -53,17 +53,23 @@ above in order.
 
 ```bash
 cd /Users/cos/Documents/school/ECEN403/RTCT1/Threat_Detection
-.venv/bin/python -m unittest -v tests                 # 36 tests
-.venv/bin/python detector.py --no-show                # one benign/attack pair
+.venv/bin/python -m unittest -v tests                 # 46 tests
+.venv/bin/python detector.py                            # one benign/attack pair
 .venv/bin/python sweep.py                             # all 88 captures, about 8 seconds
-.venv/bin/python sweep.py --groups volume,size_timing,diversity,flags --out ablation_results.csv
+.venv/bin/python sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv
 .venv/bin/python compare.py                           # z-score vs Isolation Forest vs One-Class SVM
 .venv/bin/python feature_value.py                     # what each single feature is worth
-.venv/bin/python walkthrough.py                       # the demo walk-through
+.venv/bin/python walkthrough.py                       # console walk-through + writes outputs/SHOWCASE.md
 ```
 
+`walkthrough.py` ends by writing `outputs/SHOWCASE.md`: the whole subsystem's results as one
+handover file, text plus five charts, every number derived from the CSVs above. It needs
+`ablation_results.csv`, `capture_manifest.csv` and `detector_comparison.csv` to exist first, so
+run the sweep, ablation and compare commands before it.
+
 Generated files always land in `Threat_Detection/outputs/`, whichever directory you run
-from.
+from. Delete `outputs/capture_manifest.csv` after any dataset change, or the sweep scores
+the previous inventory.
 
 ## Adding a detector
 
@@ -94,8 +100,14 @@ comparison:
   averages empty, not zero.
 - The reference is learned from benign traffic only, and the last 30% of that capture is
   never used for fitting. That part is the honest check.
+- The baseline is a median and a MAD, not a mean and a standard deviation. Six of the 22
+  benign captures contain a bulk-transfer regime change, and a mean/std summary is set by
+  those windows rather than by normal traffic. `PROGRESS.md` has the measurement.
 - A window is flagged when its score passes the cutoff, and an alert needs
   `PERSISTENCE_WINDOW` flagged windows in a row.
 - Missing or mismatched data is reported as insufficient, never as normal.
 - Learned models take their cutoff from held-out benign windows, so every detector is
   compared at the same false-alarm budget.
+- A capture truncated by the recorder's snaplen is still scored, but `at_snaplen` in the
+  manifest records the fraction of packets clipped, and those captures' length-based
+  features are not comparable to the unclipped ones.

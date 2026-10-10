@@ -1,6 +1,6 @@
 """The z-score demo: two captures in, a report and a chart out.
 
-Run it with:  .venv/bin/python detector.py --no-show
+Run it with:  .venv/bin/python detector.py
 
 This file is only an entry point. Everything it does lives in the four layers:
 
@@ -45,7 +45,7 @@ def resolve_reference(benign_windows):
     return reference, held_out, note
 
 
-def main(show_plot=True):
+def main():
     if not local_paths.BENIGN_CSV or not local_paths.ATTACK_CSV:
         raise ValueError("Set BENIGN_CSV and ATTACK_CSV in local_paths.py.")
 
@@ -60,16 +60,13 @@ def main(show_plot=True):
     benign_results.to_csv(resolve_output("benign_results.csv"))
 
     summarize_flags(results, benign_results, len(reference), note)
-    plot_detection(results, benign_results, detector.mean, detector.std,
-                   len(reference), show=show_plot)
+    plot_detection(results, benign_results, detector.mean, detector.std, len(reference))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the offline threat detection demo.")
-    parser.add_argument("--no-show", action="store_true",
-                        help="Save the chart without opening a window.")
     args = parser.parse_args()
     try:
-        main(show_plot=not args.no_show)
+        main()
     except (ValueError, OSError) as error:
         raise SystemExit(f"Unable to run detector: {error}")

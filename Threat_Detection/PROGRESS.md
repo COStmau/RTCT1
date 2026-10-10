@@ -1,94 +1,149 @@
-# Subsystem 2 status: capture sweep, feature check, detector comparison
+# Subsystem 2 status: robust baseline, snaplen audit, and what the flag fractions do and do not mean
 
-Written 2026-10-06 for the TA checkpoint and the Friday feature-selection meeting.
+Written 2026-10-09 for the TA checkpoint. Supersedes the 2026-10-06 version; the calibration
+language in that one is wrong and the headline section says why.
 
-## What changed since last week
+## Headline: the benign flag fractions are not false-alarm rates
 
-- The spike plots I showed last week were a mock-up of the shape of the deliverable, not output from the data. They are retracted.
-- Everything below comes from the four scenario folders as they are mounted (88 processed CSVs, 22 capture strata × 4 scenarios), read straight from the dataset with no hand-edited numbers.
-- One capture turned out to be unusable as stored and is quarantined instead of silently zeroed: `nginx attack/csv files/tcp/pod level/pod-robot-controller-tcp.csv` has 64,853 of its 220,456 rows with `ts = 0.0` (frames 155,604 onward). The existing 1-second binning would have tried to build ~1.77 billion windows from that file.
+Six of the 22 benign captures contain a bulk-transfer regime change partway through the
+recording. Traffic goes from a ~50 KB/s median to 200 MB/s – 1 GB/s and stays there, and at
+`router-any` the change begins at second 52 – right where the 70/30 temporal split cuts.
+
+| Benign captures | n | mean flagged fraction, held-out windows |
+|---|---|---|
+| Steady traffic | 16 | **0.31** |
+| Contains a bulk-transfer regime change | 6 | **0.93** |
+
+The 6 are `router-any`, `node-child4`, and `pod-robot-controller`, in both capture methods –
+exactly the three strata that looked worst and that I was trying to calibrate. Those fractions
+are drift detection working correctly: a baseline fitted on the first 70% of a recording
+should flag the regime that begins in the last 30%. Reading them as false alarms was a
+mistake, and so was the plan to tune a per-vantage threshold until they fell.
+
+**What to quote instead.** On the 16 steady-state benign captures the z-score flags 0.31 of
+held-out windows on average (max 0.65), and detects 0.60 on injection attack, 0.46 on lidar,
+0.66 on nginx (tcp, mean over the 8 steady strata per scenario). Report those separately and
+say which captures produced them. Do not average across the bulk-transfer captures.
+
+The feature-group ablation localises the problem exactly, and the actionable version of this
+is already measured (means over strata, benign held-out windows):
+
+```
+group          benign all 22   benign steady 8   benign bulk-transfer 3
+diversity           0.05              0.01                 0.13
+flags               0.05              0.01                 0.16
+protocol            0.10              0.07                 0.17
+size_timing         0.42              0.22                 0.93
+volume              0.35              0.14                 0.93
+```
+
+Only the two length/count-carrying groups misfire, and only where the regime changes. Every
+other group stays at or below 0.17 on every capture. So the fix is not a per-vantage cutoff —
+it is either a baseline that can absorb a regime change, or dropping the raw length and count
+features in favour of the ratios (`http_frac`, `mean_packet_size`), which are scale-free.
+
+## What changed since the 2026-10-06 version
+
+- **The z-score baseline is now median + MAD, not mean + std** (`detectors.py`,
+  `MAD_TO_SIGMA = 1.4826` so the 3-sigma cutoff keeps its meaning). A mean/std summary is set
+  by the bulk-transfer windows; median/MAD describes the dominant mode. It is more correct as a
+  baseline representation and it is what exposes the regime change above – the mean/std
+  version's inflated std (28 MB against a 50 KB median) was accidentally wide enough to span
+  both regimes, which is why it looked less alarming and was less honest. It raised the pooled
+  benign figure from 0.35 to 0.48 because it stopped hiding the drift.
+- **Snaplen saturation is measured and reported, not assumed** (`data_io.py`, `at_snaplen`).
+  22 of the 88 captures are truncated at the 65535-byte tcpdump ceiling (35–59% of packets at
+  the wall); the other 66 are clean. The 22 are `router-any`, `node-child4`, and
+  `pod-robot-controller` in both capture methods – the same three vantages that carry the
+  regime change. Their length measurements are clipped by the capture tool and are not
+  comparable to the other eight vantages. Payload is truncated too (65,483 bytes at the wall),
+  so `payload_bytes` fixes overlay overhead, not the snaplen.
+- **Five features added from the 34-column packet set** (`features.py`): `payload_bytes`,
+  `http_count`, `dns_count`, `https_count`, `http_frac`, in a new `protocol` ablation group.
+  The CSVs carry 34 fields; the pipeline now reads 12. Protocol identity was a CONOPS-named
+  category with zero features before this.
+- **`sweep.py` now writes `capture_manifest.csv`**, which the previous version's docs claimed it
+  wrote but no code did. The sibling scripts read that cache, so a stale one silently scores the
+  wrong inventory; delete it or pass `--rebuild` after any dataset change.
+- The spike plots shown before 2026-10-06 remain retracted. Every number below is regenerated by
+  the commands in the next section.
 
 ## Commands that regenerate every artifact
 
 ```bash
 cd /Users/cos/Documents/school/ECEN403/RTCT1/Threat_Detection
-.venv/bin/python -m unittest -v tests                            # 18 tests
-.venv/bin/python detector.py --no-show                           # results.csv, benign_results.csv, anomaly_results.png
+.venv/bin/python -m unittest -v tests                            # 46 tests
+.venv/bin/python detector.py                                           # results.csv, benign_results.csv, anomaly_results.png
 .venv/bin/python sweep.py                                        # capture_manifest.csv, sweep_results.csv, sweep_summary.png
-.venv/bin/python sweep.py --groups volume,size_timing,diversity,flags --out ablation_results.csv
-.venv/bin/python compare.py                                      # detector_comparison.csv + detector_comparison_nu<nu>.png
+.venv/bin/python sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv
+.venv/bin/python compare.py                                      # detector_comparison.csv + detector_comparison_nu0.1.png
 .venv/bin/python feature_value.py                                # feature_value.csv: per-feature value
-
-Every generated file lands in `outputs/` (see README.md for the file map).
+.venv/bin/python walkthrough.py                                  # console walk-through, then writes SHOWCASE.md
 ```
 
-The sweep reads 88 CSVs / ~53 MB and finishes in about 8 seconds.
+Every generated file lands in `outputs/` (see README.md for the file map). The sweep reads
+88 CSVs / ~53 MB and finishes in about 8 seconds. Delete `outputs/capture_manifest.csv` after
+any dataset change, or the run scores the old inventory.
 
 ## Capture inventory (`outputs/capture_manifest.csv`)
 
-88 captures = 4 scenarios × 11 labels × 2 capture methods. Levels: 20 pod, 16 node, 8 router per method.
-All 88 parsed; 1 unusable (above). Capture spans are NOT uniform: benign captures run
-51.3–67.7 s, lidar attacks 53.5–68.9 s, nginx attacks 42.7–87.9 s, and injection attacks
-2.7–63.6 s. Across all 87 usable captures the span is 2.7–87.9 s. The short captures are
-injection attacks, not benign ones — so "about 15–20 held-out benign windows per stratum"
-below holds because *benign* captures are consistently ~50–68 s, not because every capture
-is.
+88 captures = 4 scenarios × 11 labels × 2 capture methods. Levels: 20 pod, 16 node, 8 router
+per method. All 88 parsed; 1 unusable:
+`nginx attack/csv files/tcp/pod level/pod-robot-controller-tcp.csv` has 64,853 of its 220,456
+rows with `ts = 0.0` (frames 155,604 onward), which makes 1-second binning try to build ~1.77
+billion windows. It is quarantined with a stated reason, not zeroed.
+
+Capture spans are NOT uniform: benign captures run 51.3–67.7 s, lidar attacks 53.5–68.9 s,
+nginx attacks 42.7–87.9 s, injection attacks 2.7–63.6 s. Across all 87 usable captures the span
+is 2.7–87.9 s. The short captures are injection attacks, not benign ones, so the injection
+column is computed over fewer windows and is not comparable across rows. Window count is
+`floor(span_s) + 1` and is derivable from the manifest without re-reading packets.
 
 ## Sweep result: flagged fraction of windows, `group=all`, tcp captures
 
-Matched benign reference per capture (same label, same capture method), fitted on the first 70% of the benign
-windows; the held-out 30% are the benign column below.
+Matched benign reference per capture (same label, same capture method), fitted on the first 70%
+of the benign windows; the held-out 30% are the benign column. The three bulk-transfer strata
+are marked; they are the drift-detection rows, not calibration failures.
 
 ```
 label                  benign  injection  lidar  nginx
-node-child1              0.11       0.73   0.75   0.19
-node-child2              0.16       0.76   0.11   0.28
-node-child4              0.75       0.84   0.31   0.40
-node-gchild9             0.26       0.72   0.14   0.42
-pod-camera               0.00       0.20   0.06   0.08
-pod-lidar                0.15       0.73   0.77   0.15
-pod-nginx                0.00       0.00   0.02   0.80
-pod-robot-controller     0.85       1.00   0.32    NaN   (nginx attack capture excluded: bad timebase)
-pod-robot-hardware       0.30       0.70   0.16   0.41
-router-any               0.81       0.50   0.35   0.48
-router-flannel           0.00       0.31   0.11   0.93
+node-child1              0.32      0.91   0.83   0.67
+node-child2              0.37      0.95   0.40   0.93
+node-child4 *            0.90      0.97   0.72   0.95
+node-gchild9             0.58      0.53   0.38   0.52
+pod-camera               0.00      0.45   0.11   0.09
+pod-lidar                0.35      0.91   0.88   0.67
+pod-nginx                0.16      0.11   0.32   0.85
+pod-robot-controller *   0.90      1.00   0.73    NaN   (nginx attack capture excluded: bad timebase)
+pod-robot-hardware       0.60      0.63   0.49   0.57
+router-any *             0.95      0.61   0.71   0.93
+router-flannel           0.12      0.33   0.28   0.97
+
+* = benign capture contains a bulk-transfer regime change
 ```
 
-Three things fall out of this table:
+Steady-state benign mean over the other 8 strata: 0.31. Bulk-transfer mean over the 3 marked:
+0.93. Detection on the 8 steady strata: injection 0.60, lidar 0.46, nginx 0.66.
 
-1. An attack is visible at the vantage that serves it. The web flood shows at `pod-nginx` (0.80 flagged, 0.00 on
-   held-out benign) and at `router-flannel` (0.93). The lidar replay shows at `pod-lidar` (0.77) and barely at
-   `pod-nginx` (0.02). Scoring a sensor-side attack against a web-server baseline is what makes it look
-   undetectable.
-2. The 3σ default is not calibrated per vantage. Mean benign false-alarm fraction across the 22 strata is
-   **0.30**, and it is concentrated: `pod-robot-controller` 0.85, `router-any` 0.81/0.84,
-   `node-child4` 0.75/0.78. On the same strata the detector is flagging a third of normal traffic, so any
-   detection number from those rows is not trustworthy yet.
-3. The injection-attack column (0.50–1.00) is partly the noise floor: several of the same strata already flag
-   0.75–0.85 on their own held-out benign windows.
+Top features in flagged attack windows: `total_bytes` and `payload_bytes` carry most, then
+`unique_dst_ips`, `mean_packet_size`, `packet_count`; `http_count`/`http_frac` appear on the
+nginx-attack rows.
 
-Top features in flagged attack windows: `total_bytes` 9 strata, `unique_dst_ips` 7, `mean_packet_size` 5,
-`packet_count` 5, `rst_count` 2, `unique_dst_ports` 2, `mean_iat` 1.
+## Feature set: a candidate pool, now measured
 
-## Feature set: a starting point, not a requirement
+The features were not selected by a requirement or a plan. They trace to Team CONOPS §3.3,
+which names the categories to observe – "source and destination addresses, communication
+protocols, port usage, packet sizes, and connection frequency", plus traffic volume – and then
+delegates the choice: "the specific traffic characteristics used in the analysis will depend on
+what is available from the existing telemetry collection system". The dataset's 34 packet
+columns decide the concrete form.
 
-The eight features are not a requirement and are not fixed. They were written into the first
-version of the detector (`detector.py`), and they trace to two places only:
+Of the original 8, five mapped to a CONOPS category and three (`mean_iat`, `syn_count`,
+`rst_count`) came from columns rather than the CONOPS list. Communication protocols and the
+source side of addresses and ports had no feature at all; the 5 added this week fill the
+protocol gap. The source side (`src_ip`, `src_port`) is still unread.
 
-- Team CONOPS §3.3 names the *categories* to observe: "source and destination addresses,
-  communication protocols, port usage, packet sizes, and connection frequency", plus traffic
-  volume. It then delegates the choice: "the specific traffic characteristics used in the
-  analysis will depend on what is available from the existing telemetry collection system".
-- The dataset's packet columns decide the concrete form. Everything in `FEATURE_LABELS` is an
-  aggregate over `ts`, `iat`, `frame_len`, `dst_ip`, `dst_port`, `tcp_syn`, `tcp_rst`.
-
-So 5 of 8 map to a CONOPS category, 3 (`mean_iat`, `syn_count`, `rst_count`) come from columns
-rather than the CONOPS list, and one named CONOPS category has no feature at all: communication
-protocols (`proto`, `is_dns`, `is_http`, `is_https` are unused), and the source side of addresses
-and ports is unused. No commit, plan or measurement picked these; until 2026-10-06 nothing had
-ever been measured about them. Treat them as a candidate pool.
-
-## Feature value, measured (`outputs/feature_value.csv`, 520 rows)
+## Feature value, measured (`outputs/feature_value.csv`, 845 rows)
 
 Two numbers per feature, per scenario, averaged over the 22 capture strata, each against that
 stratum's matched benign reference. `auc` is threshold-free ranking value; `detection at 5%` is
@@ -101,120 +156,162 @@ packet_count                          0.624  0.383  0.578      12
 total_bytes                           0.612  0.419  0.594      13
 mean_packet_size                      0.553  0.461  0.625      17
 unique_dst_ips                        0.525  0.650  0.791      22
+http_frac                             0.523  0.527  0.777      14   (new)
+http_count                            0.519  0.521  0.794      16   (new)
+dns_count                             0.517  0.577  0.559       0   (new)
+payload_bytes                         0.510  0.483  0.614       8   (new)
 rst_count                             0.494  0.614  0.542       6
 unique_dst_ports                      0.468  0.640  0.649      10
 syn_count                             0.445  0.553  0.513       0
+https_count                           0.432  0.557  0.490       0   (new)
 mean_iat                              0.291  0.545  0.383      11
 
 Attack windows flagged at a 5% benign budget
 rst_count                             0.579  0.408  0.513
+http_frac                             0.481  0.534  0.602   (new)
 mean_packet_size                      0.417  0.228  0.336
 packet_count                          0.417  0.254  0.264
+payload_bytes                         0.407  0.234  0.223   (new)
 total_bytes                           0.361  0.188  0.290
 unique_dst_ports                      0.305  0.164  0.247
 mean_iat                              0.304  0.158  0.050
 unique_dst_ips                        0.293  0.131  0.459
+http_count                            0.277  0.319  0.703   (new)
+dns_count                             0.270  0.416  0.409   (new)
 syn_count                             0.186  0.203  0.198
+https_count                           0.071  0.068  0.072   (new)
 ```
 
 What the two tables say together:
 
-1. `rst_count` is the worst ranker (auc 0.49-0.61) and the best single trigger in all three
-   scenarios. RST is almost always zero, so any RST is far from normal - useful as a cheap
-   precision trigger, useless as a graded score. Ranking value and trigger value are not the
-   same measurement.
+1. `rst_count` is the worst ranker (auc 0.49–0.61) and the best single trigger in all three
+   scenarios. RST is almost always zero, so any RST is far from normal – a cheap precision
+   trigger, not a graded score. Ranking value and trigger value are different measurements.
 2. `syn_count` is worthless on both: auc at chance (0 of 22 strata above 0.75) and the lowest
    detection. First drop candidate.
 3. `mean_iat` ranks below chance on injection (0.291) and flags 0.05 of nginx attack windows.
    Second drop candidate, though it is mid-pack on lidar (0.545).
 4. `unique_dst_ips` is the strongest ranker on nginx attack (0.791, above 0.75 in all 22 strata)
    and still weak as a lone trigger (0.459); `mean_packet_size` is the most consistent single
-   feature across all three scenarios (auc 0.46-0.63, above 0.75 in 17 strata).
-5. `packet_count` and `total_bytes` move together (0.62/0.61 on injection) and both invert on
-   lidar (0.383/0.419) - a redundancy worth measuring before keeping both.
+   feature across all three scenarios (auc 0.46–0.63, above 0.75 in 17 strata).
+5. **The new protocol features earn their slot on nginx attack**: `http_count` auc 0.794 and
+   flags 0.703 of nginx windows at the 5% budget, second-best trigger in the set. `http_frac`
+   is the vantage-stable form and the one to carry into cross-vantage work. `https_count` does
+   not earn a slot – there is little HTTPS in this testbed (auc 0.43–0.56, 0 strata above 0.75).
+6. `payload_bytes` underperforms `total_bytes` as a ranker (0.510 vs 0.612 on injection) and
+   does not reduce false alarms on its own. Keep it for cross-vantage comparability, not for
+   detection strength.
+7. `packet_count` and `total_bytes` move together and both invert on lidar (0.383/0.419) – a
+   redundancy worth measuring before keeping both.
 
 A feature earns its place if it clears the 5% budget test on at least one scenario, survives the
-redundancy check (it is not just a weaker copy of a sibling), and can actually be obtained at a
-vantage worth instrumenting. Nothing is dropped until those three are measured; the 8-feature
-set stays in the code as the current candidate pool.
+redundancy check, and can be obtained at a vantage worth instrumenting. Nothing is dropped until
+all three are measured.
 
-## Feature-group ablation (`outputs/ablation_results.csv`, 352 rows)
+## Feature-group ablation (`outputs/ablation_results.csv`, 440 rows)
 
-Mean flagged fraction over the 22 strata, by feature group:
+Mean flagged fraction over the 22 strata:
 
 ```
-group          benign   injection  lidar  nginx
-volume          0.249      0.35     0.17   0.26
-size_timing     0.280      0.35     0.20   0.26
-diversity       0.021      0.16     0.01   0.14
-flags           0.014      0.08     0.16   0.05
+group          benign  injection  lidar  nginx
+diversity      0.05      0.16      0.03   0.21
+flags          0.05      0.11      0.18   0.07
+protocol       0.10      0.17      0.15   0.52
+size_timing    0.42      0.61      0.44   0.48
+volume         0.35      0.57      0.41   0.50
 ```
 
-The split is clean and it is the useful finding for Friday: `volume` and `size_timing` carry most of the
-detection but false-alarm on a quarter of held-out benign windows, while `diversity` and `flags` barely
-false-alarm (0.02) and barely detect anything either. On the clean case the group matters a lot: for
-`nginx attack` at `pod-nginx` (tcp), `size_timing` flags 0.77 of windows, `volume` 0.43, `diversity` 0.08,
-`flags` 0.00.
+`volume` and `size_timing` carry most of the detection and all of the false-alarm. Splitting
+the benign column by whether the capture holds a bulk-transfer regime change shows why, and it
+is the cleanest evidence in this document:
+
+```
+group          benign all 22   benign steady 8   benign bulk-transfer 3
+diversity           0.05              0.01                 0.13
+flags               0.05              0.01                 0.16
+protocol            0.10              0.07                 0.17
+size_timing         0.42              0.22                 0.93
+volume              0.35              0.14                 0.93
+```
+
+The two volume-carrying groups flag 0.93 of held-out windows on the three bulk-transfer
+captures and 0.14–0.22 on the eight steady ones. Every quiet group stays at or below 0.17
+everywhere. The false-alarm problem is confined to the length and count features, and only
+where the workload changes regime — it is not a property of the detector's cutoff, and it would
+not be fixed by recalibrating the three vantages.
+
+`protocol` is the new group: 0.10 benign and 0.52 on nginx attack, the highest single-scenario
+nginx figure of any group, without the volume groups' false-alarm cost.
 
 ## Detector comparison (`outputs/detector_comparison.csv`, 261 rows; chart `outputs/detector_comparison_nu0.1.png`)
 
-Same windows, same matched benign reference, same 70/30 split, and all three detectors followed by the same
-3-window persistence rule. The forest and the SVM take their cutoff from the 5th percentile of held-out benign
-scores, so their benign column is 5% by construction and only their detection columns are comparable.
+Same windows, same matched benign reference, same 70/30 split, all three detectors followed by the
+same 3-window persistence rule. The forest and the SVM take their cutoff from the 5th percentile
+of held-out benign scores, so their benign column is 5% by construction and only their detection
+columns are comparable.
 
 ```
-detector             benign  injection  lidar  nginx     (flagged fraction)
-z_score                0.30       0.56   0.29   0.41
-one_class_svm          0.05       0.44   0.18   0.26
-isolation_forest       0.05       0.30   0.18   0.12
+detector             benign  injection  lidar  nginx     (flagged fraction, 22 strata)
+z_score                0.48       0.69   0.53   0.73
+one_class_svm          0.05       0.46   0.18   0.37
+isolation_forest       0.05       0.29   0.17   0.22
 
 detector             benign  injection  lidar  nginx     (persistent fraction)
-z_score                0.19       0.35   0.18   0.23
-one_class_svm          0.00       0.23   0.11   0.18
-isolation_forest       0.00       0.16   0.13   0.03
+z_score                0.25       0.45   0.29   0.55
+one_class_svm          0.00       0.23   0.10   0.25
+isolation_forest       0.00       0.14   0.10   0.09
 ```
 
-At the same 5% budget the SVM finds more than the forest on two of three scenarios (injection 0.44 against 0.30,
-nginx 0.26 against 0.12) and ties it on lidar. The z-score still finds the most of the three, but it is running at
-a 30% false-alarm fraction, so it is not the same comparison: matching the z-score threshold to a 5% budget and
-re-running is the next measurement, not a claim. Nothing here yet justifies replacing the transparent detector,
-and nothing here yet justifies claiming a learned model is needed. All three are charted in
-`outputs/detector_comparison_nu0.1.png`, written by the same command. The chart name carries the SVM `nu` for that run
-(`nu=0.10` in this run), so two settings cannot overwrite each other's chart; at nu 0.05 and 0.10 the measured
-numbers above differ by one window in one stratum, so the tables hold for both.
+At the same 5% budget the SVM finds more than the forest on all three scenarios (injection 0.46 vs
+0.29, lidar 0.18 vs 0.17, nginx 0.37 vs 0.22). The z-score still finds the most of the three, but
+at a 48% held-out benign flag fraction – and that fraction is dominated by the six bulk-transfer
+captures, where flagging is correct behavior. The honest reading: on a stationary baseline the
+z-score is both the most sensitive and the least specific detector here, and neither learned model
+beats it at a matched budget without giving up more sensitivity than it gains. Nothing here yet
+justifies replacing the transparent detector, and nothing here yet justifies claiming a learned
+model is needed. The chart name carries the SVM `nu` for that run (`nu=0.10` here), so two
+settings cannot overwrite each other's chart.
 
 ## Sample sizes and what I am not claiming
 
-- Each capture is ~42–69 s, so ~15–20 held-out benign windows per stratum. At that size a 0/19 result only
-  bounds the true false-alarm rate at roughly 15%; the numbers above are per-capture window fractions, not
-  validated rates.
-- Four strata have under 10 windows and their rows are noise: `injection attack` ptcp `node-child2` (3 windows),
-  `node-child1` (6), `pod-nginx` (7), and tcp `pod-nginx` (9).
-- Both learned detectors are calibrated to a 5% held-out benign budget by construction, so their benign column
-  is not evidence of anything; only the detection columns at that budget are comparable.
-- Both learned detectors drop windows where `mean_packet_size`/`mean_iat` are undefined (empty seconds) while the
-  z-score keeps them as `insufficient_data`, so the three are close to, but not exactly, the same window set.
-- I am not claiming: generalization from 60-second captures; a calibrated false-alarm rate; that a flag is an
-  attack; network-origin attribution from resource metrics; or any live connection to Subsystem 1's baseline or
+- Each capture is ~42–69 s, so ~15–20 held-out benign windows per stratum. At that size a 0/19
+  result only bounds the true false-alarm rate at roughly 15%. The numbers above are per-capture
+  window fractions, not validated rates.
+- Four strata have under 10 windows and their rows are noise: `injection attack` ptcp
+  `node-child2` (3 windows), `node-child1` (6), `pod-nginx` (7), and tcp `pod-nginx` (9).
+- Both learned detectors are calibrated to a 5% held-out benign budget by construction, so their
+  benign column is not evidence of anything; only the detection columns at that budget are
+  comparable.
+- Both learned detectors drop windows where a feature is undefined (empty seconds) while the
+  z-score keeps them as `insufficient_data`, so the three are close to, but not exactly, the same
+  window set.
+- I am not claiming: generalization from 60-second captures; a calibrated false-alarm rate; that a
+  flag is an attack; that the bulk-transfer captures' high flag rate is a defect; cross-vantage
+  comparability of the length-based features (three vantages are snaplen-truncated, and measured
+  overlay overhead differs 51.9% at `pod-nginx` against 0.2% at `router-any`); network-origin
+  attribution from resource metrics; or any live connection to Subsystem 1's baseline or
   Subsystem 3's response. Nothing here is wired to S1 or S3.
 
-## Friday: feature selection and pathways
+## Next: feature selection and pathways
 
-| Candidate feature | Source column | At pod / node / router captures | Status |
-|---|---|---|---|
-| packet_count, total_bytes | `ts`, `frame_len` | all three | implemented, carries detection, noisy |
-| mean_packet_size, mean_iat | `frame_len`, `iat` | all three | implemented, carries detection, noisy |
-| unique_dst_ips, unique_dst_ports | `dst_ip`, `dst_port` | all three | implemented, quiet but weak |
-| syn_count, rst_count | `tcp_syn`, `tcp_rst` | all three | implemented, quiet but weak |
-| unique_src_ips, unique_src_ports | `src_ip`, `src_port` | all three | candidate, needs adding to `make_features` |
-| protocol mix (udp/tcp/icmp shares) | `proto`, `icmp_type` | all three | candidate |
-| DNS/HTTP/HTTPS shares | `is_dns`, `is_http`, `is_https` | all three | candidate |
-| payload ratio | `tcp_payload_len` / `frame_len` | all three | candidate |
-| flag mix (fin/psh/ack ratios) | `tcp_fin`, `tcp_psh`, `tcp_ack` | all three | candidate |
+| Candidate feature | Source column | Status |
+|---|---|---|
+| packet_count, total_bytes, payload_bytes | `ts`, `frame_len`, `tcp_payload_len`, `udp_length` | implemented; volume carries detection, noisy; payload kept for vantage comparability |
+| mean_packet_size, mean_iat | `frame_len`, `iat` | implemented; mean_packet_size is the most consistent, mean_iat is a drop candidate |
+| unique_dst_ips, unique_dst_ports | `dst_ip`, `dst_port` | implemented; quiet but weak as lone triggers |
+| syn_count, rst_count | `tcp_syn`, `tcp_rst` | implemented; rst is the best trigger, syn is the worst ranker |
+| http_count, http_frac | `is_http` | implemented, new; second-best trigger on nginx attack |
+| dns_count | `is_dns` | implemented, new; 0 of 22 strata above 0.75 auc |
+| https_count | `is_https` | implemented, new; does not earn a slot, little HTTPS in this testbed |
+| unique_src_ips, unique_src_ports | `src_ip`, `src_port` | candidate, still unread |
+| proto / icmp shares | `proto`, `icmp_type` | candidate |
+| flag mix (fin/psh/ack) | `tcp_fin`, `tcp_psh`, `tcp_ack` | candidate |
+| ttl_or_hlim, ip_version | `ttl_or_hlim`, `ip_version` | candidate; expect flat under a flannel overlay |
 
-The question that needs an answer from the sponsor before more features get built: every feature in that table
-exists only in the packet-level CSVs. Subsystem 1's Prometheus surface as configured exposes pod CPU/memory and
-node memory, with network RX marked removed and network TX and node CPU needing retest, so the FSR's "baseline
-to detection" interface has no source for 7 of the 8 implemented features. Either the detection path consumes
-packet captures at the observation points (T1) or it is limited to coarse resource deviations (T2), which
-cannot support network-origin diagnosis.
+The question that needs an answer from the sponsor before more features get built: every feature
+in that table exists only in the packet-level CSVs. Subsystem 1's Prometheus surface as configured
+exposes pod CPU/memory and node memory, with network RX marked removed and network TX and node CPU
+needing retest, so the FSR's "baseline to detection" interface has no source for 7 of the original
+8 implemented features. Either the detection path consumes packet captures at the observation
+points (T1) or it is limited to coarse resource deviations (T2), which cannot support
+network-origin diagnosis.

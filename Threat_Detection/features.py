@@ -19,15 +19,27 @@ FEATURE_LABELS = {
     "unique_dst_ports": ("Distinct destination ports", "ports/window"),
     "syn_count": ("TCP SYN count", "flags/window"),
     "rst_count": ("TCP RST count", "flags/window"),
+    "payload_bytes": ("Payload bytes", "bytes/window"),
+    "http_count": ("HTTP packets", "packets/window"),
+    "dns_count": ("DNS packets", "packets/window"),
+    "https_count": ("HTTPS packets", "packets/window"),
+    "http_frac": ("HTTP share of packets", "fraction"),
 }
 
 # Groups used by the ablation. Every feature label belongs to exactly one group.
 FEATURE_GROUPS = {
-    "volume": ["packet_count", "total_bytes"],
+    "volume": ["packet_count", "total_bytes", "payload_bytes"],
     "size_timing": ["mean_packet_size", "mean_iat"],
     "diversity": ["unique_dst_ips", "unique_dst_ports"],
     "flags": ["syn_count", "rst_count"],
+    "protocol": ["http_count", "dns_count", "https_count", "http_frac"],
 }
+
+# Packet columns this pipeline reads. The CSVs carry 34; these are the ones turned into
+# features. tcp_payload_len/udp_length are the encapsulation-free volume -- frame_len is
+# inflated by a different overlay overhead at every vantage, so total_bytes is not
+# comparable between pod, node and router.
+PACKET_COLUMNS_EXTRA = ["tcp_payload_len", "udp_length", "is_http", "is_dns", "is_https"]
 
 # Columns the aggregator cannot do without, regardless of which features are asked for.
 REQUIRED_COLUMNS = {"ts", "frame_len", "iat", "dst_ip", "dst_port"}
@@ -70,6 +82,23 @@ def make_windows(packets, window_size=WINDOW_SIZE):
     for flag, feature in (("tcp_syn", "syn_count"), ("tcp_rst", "rst_count")):
         if flag in frame.columns:
             windows[feature] = grouped[flag].sum()
+    # Payload volume, summing the two length columns that are present. Absent columns count
+    # as zero rather than being invented, and NaN in one column is skipped by the sum.
+    payload_columns = [c for c in ("tcp_payload_len", "udp_length") if c in frame.columns]
+    if payload_columns:
+        # Per-column group sums added together, not a single grouped axis-sum: GroupBy.sum
+        # takes no axis. min_count=1 keeps an all-NaN window as NaN rather than 0.0.
+        payload = sum(grouped[c].sum(min_count=1) for c in payload_columns)
+        windows["payload_bytes"] = payload
+    for column, feature in (("is_http", "http_count"), ("is_dns", "dns_count"),
+                            ("is_https", "https_count")):
+        if column in frame.columns:
+            windows[feature] = grouped[column].sum()
+    # Protocol mix as a fraction of the window's packets. A ratio, not a count: the share
+    # is comparable between a quiet pod and a busy router, the count is not.
+    for count_feature, frac_feature in (("http_count", "http_frac"),):
+        if count_feature in windows.columns:
+            windows[frac_feature] = windows[count_feature] / windows["packet_count"]
 
     # Seconds between two packets with no traffic still count, as zeros.
     windows = windows.reindex(range(int(frame["time_bin"].max()) + 1))

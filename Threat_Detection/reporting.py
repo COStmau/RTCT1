@@ -3,18 +3,22 @@
 No detection logic lives here. Each function takes already-scored results and writes stdout
 or an image; none of them re-derives a number another module already computed.
 """
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")  # before pyplot: this subsystem renders to files, never a window
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from data_io import resolve_output
+from data_io import SNAPLEN_CEILINGS, SNAPLEN_REPORT_AT, resolve_output
 from detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, SVM_NU, THRESHOLD, WINDOW_SIZE,
                        flag_stats, persistent_mask)
 from features import FEATURE_LABELS
 
 __all__ = ["flag_stats", "persistent_mask", "summarize_flags", "threshold_table",
            "plot_detection", "print_matrix", "plot_matrix", "plot_comparison",
-           "print_comparison"]
+           "print_comparison", "plot_regime_split", "plot_snaplen", "write_report"]
 
 
 # --- one capture, printed and plotted ---------------------------------------------
@@ -90,7 +94,7 @@ def threshold_table(results, benign_results, thresholds=(1.5, 2.0, 3.0, 4.0)):
         print(f"   {threshold:>9.1f} {benign_flags:>13} {attack_flags:>13}")
 
 
-def plot_detection(results, benign_results, mean, std, baseline_windows, path=None, show=True):
+def plot_detection(results, benign_results, mean, std, baseline_windows, path=None):
     """Two score traces plus the strongest feature against its baseline band."""
     path = resolve_output(path or "anomaly_results.png")
     fig = plt.figure(figsize=(12, 7))
@@ -153,8 +157,6 @@ def plot_detection(results, benign_results, mean, std, baseline_windows, path=No
 
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     fig.savefig(path, dpi=150)
-    if show:
-        plt.show()
     plt.close(fig)
     return path
 
@@ -254,3 +256,243 @@ def plot_comparison(comparison, path=None):
     fig.savefig(path, dpi=150)
     plt.close(fig)
     return path
+
+
+# --- showcase report ----------------------------------------------------------------
+
+# The three vantages whose benign captures hold a bulk-transfer regime change. Measured,
+# not assumed: their benign held-out flag fraction is 0.93 against 0.31 for the other 16
+# captures, and they are also the only labels appearing in the snaplen-truncated set.
+BULK_LABELS = ("node-child4", "pod-robot-controller", "router-any")
+
+
+def _bulk_view(sweep):
+    """Sweep rows split into the steady benign captures and the ones that change regime."""
+    view = sweep[sweep["scenario"].eq("benign")].copy()
+    view["regime"] = np.where(view["label"].isin(BULK_LABELS), "bulk", "steady")
+    return view
+
+
+def plot_regime_split(bulk_view, steady_mean, bulk_mean, path=None):
+    """Benign flag fraction per capture: the steady ones against the three that drift."""
+    path = resolve_output(path or "steady_bulk_split.png")
+    view = bulk_view[bulk_view["method"].eq("tcp")]
+    steady = view[view["regime"].eq("steady")].sort_values("flagged_fraction")
+    drifting = view[view["regime"].eq("bulk")].sort_values("flagged_fraction")
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.barh([f"steady {label}" for label in steady["label"]], steady["flagged_fraction"],
+            color="#1f77b4", label=f"steady (mean {steady_mean:.2f})")
+    ax.barh([f"bulk   {label}" for label in drifting["label"]], drifting["flagged_fraction"],
+            color="#d62728", label=f"bulk-transfer (mean {bulk_mean:.2f})")
+    ax.set_xlabel("flagged fraction of held-out benign windows")
+    ax.set_xlim(0, 1)
+    ax.legend(fontsize=8)
+    ax.set_title(f"Benign traffic: {len(steady)} steady captures against "
+                 f"{len(drifting)} that change regime mid-recording", fontsize=11)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def plot_snaplen(manifest, n_truncated, n_total, path=None):
+    """What share of each capture's packets hit the recorder's size ceiling."""
+    path = resolve_output(path or "capture_manifest_at_snaplen.png")
+    view = manifest[manifest["method"].eq("tcp")].sort_values("at_snaplen")
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.barh(view["label"], view["at_snaplen"],
+            color=["#d62728" if value >= SNAPLEN_REPORT_AT else "#9ecae1"
+                   for value in view["at_snaplen"]])
+    ax.set_xlabel("fraction of packets clipped at the capture size limit")
+    ax.set_xlim(0, max(0.05, float(view["at_snaplen"].max()) * 1.15))
+    ax.set_title(f"{n_truncated} of {n_total} captures hit the recorder's "
+                 f"{SNAPLEN_CEILINGS[0]}-byte ceiling", fontsize=11)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def _figure_refs(sweep, manifest, comparison, chart_dir, steady_mean, bulk_mean):
+    """Render the charts the report embeds, and return (markdown caption, filename) pairs.
+
+    Each name comes from the function that wrote the file, so a reference in the prose and
+    the file on disk cannot drift apart. The two means are passed in rather than recomputed,
+    so the chart titles and the report text cannot disagree.
+    """
+    chart_dir = Path(chart_dir)
+    bulk = _bulk_view(sweep)
+    truncated = manifest[manifest["at_snaplen"] >= SNAPLEN_REPORT_AT]
+
+    refs = [
+        ("Benign flag fraction per capture: steady against bulk-transfer",
+         Path(plot_regime_split(bulk, steady_mean, bulk_mean,
+                                path=chart_dir / "steady_bulk_split.png")).name),
+        ("Fraction of each capture's packets clipped at the recorder's size limit",
+         Path(plot_snaplen(manifest, len(truncated), len(manifest),
+                           path=chart_dir / "capture_manifest_at_snaplen.png")).name),
+        (_CHART_CAPTIONS["sweep_summary.png"],
+         Path(plot_matrix(sweep, path=chart_dir / "sweep_summary.png")).name),
+        (_CHART_CAPTIONS[f"detector_comparison_nu{SVM_NU:g}.png"],
+         Path(plot_comparison(comparison,
+                              path=chart_dir / f"detector_comparison_nu{SVM_NU:g}.png")).name),
+    ]
+    # anomaly_results.png comes from a single scored capture pair, which this function is
+    # not given. Referenced only when it is already on disk, never claimed otherwise.
+    if (chart_dir / "anomaly_results.png").exists():
+        refs.append((_CHART_CAPTIONS["anomaly_results.png"], "anomaly_results.png"))
+    return refs
+
+
+def write_report(sweep, ablation, manifest, comparison, chart_dir=None, path=None):
+    """Write the showcase Markdown: every measured result, with the charts it refers to.
+
+    Takes already-scored frames and recomputes nothing another module owns. Every figure
+    in the file is written here, so an embedded image cannot reference a stale chart.
+    """
+    # resolve_output() with no name returns the manifest path, so take its parent: the
+    # default chart directory is outputs/, wherever that is anchored.
+    chart_dir = Path(chart_dir) if chart_dir is not None else Path(resolve_output()).parent
+    chart_dir.mkdir(parents=True, exist_ok=True)
+    path = Path(path) if path is not None else chart_dir / "SHOWCASE.md"
+
+    bulk = _bulk_view(sweep)
+    steady = bulk[bulk["regime"].eq("steady")]
+    drifting = bulk[bulk["regime"].eq("bulk")]
+    steady_mean = float(steady["flagged_fraction"].mean())
+    steady_max = float(steady["flagged_fraction"].max())
+    bulk_mean = float(drifting["flagged_fraction"].mean())
+    # Vantage counts, not capture counts: each vantage appears once per capture method.
+    n_bulk_labels = drifting["label"].nunique()
+    n_steady_labels = steady["label"].nunique()
+
+    truncated = manifest[manifest["at_snaplen"] >= SNAPLEN_REPORT_AT]
+    n_truncated, n_total = len(truncated), len(manifest)
+    snaplen_worst = float(truncated["at_snaplen"].max()) if len(truncated) else 0.0
+
+    tcp = ablation[ablation["method"].eq("tcp")]
+    steady_labels = sorted(set(steady["label"]))
+    ab_steady = tcp[tcp["label"].isin(steady_labels)]
+    ab_bulk = tcp[tcp["label"].isin(BULK_LABELS)]
+    all_col = tcp.groupby("group")["flagged_fraction"].mean()
+    steady_col = ab_steady.groupby("group")["flagged_fraction"].mean()
+    bulk_col = ab_bulk.groupby("group")["flagged_fraction"].mean()
+    groups = list(all_col.index)
+
+    attack = sweep[sweep["scenario"].ne("benign") & sweep["label"].isin(steady_labels)]
+    by_scenario = attack.groupby("scenario")["flagged_fraction"].mean()
+
+    refs = _figure_refs(sweep, manifest, comparison, chart_dir, steady_mean, bulk_mean)
+    images = {name: caption for caption, name in refs}
+
+    lines = []
+    add = lines.append
+
+    add("# Threat detection on the offline captures")
+    add("")
+
+    # 1. The correction first: it retracts a claim every other number would otherwise repeat.
+    add("## The correction that changes how these numbers read")
+    add("")
+    add(f"Earlier drafts called the high flag rates on a few capture points a calibration "
+        f"problem. It is not. {n_bulk_labels} of {n_bulk_labels + n_steady_labels} benign "
+        f"vantages contain a bulk-transfer regime change: normal traffic steps from tens of "
+        f"KB/s to hundreds of MB/s partway through the recording and stays there. Across both "
+        f"capture methods the detector flags {bulk_mean:.2f} of held-out windows on those "
+        f"captures and {steady_mean:.2f} on the other {n_steady_labels} "
+        f"(max {steady_max:.2f}). A step change in normal traffic is something the detector is "
+        f"supposed to notice, so a per-vantage cutoff would suppress a real change in the "
+        f"cluster rather than remove a false alarm.")
+    add("")
+    if "steady_bulk_split.png" in images:
+        add(f"![{images['steady_bulk_split.png']}](steady_bulk_split.png)")
+        add("")
+
+    # 2. Which measurements misfire, and what that rules out.
+    volume_groups = [g for g in ("volume", "size_timing") if g in groups]
+    quiet_groups = [g for g in groups if g not in volume_groups]
+    quiet_worst = max(float(bulk_col[g]) for g in quiet_groups) if quiet_groups else 0.0
+    add("## Which measurements carry the false alarms")
+    add("")
+    add("Mean flagged fraction per feature group, tcp captures, held-out benign windows.")
+    add("")
+    header = ["group", f"benign all {n_bulk_labels + n_steady_labels}",
+              f"benign steady ({n_steady_labels})", f"benign bulk-transfer ({n_bulk_labels})"]
+    add("| " + " | ".join(header) + " |")
+    add("|" + "|".join(["---"] * len(header)) + "|")
+    for group in groups:
+        add(f"| {group} | {all_col[group]:.2f} | "
+            f"{steady_col.get(group, float('nan')):.2f} | {bulk_col.get(group, float('nan')):.2f} |")
+    add("")
+    add(f"`{'` and `'.join(volume_groups)}` carry the detection and all of the false alarm. "
+        f"Every other group stays at or below {quiet_worst:.2f} on the drifting captures. "
+        f"That is a property of raw byte counts rather than of the cutoff, so recalibrating "
+        f"the threshold would not fix it. The scale-free measurements already in the feature "
+        f"set — `http_frac`, `mean_packet_size` — do not have this failure mode, and "
+        f"`sweep.py --groups diversity,flags,protocol` is the one-command test of whether "
+        f"detection survives without the length features. Per-capture numbers: "
+        f"`outputs/ablation_results.csv`.")
+    add("")
+
+    # 3. Detection, held to the steady captures so it is not inflated by the drifting ones.
+    add("## Detection per scenario")
+    add("")
+    add(f"Steady captures only, {WINDOW_SIZE:g}s windows, alert above {THRESHOLD:g} sigma. "
+        f"Per capture: `outputs/sweep_results.csv`.")
+    add("")
+    add("| scenario | flagged fraction |")
+    add("|---|---|")
+    for scenario, value in by_scenario.sort_values(ascending=False).items():
+        add(f"| {scenario} | {value:.2f} |")
+    add("")
+    for name in ("sweep_summary.png", f"detector_comparison_nu{SVM_NU:g}.png"):
+        if name in images:
+            add(f"![{images[name]}]({name})")
+            add("")
+
+    # 4. The recorder artifact.
+    add("## The recorder's size limit")
+    add("")
+    add(f"{n_truncated} of {n_total} captures have at least "
+        f"{SNAPLEN_REPORT_AT:.0%} of their packets sitting on the recorder's "
+        f"{SNAPLEN_CEILINGS[0]}-byte ceiling, up to {snaplen_worst:.0%} of packets clipped. "
+        f"Those captures are exactly the three vantages that change regime, so their "
+        f"length-based measurements are not comparable to the other "
+        f"{n_total - n_truncated}. They stay in the results, with the clipped share recorded "
+        f"per capture as `at_snaplen` in `outputs/capture_manifest.csv` rather than scored as "
+        f"if intact.")
+    add("")
+    if "capture_manifest_at_snaplen.png" in images:
+        add(f"![{images['capture_manifest_at_snaplen.png']}](capture_manifest_at_snaplen.png)")
+        add("")
+
+    # 5. One capture end to end.
+    if "anomaly_results.png" in images:
+        add("## One capture end to end")
+        add("")
+        add(f"![{images['anomaly_results.png']}](anomaly_results.png)")
+        add("")
+
+    add("## Method")
+    add("")
+    add(f"Each recording is cut into {WINDOW_SIZE:g}-second slices and summarised by "
+        f"{len(FEATURE_LABELS)} measurements. What normal looks like is learned from a benign "
+        f"recording only, with its last 30% held back as an honest check, so no detector is "
+        f"graded on the seconds it learned from. Each slice is scored by its largest deviation "
+        f"from that baseline, and an alert requires {PERSISTENCE_WINDOW} flagged slices in a "
+        f"row. The baseline is a median and a MAD rather than a mean and standard deviation: a "
+        f"mean/std pair is set by the bulk-transfer windows instead of by normal traffic. "
+        f"Regenerate everything in this file with `sweep.py`, `compare.py`, and "
+        f"`walkthrough.py`.")
+    add("")
+
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+_CHART_CAPTIONS = {
+    "anomaly_results.png": "Anomaly scores per window, and the strongest measurement "
+                            "against its baseline band",
+    "sweep_summary.png": "Flagged fraction per capture point, one series per scenario",
+    f"detector_comparison_nu{SVM_NU:g}.png": "Three detectors at a matched false-alarm budget",
+}

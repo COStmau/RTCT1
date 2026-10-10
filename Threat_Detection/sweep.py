@@ -92,6 +92,12 @@ def main():
     results = run_sweep(manifest, groups=groups)
     out_file = resolve_output(args.out)
     results.to_csv(out_file, index=False)
+    # Write the inventory this run actually scored, so the sibling scripts
+    # (compare.py, feature_value.py) read the same captures rather than re-globbing the
+    # Drive. load_manifest prefers a cached file, so a stale one must be deleted or
+    # --rebuild passed rather than trusted.
+    resolve_output(args.manifest).parent.mkdir(exist_ok=True)
+    manifest.to_csv(resolve_output(args.manifest), index=False)
     print_matrix(results)
     excluded = results[results["note"].str.startswith("excluded", na=False)]
     print(f"\nWrote {out_file} | rows={len(results)}"

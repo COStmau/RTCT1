@@ -5,3 +5,6 @@ Threat_Detection/local_paths.py
 __pycache__/
 *.pyc
 .venv/
+
+# Hermes agent planning scratch
+.hermes/

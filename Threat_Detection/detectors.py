@@ -29,6 +29,10 @@ THRESHOLD = 3.0
 PERSISTENCE_WINDOW = 3
 BENIGN_QUANTILE = 0.05
 
+# Scales MAD to a consistent estimator of sigma for normal data, so the 3-sigma cutoff
+# means the same thing on a median/MAD baseline as on a mean/std one.
+MAD_TO_SIGMA = 1.4826
+
 # Learned-model hyperparameters.
 N_ESTIMATORS = 100
 RANDOM_STATE = 0
@@ -108,9 +112,16 @@ class Detector:
 class ZScoreDetector(Detector):
     """Largest absolute standardized deviation across features. Transparent by design.
 
-    The baseline is a fixed mean/std pair learned from benign traffic. A feature whose
-    baseline deviation is zero scores 0 when unchanged and infinite when it moves; missing
-    observations stay undefined rather than becoming falsely normal.
+    The baseline is a robust centre and spread -- median and MAD -- not mean and standard
+    deviation. A captured workload mixes idle web traffic with a few enormous bulk-transfer
+    windows, and on the KUBEDATA captures 8 of 47 benign windows at router-any carry the
+    entire dynamic range (up to 146 MB against a 50 KB median). A mean/std summary is set by
+    those windows, so a held-out window sitting in the dominant quiet mode still lands 3
+    sigma away and a third of normal traffic flags. Median/MAD ignores them.
+
+    Where MAD is 0 -- a feature that is genuinely constant in the reference -- the standard
+    deviation is used instead, because a zero divisor would flag every window. `degenerate`
+    records which features took that fallback, so the caller can see it rather than infer it.
     """
 
     name = "z_score"
@@ -120,14 +131,23 @@ class ZScoreDetector(Detector):
         self.threshold = threshold
         self.mean = None
         self.std = None
+        self.degenerate = None
 
     def fit(self, reference):
         if reference.empty or reference.count().lt(2).any():
             raise ValueError("Insufficient baseline data: each feature needs at least two observations.")
-        mean, std = reference.mean(), reference.std()
-        if not np.isfinite(mean).all() or not np.isfinite(std).all():
+        # 1.4826 scales MAD to be a consistent estimator of sigma for normal data, so the
+        # 3-sigma cutoff keeps the same meaning it has on a mean/std baseline.
+        mad = (reference - reference.median()).abs().median() * MAD_TO_SIGMA
+        std = reference.std()
+        if not np.isfinite(mad).all() or not np.isfinite(std).all():
             raise ValueError("Baseline statistics must be finite.")
-        self.mean, self.std = mean, std
+        # A constant feature has MAD 0. Standard deviation is 0 too, and a zero divisor
+        # flags every window, so the deviation for that feature is defined as 0 when the
+        # observation matches the centre and infinite when it does not (see _z).
+        self.degenerate = mad.le(0)
+        spread = mad.where(~self.degenerate, std)
+        self.mean, self.std = reference.median(), spread
         return self
 
     def calibrate(self, held_out_benign):
@@ -145,7 +165,15 @@ class ZScoreDetector(Detector):
         if np.isinf(windows.to_numpy()).any():
             raise ValueError("Evaluation features contain infinite values.")
         delta = windows - self.mean
-        return delta.div(self.std).mask(delta.eq(0), 0.0)
+        # A degenerate feature (MAD 0 and std 0) has no meaningful scale, and dividing by its
+        # zero spread would flag every window. It is scored as: exactly the centre -> 0.0,
+        # any movement at all -> +/-infinity, keeping the sign of the movement. NaN is not
+        # the right answer here -- it means insufficient_data, but this observation is not
+        # missing, it is unscaleable. The sign matters because score() takes abs() of the
+        # row max, and explain() reports the signed z.
+        zero_spread = self.std.eq(0.0)
+        z = delta.div(self.std.where(~zero_spread, 1.0))
+        return z.mask(delta.eq(0), 0.0).mask(zero_spread & delta.ne(0), np.sign(delta) * np.inf)
 
     def score(self, windows):
         return self._z(windows).abs().max(axis=1)
