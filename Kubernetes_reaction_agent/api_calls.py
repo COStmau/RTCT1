@@ -1,5 +1,5 @@
 from kubernetes import client, config
-
+from Error_Wraper import safe_api_call
 
 def list_namespace_pods(vi,namespace="default"): #List pods in a specific namespace
     ret = vi.list_namespaced_pod(namespace=namespace, watch=False) #Retrieves a list of all pods in the specified namespace
@@ -23,8 +23,8 @@ def read_pod_log(vi,name, namespace="default"): #Reads the log of a specific pod
     return ret #Returns the log of the specified pod
 
 def delete_namespaced_pod(vi, name, namespace="default"): #Deletes a specific pod.
-    ret = vi.delete_namespaced_pod(name=name, namespace=namespace) #Deletes a specific pod in the specified namespace
-    return ret #Returns the result of the deletion operation
+
+    return safe_api_call(vi.delete_namespaced_pod, name=name, namespace=namespace) #Deletes a specific pod in the specified namespace and returns the result of the deletion operation
 
 def list_deployments(vi,namespace="default"): #List deployments in a specific namespace
     ret = vi.list_namespaced_deployment(namespace=namespace, watch=False) #Retrieves a list of all deployments in the specified namespace
@@ -76,3 +76,31 @@ def create_namespaced_pod(vi, namespace="default", body=None): #Creates a new po
     ret = vi.create_namespaced_pod(namespace=namespace, body=body) #Creates a new pod in the specified namespace
     return ret #Returns the result of the pod creation operation
 
+def add_pod_label(vi, pod_name, namespace, label_key, label_value): #Adds a label to a specific pod in a specific namespace
+    """
+    Add a label to a specific pod.
+
+    :param pod_name: Name of the pod
+    :param namespace: Namespace of the pod
+    :param label_key: Key of the label to add
+    :param label_value: Value of the label to add
+    :return: Updated pod object
+    """
+    # Read the current pod object
+    pod = read_namespace_pod(vi, pod_name, namespace="default")
+
+    # Add or update the label
+    if not pod.metadata.labels:
+        pod.metadata.labels = {}
+    
+    pod.metadata.labels[label_key] = label_value
+
+    # Patch the pod with the updated labels
+    body = {
+        "metadata": {
+            "labels": pod.metadata.labels
+        }
+    }
+    updated_pod = vi.patch_namespaced_pod(name=pod_name, namespace=namespace, body=body)
+    
+    return updated_pod
