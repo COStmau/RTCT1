@@ -1,0 +1,2 @@
+2026-10-13 11:12:08,024 - INFO - list_namespaced_pod succeeded with arguments: {'namespace': 'default', 'watch': False}
+2026-10-13 11:32:22,852 - ERROR - delete_namespaced_pod failed: HTTP 404 - Not Found

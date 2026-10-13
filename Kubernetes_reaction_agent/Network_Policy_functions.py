@@ -45,7 +45,10 @@ def apply_bandwidth_limit(vi, pod_name, namespace, bandwidth_limit):
     """
     # Read the current pod object
     pod = read_namespace_pod(vi, pod_name, namespace)
-
+    if pod[0] is None:
+        print("Error occurred while reading the pod:", pod[1])
+        return pod  # Return the error if reading the pod failed
+    pod = pod[0]
     # Add or update the bandwidth limit annotation
     if not pod.metadata.annotations:
         pod.metadata.annotations = {}
@@ -59,6 +62,7 @@ def apply_bandwidth_limit(vi, pod_name, namespace, bandwidth_limit):
             "annotations": pod.metadata.annotations
         }
     }
-    updated_pod = vi.patch_namespaced_pod(name=pod_name, namespace=namespace, body=body)
+    updated_pod = safe_api_call(vi.patch_namespaced_pod, name=pod_name, namespace=namespace, body=body)
+    
     
     return updated_pod
