@@ -25,7 +25,7 @@ import pandas as pd
 from features import WINDOW_SIZE  # noqa: F401  re-exported: chart titles and split logic need it
 
 # Detection policy. These constants are the whole tuning surface.
-THRESHOLD = 3.0
+THRESHOLD = 2.5 ##Changed from 3
 PERSISTENCE_WINDOW = 3
 BENIGN_QUANTILE = 0.05
 

@@ -18,3 +18,5 @@ every event is already above the 3.0 cutoff.
 and above. Low is borderline and mostly noise, high is far outside normal. An
 unbounded score (a feature that never moved in the baseline moved at all)
 counts as high.
+
+Future: some sort of time information, indication of continuing, increasing, or decreasing severity.
