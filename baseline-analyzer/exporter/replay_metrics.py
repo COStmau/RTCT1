@@ -1,3 +1,19 @@
+"""
+replay_metrics.py
+
+Replay processed benign network traffic as Prometheus metrics.
+
+The Baseline Analyzer currently works with recorded benign traffic.
+This script makes that historical dataset behave like a live stream by
+publishing one processed time window at a time.
+
+Prometheus can then scrape these values and Grafana can visualize them.
+
+The script also loads the previously trained frozen baseline so that
+the current replay values can be compared against fixed benign mean
+and standard-deviation values.
+"""
+
 import argparse
 import time
 
@@ -5,10 +21,19 @@ import pandas as pd
 from prometheus_client import Gauge, start_http_server
 
 
-# ---------------------------------------------------------
-# Prometheus metrics
-# Every metric now has a "source" label.
-# ---------------------------------------------------------
+# =========================================================
+# Replay Prometheus metrics
+# =========================================================
+#
+# Each replay metric contains a "source" label.
+#
+# Example:
+#
+# benign_replay_packets_per_second{source="pod-nginx"}
+#
+# This allows multiple workloads to have separate metrics
+# without creating a completely different metric name for each pod.
+
 
 packets_per_second = Gauge(
     "benign_replay_packets_per_second",
@@ -58,31 +83,53 @@ unique_dst_ports = Gauge(
     ["source"]
 )
 
+
+# Preserve the timestamp from the original recording.
+#
+# Prometheus will still use the current scrape time for the sample,
+# but this metric allows us to know which historical source window
+# is currently being replayed.
 source_timestamp = Gauge(
     "benign_replay_source_timestamp_seconds",
     "Original timestamp of the replayed benign data",
     ["source"]
 )
 
+
+# Track which row in the processed CSV is currently being replayed.
+# This is mainly useful for debugging.
 replay_row = Gauge(
     "benign_replay_row",
     "Current row number in the benign replay",
     ["source"]
 )
 
+
+# 1 indicates that this source is actively replaying.
+# 0 indicates that replay has stopped.
 replay_active = Gauge(
     "benign_replay_active",
     "1 while replay is active",
     ["source"]
 )
 
+
+# =========================================================
+# Frozen baseline Prometheus metrics
+# =========================================================
+#
+# Unlike the replay metrics above, these values do not change as
+# new observations are replayed.
+#
+# The baseline was previously calculated from known-benign training
+# data by build_baseline.py.
+
+
 baseline_mean = Gauge(
     "benign_baseline_mean",
     "Frozen benign baseline mean",
     ["source", "metric"]
 )
-# Z-Score Values
-
 
 baseline_stddev = Gauge(
     "benign_baseline_stddev",
@@ -102,6 +149,11 @@ baseline_upper = Gauge(
     ["source", "metric"]
 )
 
+
+# Columns that must exist in the processed replay CSV.
+#
+# These include both the three current primary features and several
+# supporting metrics that are still useful for visualization.
 REQUIRED_COLUMNS = [
     "packets_per_second",
     "bytes_per_second",
@@ -113,51 +165,99 @@ REQUIRED_COLUMNS = [
     "unique_dst_ports",
 ]
 
+
 def load_baseline_stats(baseline_file, source):
+    """
+    Load frozen baseline statistics and publish them to Prometheus.
+
+    The baseline CSV contains one row per trained feature. These values
+    remain constant during the replay and act as the fixed definition
+    of normal benign behavior.
+    """
+
     baseline_df = pd.read_csv(baseline_file)
 
     for _, row in baseline_df.iterrows():
+
         metric = row["feature"]
 
+        # Frozen average benign value.
         baseline_mean.labels(
             source=source,
             metric=metric
-        ).set(float(row["mean"]))
+        ).set(
+            float(row["mean"])
+        )
 
+        # Frozen amount of normal variation.
         baseline_stddev.labels(
             source=source,
             metric=metric
-        ).set(float(row["std_dev"]))
+        ).set(
+            float(row["std_dev"])
+        )
 
+        # Lower candidate normal boundary.
         baseline_lower.labels(
             source=source,
             metric=metric
-        ).set(float(row["lower_3sigma"]))
+        ).set(
+            float(row["lower_3sigma"])
+        )
 
+        # Upper candidate normal boundary.
         baseline_upper.labels(
             source=source,
             metric=metric
-        ).set(float(row["upper_3sigma"]))
-        
+        ).set(
+            float(row["upper_3sigma"])
+        )
+
+
 def set_gauge(gauge, source, value):
     """
-    Publish the value using the correct source label.
+    Publish a replay value using the correct source label.
 
-    Undefined source values remain NaN instead of being
-    incorrectly replaced with zero.
+    Some statistics, such as mean packet size, can be undefined during
+    a completely idle window. Those values remain NaN instead of being
+    incorrectly converted to zero.
     """
+
     if pd.isna(value):
-        gauge.labels(source=source).set(float("nan"))
+
+        gauge.labels(
+            source=source
+        ).set(
+            float("nan")
+        )
+
     else:
-        gauge.labels(source=source).set(float(value))
+
+        gauge.labels(
+            source=source
+        ).set(
+            float(value)
+        )
 
 
 def replay(csv_file, source, interval, loop):
+    """
+    Replay a processed benign CSV one window at a time.
+
+    Each dataframe row represents one previously aggregated time window.
+    The values are copied into Prometheus gauges and then the program
+    waits for the configured interval before publishing the next row.
+
+    When --loop is enabled, the replay restarts after the last row.
+    """
+
     print(f"Reading: {csv_file}")
     print(f"Source:  {source}")
 
+    # Load the processed feature windows.
     df = pd.read_csv(csv_file)
 
+    # Verify that the exporter has all of the features it expects.
     missing = [
         column
         for column in REQUIRED_COLUMNS
@@ -173,11 +273,22 @@ def replay(csv_file, source, interval, loop):
     print(f"Replay interval: {interval} seconds")
     print()
 
-    replay_active.labels(source=source).set(1)
+    # Tell Prometheus that replay for this source is active.
+    replay_active.labels(
+        source=source
+    ).set(1)
 
     try:
+
+        # Continue indefinitely when loop mode is enabled.
         while True:
+
+            # Each dataframe row represents one aggregated observation.
             for index, row in df.iterrows():
+
+                # -------------------------------------------------
+                # Publish the current replay metrics
+                # -------------------------------------------------
 
                 set_gauge(
                     packets_per_second,
@@ -227,15 +338,22 @@ def replay(csv_file, source, interval, loop):
                     row["unique_dst_ports"]
                 )
 
+                # Publish the original dataset timestamp if it exists.
                 if "window_start" in df.columns:
+
                     set_gauge(
                         source_timestamp,
                         source,
                         row["window_start"]
                     )
 
-                replay_row.labels(source=source).set(index)
+                # Publish the current row number for debugging.
+                replay_row.labels(
+                    source=source
+                ).set(index)
 
+                # Display a small status line in the terminal so the
+                # replay can also be monitored without Grafana.
                 print(
                     f"source={source:<18} "
                     f"row={index:<4} "
@@ -244,41 +362,62 @@ def replay(csv_file, source, interval, loop):
                     f"dst_ports={row['unique_dst_ports']}"
                 )
 
+                # Simulate real-time observations by waiting before
+                # publishing the next historical window.
                 time.sleep(interval)
 
+            # Stop after one pass unless --loop was requested.
             if not loop:
                 break
 
             print()
-            print(f"End of {source} dataset. Restarting...")
+            print(
+                f"End of {source} dataset. Restarting..."
+            )
             print()
 
     finally:
-        replay_active.labels(source=source).set(0)
+
+        # Ensure Prometheus knows the replay is no longer active
+        # if the program stops normally or is interrupted.
+        replay_active.labels(
+            source=source
+        ).set(0)
 
 
 def main():
+    """
+    Parse command-line arguments, start the Prometheus endpoint,
+    load the frozen baseline, and begin replay.
+    """
+
     parser = argparse.ArgumentParser(
-        description="Replay processed benign CSV metrics for Prometheus."
+        description=(
+            "Replay processed benign CSV metrics for Prometheus."
+        )
     )
 
+    # Processed 5-second network feature CSV.
     parser.add_argument(
         "csv_file",
         help="Processed benign CSV file"
     )
 
+    # Statistics previously created by build_baseline.py.
     parser.add_argument(
-    "--baseline-file",
-    required=True,
-    help="Frozen baseline statistics CSV"
+        "--baseline-file",
+        required=True,
+        help="Frozen baseline statistics CSV"
     )
 
+    # Source becomes the Prometheus label identifying this workload.
     parser.add_argument(
         "--source",
         required=True,
         help='Source label, for example "pod-nginx"'
     )
 
+    # Number of seconds between historical observations.
     parser.add_argument(
         "--interval",
         type=float,
@@ -286,6 +425,7 @@ def main():
         help="Seconds between replay rows"
     )
 
+    # Port where /metrics will be exposed.
     parser.add_argument(
         "--port",
         type=int,
@@ -293,6 +433,7 @@ def main():
         help="Prometheus exporter port"
     )
 
+    # Restart at the first row after reaching the end of the CSV.
     parser.add_argument(
         "--loop",
         action="store_true",
@@ -302,19 +443,37 @@ def main():
     args = parser.parse_args()
 
     if args.interval <= 0:
-        raise ValueError("Replay interval must be greater than zero.")
+        raise ValueError(
+            "Replay interval must be greater than zero."
+        )
 
-    print(f"Starting exporter on port {args.port}")
-    start_http_server(args.port, addr="0.0.0.0")
+    # Start an HTTP endpoint that Prometheus can scrape.
+    print(
+        f"Starting exporter on port {args.port}"
+    )
 
-    print(f"Metrics endpoint: http://localhost:{args.port}/metrics")
+    start_http_server(
+        args.port,
+        addr="0.0.0.0"
+    )
+
+    print(
+        f"Metrics endpoint: "
+        f"http://localhost:{args.port}/metrics"
+    )
+
     print()
 
+    # Load the frozen statistics once.
+    #
+    # These baseline values remain constant while replay values
+    # change over time.
     load_baseline_stats(
-    baseline_file=args.baseline_file,
-    source=args.source
+        baseline_file=args.baseline_file,
+        source=args.source
     )
-    
+
+    # Begin publishing the historical observations.
     replay(
         csv_file=args.csv_file,
         source=args.source,
