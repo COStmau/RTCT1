@@ -795,43 +795,29 @@ class StateMachineChecks(unittest.TestCase):
 class EventLogChecks(unittest.TestCase):
     def flagged_frame(self):
         return pd.DataFrame(
-            {"anomaly_score": [5.0, 1.0, float("inf")],
-             "anomaly": [True, False, True],
-             "status": ["anomaly", "normal", "anomaly"],
-             "persistent_flag": [True, False, False],
-             "top_feature": ["total_bytes", pd.NA, "total_bytes"],
-             "observed_value": [100.0, 50.0, 200.0],
-             "expected_mean": [50.0, 50.0, 50.0],
-             "expected_std": [5.0, 5.0, 0.0],
-             "feature_z_score": [10.0, 0.0, float("inf")]},
-            index=[3, 4, 5])
+            {"anomaly_score": [4.0, 1.0, 7.0, float("inf")],
+             "anomaly": [True, False, True, True]},
+            index=[3, 4, 5, 6])
 
     def test_only_flagged_windows_emit_in_order(self):
-        events = to_events(self.flagged_frame(), detector="z_score", cutoff=3.0,
-                           location={"name": "pod-nginx", "level": "pod", "method": "tcp"})
-        self.assertEqual([e["score"] for e in events], [5.0, None])
+        events = to_events(self.flagged_frame(), detector="z_score", pods=["pod-nginx"])
+        self.assertEqual([e["severity"] for e in events], ["low", "med", "high"])
+        for event in events:
+            self.assertEqual(set(event), {"version", "detector", "severity", "locations"})
         first = events[0]
-        self.assertEqual(first["schema"], "rtct1.event.v0")
-        self.assertEqual(first["location"]["name"], "pod-nginx")
-        self.assertEqual(first["cause"]["feature"], "total_bytes")
-        self.assertNotIn("scenario", first)
+        self.assertEqual(first["version"], "LogV0")
+        self.assertEqual(first["detector"], "z_score")
+        self.assertEqual(first["locations"], {"pods": ["pod-nginx"]})
 
-    def test_unattributed_and_nonfinite_values_stay_valid_json(self):
+    def test_event_lines_are_valid_json(self):
         import json
-        frame = self.flagged_frame()
-        frame.loc[3, "top_feature"] = pd.NA  # learned detectors attribute nothing
-        events = to_events(frame, detector="isolation_forest", cutoff=0.1,
-                           location={"name": "pod-nginx", "level": "pod", "method": "tcp"})
-        self.assertIsNone(events[0]["cause"])
-        # window 5 has an infinite z: it must serialize as null, not Infinity.
-        self.assertIsNone(events[1]["cause"]["z"])
-        self.assertIsNone(events[1]["score"])
+        events = to_events(self.flagged_frame(), detector="z_score", pods=["pod-nginx"])
         for event in events:
             json.dumps(event, allow_nan=False)
         import tempfile
         path = Path(tempfile.mkdtemp()) / "events.jsonl"
         write_events(events, path=str(path))
-        self.assertEqual(len(path.read_text().strip().split("\n")), 2)
+        self.assertEqual(len(path.read_text().strip().split("\n")), 3)
 
 
 if __name__ == "__main__":

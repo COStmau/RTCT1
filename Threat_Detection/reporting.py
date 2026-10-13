@@ -23,7 +23,12 @@ __all__ = ["flag_stats", "persistent_mask", "summarize_flags", "threshold_table"
            "print_comparison", "plot_regime_split", "plot_snaplen", "write_report",
            "to_events", "write_events"]
 
-EVENT_SCHEMA = "rtct1.event.v0"
+EVENT_VERSION = "LogV0"
+
+# Severity bands on the raw z_score. Only flagged windows reach here, so every
+# score sits above the 3.0 cutoff: low is borderline, high is far outside normal.
+SEVERITY_LOW_BELOW = 5.0
+SEVERITY_MED_BELOW = 10.0
 
 
 # --- one capture, printed and plotted ---------------------------------------------
@@ -168,41 +173,26 @@ def plot_detection(results, benign_results, mean, std, baseline_windows, path=No
 
 # --- event log (starter contract for the response subsystem) --------------------------
 
-def _event_num(value):
-    """A JSON-safe number: finite floats pass through, NaN/inf become None."""
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if np.isfinite(number) else None
+def _severity(score):
+    """Bucket a raw score: low below 5, med below 10, high at or above."""
+    if not np.isfinite(score):  # flagged and unbounded beats any band
+        return "high"
+    if score < SEVERITY_LOW_BELOW:
+        return "low"
+    if score < SEVERITY_MED_BELOW:
+        return "med"
+    return "high"
 
 
-def to_events(results, *, detector, cutoff, location):
-    """One dict per flagged window, in time order. Only what annotate() already computed.
-
-    location maps name/level/method (the capture point). The evaluation scenario
-    (benign/attack) is deliberately excluded: a live event has no scenario.
-    cause is None when the detector cannot attribute (learned models, empty windows).
-    """
+def to_events(results, *, detector, pods):
+    """One dict per flagged window: version, detector, severity, locations."""
     events = []
     flagged = results[results["anomaly"].fillna(False)].sort_index()
     for _, row in flagged.iterrows():
-        feature = row.get("top_feature")
-        cause = None
-        if pd.notna(feature):
-            cause = {"feature": str(feature),
-                     "observed": _event_num(row.get("observed_value")),
-                     "expected": _event_num(row.get("expected_mean")),
-                     "spread": _event_num(row.get("expected_std")),
-                     "z": _event_num(row.get("feature_z_score"))}
-        events.append({"schema": EVENT_SCHEMA,
+        events.append({"version": EVENT_VERSION,
                        "detector": detector,
-                       "cutoff": float(cutoff),
-                       "location": dict(location),
-                       "score": _event_num(row.get("anomaly_score")),
-                       "persistent": bool(row.get("persistent_flag")),
-                       "status": str(row.get("status")),
-                       "cause": cause})
+                       "severity": _severity(row.get("anomaly_score")),
+                       "locations": {"pods": list(pods)}})
     return events
 
 
