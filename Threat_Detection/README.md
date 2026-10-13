@@ -38,6 +38,8 @@ above in order.
 | `compare.py` | Every registered detector on the same windows, reference, and split. |
 | `feature_value.py` | Per-feature value: threshold-free separation (auc) and detection at a 5% benign budget. |
 | `walkthrough.py` | Plain-language walk-through of one result, for showing someone. |
+| `statemachine.py` | PDFA anomaly detection after Cao et al. (ARES 2022): packet flows to symbols, ALERGIA state merging, trace likelihood flags. Reads the layers, not the old modules. |
+| `statemachine_demo.py` | Narrated state-machine demo: the pair, both charts, plain-language steps. |
 
 **Supporting files**
 
@@ -53,13 +55,15 @@ above in order.
 
 ```bash
 cd /Users/cos/Documents/school/ECEN403/RTCT1/Threat_Detection
-.venv/bin/python -m unittest -v tests                 # 46 tests
+.venv/bin/python -m unittest -v tests                 # 55 tests
 .venv/bin/python detector.py                            # one benign/attack pair
 .venv/bin/python sweep.py                             # all 88 captures, about 8 seconds
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv
 .venv/bin/python compare.py                           # z-score vs Isolation Forest vs One-Class SVM
 .venv/bin/python feature_value.py                     # what each single feature is worth
 .venv/bin/python walkthrough.py                       # console walk-through + writes outputs/SHOWCASE.md
+.venv/bin/python statemachine.py                       # state-machine demo pair -> outputs/statemachine_pair.csv
+.venv/bin/python statemachine_demo.py                  # narrated demo + both state-machine charts
 ```
 
 `walkthrough.py` ends by writing `outputs/SHOWCASE.md`: the whole subsystem's results as one

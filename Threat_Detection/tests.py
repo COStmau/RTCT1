@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 import data_io
+import statemachine
 import sweep
 from detectors import build
 from features import make_windows, split_reference
@@ -702,6 +703,93 @@ class ShowcaseReportChecks(unittest.TestCase):
             self.assertNotIn("needs calibrating", text)
             self.assertNotIn("still needs", text)
             self.assertIn("per-vantage cutoff would suppress", text)
+
+
+class StateMachineChecks(unittest.TestCase):
+    def flow_packets(self):
+        return pd.DataFrame({
+            "ts": [10.0, 10.5, 12.0, 12.2, 12.9],
+            "frame_len": [100, 200, 150, 150, 150],
+            "src_ip": ["a", "a", "c", "c", "c"],
+            "dst_ip": ["b", "b", "d", "d", "d"],
+            "src_port": [1, 1, 2, 2, 2],
+            "dst_port": [80, 80, 443, 443, 443],
+            "proto": ["tcp", "tcp", "tcp", "tcp", "tcp"],
+        })
+
+    def test_make_flows_groups_by_five_tuple(self):
+        flows = statemachine.make_flows(self.flow_packets())
+        self.assertEqual(len(flows), 2)
+        self.assertEqual(flows.iloc[0]["bytes"], 300)
+        self.assertAlmostEqual(flows.iloc[0]["duration"], 0.5)
+        self.assertTrue((flows["start_ts"].diff().dropna() >= 0).all())
+
+    def test_percentile_encoding_separates_small_from_large(self):
+        train = pd.DataFrame({"proto": ["tcp"] * 4, "bytes": [10, 20, 30, 40],
+                              "duration": [0.1] * 4})
+        enc = statemachine.fit_percentile(train, nbins=2)
+        symbols = statemachine.encode(train, enc)
+        self.assertNotEqual(symbols.iloc[0], symbols.iloc[-1])
+
+    def test_sliding_traces_cover_the_sequence(self):
+        self.assertEqual(statemachine.make_traces(["a", "b", "c", "d"], length=2),
+                         [("a", "b"), ("b", "c"), ("c", "d")])
+
+    def test_frequency_encoding_labels_repeated_values(self):
+        train = pd.DataFrame({"proto": ["tcp"] * 8,
+                              "bytes": [10] * 5 + [20, 30, 40],
+                              "duration": [0.1] * 8})
+        enc = statemachine.fit_frequency(train, nbins=2, min_count=3)
+        symbols = statemachine.encode(train, enc)
+        self.assertTrue(symbols.iloc[0].split("_")[1].startswith("f"))
+        self.assertNotEqual(symbols.iloc[0], symbols.iloc[-1])
+
+    def test_merging_collapses_identical_futures(self):
+        pdfa = statemachine.learn_pdfa([("a", "b")] * 8 + [("a", "c")] * 8)
+        self.assertEqual(pdfa.n_states, 3)  # root, a, one merged final state
+
+    def test_seen_trace_scores_above_unseen(self):
+        pdfa = statemachine.learn_pdfa([("a", "b")] * 10)
+        self.assertGreater(statemachine.trace_score(pdfa, ("a", "b")),
+                           statemachine.trace_score(pdfa, ("a", "never-seen")))
+
+    def test_plot_pdfa_writes_a_graph(self):
+        import tempfile
+        from pathlib import Path
+        pdfa = statemachine.learn_pdfa([("a", "b")] * 8 + [("a", "c")] * 8)
+        path = Path(tempfile.mkdtemp()) / "graph.png"
+        statemachine.plot_pdfa(pdfa, path=str(path))
+        self.assertGreater(path.stat().st_size, 1000)
+
+    def test_transition_probabilities_stay_within_unit_range(self):
+        traces = ([("a", "b", "c")] * 8 + [("a", "b", "d")] * 8
+                  + [("b", "c")] * 8 + [("a", "b")] * 8 + [("b",)] * 8)
+        pdfa = statemachine.learn_pdfa(traces)
+        for _, outgoing in pdfa.probs.values():
+            for _, probability in outgoing.values():
+                self.assertGreaterEqual(probability, 0.0)
+                self.assertLessEqual(probability, 1.0)
+
+    def test_end_to_end_flags_new_protocol_and_spares_benign(self):
+        import tempfile
+        from pathlib import Path
+        root = Path(tempfile.mkdtemp())
+        header = "ts,frame_len,src_ip,dst_ip,src_port,dst_port,proto\n"
+        benign_lines = [header] + [
+            f"{10.0 + w + i / 5:.4f},100,::1,::2,{1000 + w},8080,tcp"
+            for w in range(30) for i in range(5)]
+        attack_lines = [header] + [
+            f"{10.0 + w + i / 5:.4f},100,::1,::2,{2000 + w},8080,udp"
+            for w in range(30) for i in range(5)]
+        benign_path, attack_path = root / "benign.csv", root / "attack.csv"
+        benign_path.write_text("\n".join(benign_lines) + "\n")
+        attack_path.write_text("\n".join(attack_lines) + "\n")
+        benign_flags, attack_flags = statemachine.score_pair(
+            str(benign_path), str(attack_path))
+        self.assertLess(benign_flags.mean(), 0.2)
+        # 26 of 30 windows: the first TRACE_LEN - 1 windows hold no finished
+        # trace, so nothing can flag there by construction.
+        self.assertGreater(attack_flags.mean(), 0.8)
 
 
 if __name__ == "__main__":

@@ -72,7 +72,7 @@ features in favour of the ratios (`http_frac`, `mean_packet_size`), which are sc
 
 ```bash
 cd /Users/cos/Documents/school/ECEN403/RTCT1/Threat_Detection
-.venv/bin/python -m unittest -v tests                            # 46 tests
+.venv/bin/python -m unittest -v tests                            # 55 tests
 .venv/bin/python detector.py                                           # results.csv, benign_results.csv, anomaly_results.png
 .venv/bin/python sweep.py                                        # capture_manifest.csv, sweep_results.csv, sweep_summary.png
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv
