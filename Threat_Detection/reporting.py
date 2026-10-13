@@ -177,18 +177,16 @@ def _event_num(value):
     return number if np.isfinite(number) else None
 
 
-def to_events(results, *, detector, cutoff, location, window_size=WINDOW_SIZE):
+def to_events(results, *, detector, cutoff, location):
     """One dict per flagged window, in time order. Only what annotate() already computed.
 
-    location maps label/level/method (the capture point). The evaluation scenario
+    location maps name/level/method (the capture point). The evaluation scenario
     (benign/attack) is deliberately excluded: a live event has no scenario.
     cause is None when the detector cannot attribute (learned models, empty windows).
-    t_offset_s is seconds from the capture start; the live system replaces it with
-    a wall clock, so it is named offset and not timestamp.
     """
     events = []
     flagged = results[results["anomaly"].fillna(False)].sort_index()
-    for window, row in flagged.iterrows():
+    for _, row in flagged.iterrows():
         feature = row.get("top_feature")
         cause = None
         if pd.notna(feature):
@@ -200,8 +198,6 @@ def to_events(results, *, detector, cutoff, location, window_size=WINDOW_SIZE):
         events.append({"schema": EVENT_SCHEMA,
                        "detector": detector,
                        "cutoff": float(cutoff),
-                       "window": int(window),
-                       "t_offset_s": float(int(window) * window_size),
                        "location": dict(location),
                        "score": _event_num(row.get("anomaly_score")),
                        "persistent": bool(row.get("persistent_flag")),

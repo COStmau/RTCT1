@@ -6,8 +6,7 @@ will change; the `schema` field marks the version so both sides can tell.
 
 ```json
 {"schema": "rtct1.event.v0", "detector": "z_score", "cutoff": 3.0,
- "window": 9, "t_offset_s": 9.0,
- "location": {"label": "pod-nginx", "level": "pod", "method": "tcp"},
+ "location": {"name": "pod-nginx", "level": "pod", "method": "tcp"},
  "score": 9.41, "persistent": false, "status": "anomaly",
  "cause": {"feature": "total_bytes", "observed": 3906.0,
            "expected": 264.0, "spread": 386.96, "z": 9.41}}
@@ -19,11 +18,7 @@ the window and `cutoff` is the cutoff that was in force, so severity is always
 windows are emitted, so every score sits above its cutoff. Typical z_score
 values run 1 to 3 on normal traffic and 4 to 15 on attacks.
 
-`window` counts 1-second slices from the capture start and `t_offset_s` is the
-slice start in seconds from that same start. It is an offset, not a wall clock;
-the live system will replace it with real timestamps later.
-
-`location` says which capture point saw it: the label, the level (pod, node, or
+`location` says which capture point saw it: the name, the level (pod, node, or
 router), and the capture method. The evaluation scenario (benign or attack) is
 left out because live traffic has no scenario.
 

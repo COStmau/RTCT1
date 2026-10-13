@@ -808,12 +808,11 @@ class EventLogChecks(unittest.TestCase):
 
     def test_only_flagged_windows_emit_in_order(self):
         events = to_events(self.flagged_frame(), detector="z_score", cutoff=3.0,
-                           location={"label": "pod-nginx", "level": "pod", "method": "tcp"})
-        self.assertEqual([e["window"] for e in events], [3, 5])
+                           location={"name": "pod-nginx", "level": "pod", "method": "tcp"})
+        self.assertEqual([e["score"] for e in events], [5.0, None])
         first = events[0]
         self.assertEqual(first["schema"], "rtct1.event.v0")
-        self.assertEqual(first["t_offset_s"], 3.0)
-        self.assertEqual(first["location"]["label"], "pod-nginx")
+        self.assertEqual(first["location"]["name"], "pod-nginx")
         self.assertEqual(first["cause"]["feature"], "total_bytes")
         self.assertNotIn("scenario", first)
 
@@ -822,7 +821,7 @@ class EventLogChecks(unittest.TestCase):
         frame = self.flagged_frame()
         frame.loc[3, "top_feature"] = pd.NA  # learned detectors attribute nothing
         events = to_events(frame, detector="isolation_forest", cutoff=0.1,
-                           location={"label": "pod-nginx", "level": "pod", "method": "tcp"})
+                           location={"name": "pod-nginx", "level": "pod", "method": "tcp"})
         self.assertIsNone(events[0]["cause"])
         # window 5 has an infinite z: it must serialize as null, not Infinity.
         self.assertIsNone(events[1]["cause"]["z"])
