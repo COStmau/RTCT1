@@ -7,6 +7,8 @@ from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")  # before pyplot: this subsystem renders to files, never a window
+import json
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -18,7 +20,10 @@ from features import FEATURE_LABELS
 
 __all__ = ["flag_stats", "persistent_mask", "summarize_flags", "threshold_table",
            "plot_detection", "print_matrix", "plot_matrix", "plot_comparison",
-           "print_comparison", "plot_regime_split", "plot_snaplen", "write_report"]
+           "print_comparison", "plot_regime_split", "plot_snaplen", "write_report",
+           "to_events", "write_events"]
+
+EVENT_SCHEMA = "rtct1.event.v0"
 
 
 # --- one capture, printed and plotted ---------------------------------------------
@@ -158,6 +163,59 @@ def plot_detection(results, benign_results, mean, std, baseline_windows, path=No
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     fig.savefig(path, dpi=150)
     plt.close(fig)
+    return path
+
+
+# --- event log (starter contract for the response subsystem) --------------------------
+
+def _event_num(value):
+    """A JSON-safe number: finite floats pass through, NaN/inf become None."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if np.isfinite(number) else None
+
+
+def to_events(results, *, detector, cutoff, location, window_size=WINDOW_SIZE):
+    """One dict per flagged window, in time order. Only what annotate() already computed.
+
+    location maps label/level/method (the capture point). The evaluation scenario
+    (benign/attack) is deliberately excluded: a live event has no scenario.
+    cause is None when the detector cannot attribute (learned models, empty windows).
+    t_offset_s is seconds from the capture start; the live system replaces it with
+    a wall clock, so it is named offset and not timestamp.
+    """
+    events = []
+    flagged = results[results["anomaly"].fillna(False)].sort_index()
+    for window, row in flagged.iterrows():
+        feature = row.get("top_feature")
+        cause = None
+        if pd.notna(feature):
+            cause = {"feature": str(feature),
+                     "observed": _event_num(row.get("observed_value")),
+                     "expected": _event_num(row.get("expected_mean")),
+                     "spread": _event_num(row.get("expected_std")),
+                     "z": _event_num(row.get("feature_z_score"))}
+        events.append({"schema": EVENT_SCHEMA,
+                       "detector": detector,
+                       "cutoff": float(cutoff),
+                       "window": int(window),
+                       "t_offset_s": float(int(window) * window_size),
+                       "location": dict(location),
+                       "score": _event_num(row.get("anomaly_score")),
+                       "persistent": bool(row.get("persistent_flag")),
+                       "status": str(row.get("status")),
+                       "cause": cause})
+    return events
+
+
+def write_events(events, path=None):
+    """Write events as JSON Lines, one object per line. Returns the path."""
+    path = Path(resolve_output(path or "events.jsonl"))
+    with open(path, "w") as handle:
+        for event in events:
+            handle.write(json.dumps(event) + "\n")
     return path
 
 
