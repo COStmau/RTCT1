@@ -76,6 +76,31 @@ replay_active = Gauge(
     ["source"]
 )
 
+baseline_mean = Gauge(
+    "benign_baseline_mean",
+    "Frozen benign baseline mean",
+    ["source", "metric"]
+)
+# Z-Score Values
+
+
+baseline_stddev = Gauge(
+    "benign_baseline_stddev",
+    "Frozen benign baseline standard deviation",
+    ["source", "metric"]
+)
+
+baseline_lower = Gauge(
+    "benign_baseline_lower_3sigma",
+    "Frozen benign baseline lower 3-sigma boundary",
+    ["source", "metric"]
+)
+
+baseline_upper = Gauge(
+    "benign_baseline_upper_3sigma",
+    "Frozen benign baseline upper 3-sigma boundary",
+    ["source", "metric"]
+)
 
 REQUIRED_COLUMNS = [
     "packets_per_second",
@@ -88,7 +113,32 @@ REQUIRED_COLUMNS = [
     "unique_dst_ports",
 ]
 
+def load_baseline_stats(baseline_file, source):
+    baseline_df = pd.read_csv(baseline_file)
 
+    for _, row in baseline_df.iterrows():
+        metric = row["feature"]
+
+        baseline_mean.labels(
+            source=source,
+            metric=metric
+        ).set(float(row["mean"]))
+
+        baseline_stddev.labels(
+            source=source,
+            metric=metric
+        ).set(float(row["std_dev"]))
+
+        baseline_lower.labels(
+            source=source,
+            metric=metric
+        ).set(float(row["lower_3sigma"]))
+
+        baseline_upper.labels(
+            source=source,
+            metric=metric
+        ).set(float(row["upper_3sigma"]))
+        
 def set_gauge(gauge, source, value):
     """
     Publish the value using the correct source label.
@@ -218,6 +268,12 @@ def main():
     )
 
     parser.add_argument(
+    "--baseline-file",
+    required=True,
+    help="Frozen baseline statistics CSV"
+    )
+
+    parser.add_argument(
         "--source",
         required=True,
         help='Source label, for example "pod-nginx"'
@@ -254,6 +310,11 @@ def main():
     print(f"Metrics endpoint: http://localhost:{args.port}/metrics")
     print()
 
+    load_baseline_stats(
+    baseline_file=args.baseline_file,
+    source=args.source
+    )
+    
     replay(
         csv_file=args.csv_file,
         source=args.source,
