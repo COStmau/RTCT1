@@ -8,7 +8,7 @@ ALERGIA state-merging test, and new traces score by mean log transition
 probability. Traces below the 5th percentile of held-out benign scores flag
 their window, the same budget convention compare.py uses for the forest/SVM.
 
-Run it with:  .venv/bin/python statemachine.py
+Run it with:  .venv/bin/python demo.py 3
 """
 import numpy as np
 import pandas as pd
@@ -424,25 +424,13 @@ def statemachine_rows(described, method="tcp", encoding="percentile"):
             .reset_index(drop=True))
 
 
-def main():
-    import local_paths
-
-    benign_flags, attack_flags = score_pair(local_paths.BENIGN_CSV,
-                                            local_paths.ATTACK_CSV)
-    benign_stats, attack_stats = flag_stats(benign_flags), flag_stats(attack_flags)
-    print(f"held-out benign: {benign_stats['flagged']}/{benign_stats['windows']} flagged "
-          f"({benign_stats['flagged_fraction']:.2f})")
-    print(f"attack:          {attack_stats['flagged']}/{attack_stats['windows']} flagged "
-          f"({attack_stats['flagged_fraction']:.2f})")
+def write_pair(benign_flags, attack_flags, path=None):
+    """The two per-window flag series as one CSV: one row per window, benign and attack."""
     pair = pd.DataFrame([
         {"scenario": "benign", "window": w, "flagged": bool(f)}
         for w, f in benign_flags.items()] + [
         {"scenario": "attack", "window": w, "flagged": bool(f)}
         for w, f in attack_flags.items()])
-    out_file = resolve_output(PAIR_CSV)
+    out_file = resolve_output(path or PAIR_CSV)
     pair.to_csv(out_file, index=False)
-    print(f"Wrote {out_file} | rows={len(pair)}")
-
-
-if __name__ == "__main__":
-    main()
+    return out_file

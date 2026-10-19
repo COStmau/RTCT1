@@ -32,11 +32,15 @@ def _fit_z(benign):
     return detector.mean, detector.std
 
 
-def _score_z(windows, mean, std):
-    """score against a given (mean, std) pair, as the old detect_anomalies() did."""
+def _score_z(windows, mean, std, cutoff=None):
+    """score against a given (mean, std) pair, as the old detect_anomalies() did.
+
+    `cutoff` defaults to the module threshold; a fixture whose values sit near that
+    threshold passes its own, so changing the constant cannot flip its expectations.
+    """
     detector = build("z_score")
     detector.mean, detector.std = mean, std
-    detector.cutoff = detector.threshold
+    detector.cutoff = detector.threshold if cutoff is None else cutoff
     return detector.annotate(windows)
 
 
@@ -116,7 +120,9 @@ class DetectorChecks(unittest.TestCase):
         features = pd.DataFrame({"packet_count": [20, 20, 20, 2, 20, 20]})
         mean = pd.Series({"packet_count": 5.0})
         std = pd.Series({"packet_count": 1.0})
-        out = flag_persistent(detect_anomalies(features, mean, std))
+        # Its own cutoff: at 5 spreads the packet_count of 2 (z = -3) stays normal, so
+        # the fixture tests the persistence rule rather than where the constant sits.
+        out = flag_persistent(_score_z(features, mean, std, cutoff=5.0))
         self.assertEqual(out["persistent_flag"].tolist(),
                          [False, False, True, False, False, False])
         self.assertEqual(out["status"].iloc[2], "persistent_anomaly")

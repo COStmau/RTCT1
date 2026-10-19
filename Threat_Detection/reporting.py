@@ -1,6 +1,6 @@
 """Everything that shows a human something. Takes results, renders them.
 
-No detection logic lives here. Each function takes already-scored results and writes stdout
+No detection logic. Each function takes already-scored results and writes stdout
 or an image; none of them re-derives a number another module already computed.
 """
 from pathlib import Path
@@ -526,8 +526,8 @@ def write_report(sweep, ablation, manifest, comparison, chart_dir=None, path=Non
         f"from that baseline, and an alert requires {PERSISTENCE_WINDOW} flagged slices in a "
         f"row. The baseline is a median and a MAD rather than a mean and standard deviation: a "
         f"mean/std pair is set by the bulk-transfer windows instead of by normal traffic. "
-        f"Regenerate everything in this file with `sweep.py`, `compare.py`, and "
-        f"`walkthrough.py`.")
+        f"Regenerate everything in this file with `demo.py`, which runs the sweep, the "
+        f"ablation, the comparison and this report in order.")
     add("")
 
     path.write_text("\n".join(lines) + "\n")
