@@ -222,3 +222,17 @@ The flag alphabet is judged by a rule committed in `1c83add`, before any AUROC e
 The constants are `KEEP_AUC_GAIN` and `MAX_OTHER_LOSS` in `flag_verdict.py`, and `decide()`
 applies them. A near miss is a drop and gets reported as one; the thresholds are not
 renegotiated after the numbers arrive.
+
+Measured 2026-10-20 with `flag_scores.py`, 31 strata, tcp: verdict **drop**. Target
+`pod-lidar/lidar attack` AUROC 0.868 to 0.868, detection 0.273 to 0.273 at a realised benign
+rate of 0.133, so the raw-fraction gain on that stratum (0.531 to 0.578) was a threshold
+shift, not better ranking. `node-child4/injection attack` lost 0.035 AUROC and
+`router-any/injection attack` lost 0.051, the latter above the 0.05 allowance. One trap the
+table shows: `router-any` detection at the matched rate rose 0.188 to 0.469 while its AUROC
+fell, because with 26 benign windows a moved threshold can buy detection without better
+ranking. That is why the rule is written on AUROC.
+
+Separate measurement, worth keeping: the nominal 5% cutoff is applied to trace scores, but a
+window flags when its most anomalous trace clears the cutoff, so the median realised benign
+window rate across strata is 0.217, not 0.05. Quote the realised rate beside any detection
+number.
