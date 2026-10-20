@@ -85,7 +85,15 @@ Underneath the menu, the same commands run directly:
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv
 .venv/bin/python compare.py
 .venv/bin/python feature_value.py
+.venv/bin/python statemachine.py                      # PDFA sweep, 43 rows, about 13 seconds
+.venv/bin/python statemachine.py --method ptcp --out statemachine_sweep_ptcp.csv
 ```
+
+The two sweeps do not have the same row count, and the gap is not a missing capture.
+`sweep_results.csv` covers both capture methods and holds 88 rows. `statemachine_sweep.csv`
+runs one method per invocation, so 44 strata, and drops the quarantined zero-timestamp capture
+(`nginx attack / pod-robot-controller`), leaving 43. Run it twice, once per method, to compare
+against the 88-row file.
 
 Generated files always land in `Threat_Detection/outputs/`, whichever directory you run
 from. Delete `outputs/capture_manifest.csv` after any dataset change, or the sweep scores

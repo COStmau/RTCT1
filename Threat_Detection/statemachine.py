@@ -8,7 +8,8 @@ ALERGIA state-merging test, and new traces score by mean log transition
 probability. Traces below the 5th percentile of held-out benign scores flag
 their window, the same budget convention compare.py uses for the forest/SVM.
 
-Run it with:  .venv/bin/python demo.py 3
+Run it with:  .venv/bin/python demo.py 3      (the narrated pair demo)
+              .venv/bin/python statemachine.py  (every stratum, one row each)
 """
 import numpy as np
 import pandas as pd
@@ -24,6 +25,8 @@ NBINS = 4
 ALERGIA_ALPHA = 0.05
 MISSING_PROB = 1e-6
 PAIR_CSV = "statemachine_pair.csv"
+SWEEP_CSV = "statemachine_sweep.csv"
+MANIFEST_FILE = "capture_manifest.csv"   # inside outputs/
 
 
 def load_flow_packets(path):
@@ -434,3 +437,41 @@ def write_pair(benign_flags, attack_flags, path=None):
     out_file = resolve_output(path or PAIR_CSV)
     pair.to_csv(out_file, index=False)
     return out_file
+
+
+def main():
+    """Write one flag_stats row per stratum: the sweep behind the pair demo.
+
+    Same shape as sweep.py's output, so the two detectors can be compared row by row.
+    """
+    import argparse
+
+    import local_paths
+    from data_io import load_manifest
+
+    parser = argparse.ArgumentParser(
+        description="Score every capture against its matched benign reference with the "
+                    "state machine. One row per stratum.")
+    parser.add_argument("--method", default="tcp", choices=("tcp", "ptcp"),
+                        help="capture method; tcp and ptcp are separate measurements")
+    parser.add_argument("--encoding", default="percentile",
+                        choices=("percentile", "frequency"))
+    parser.add_argument("--out", default=SWEEP_CSV)
+    parser.add_argument("--manifest", default=MANIFEST_FILE)
+    args = parser.parse_args()
+
+    manifest = load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest)
+    rows = statemachine_rows(manifest, method=args.method, encoding=args.encoding)
+    out_file = resolve_output(args.out)
+    rows.to_csv(out_file, index=False)
+
+    print(f"Wrote {out_file} | rows={len(rows)} | method={args.method} "
+          f"| encoding={args.encoding}")
+    for scenario, group in rows.groupby("scenario"):
+        print(f"  {scenario:<16} flagged fraction {group['flagged_fraction'].mean():.3f} "
+              f"(mean over {len(group)} strata) | {int(group['windows'].sum())} windows")
+    print(f"Windows are {WINDOW_SIZE:g}s. Flags are deviations, not confirmed attacks.")
+
+
+if __name__ == "__main__":
+    main()
