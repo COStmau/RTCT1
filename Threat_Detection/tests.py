@@ -11,6 +11,7 @@ import pandas as pd
 import boundaries
 import data_io
 import features
+import flag_verdict
 import statemachine
 import sweep
 from detectors import build
@@ -939,6 +940,55 @@ class BoundaryChecks(unittest.TestCase):
 
     def test_warmup_covers_a_whole_trace(self):
         self.assertEqual(boundaries.WARMUP_WINDOWS, statemachine.TRACE_LEN)
+
+
+class FlagVerdictChecks(unittest.TestCase):
+    """The keep-or-drop rule for the flag alphabet, fixed before any AUROC was computed."""
+
+    def row(self, label, scenario, auc_plain, auc_flags, det_plain=0.5, det_flags=0.5):
+        return {"label": label, "scenario": scenario, "auc_plain": auc_plain,
+                "auc_flags": auc_flags, "det_plain": det_plain, "det_flags": det_flags}
+
+    def rows(self, target_plain=0.50, target_flags=0.62, router=0.60, child4=0.55,
+             det_plain=0.50, det_flags=0.50):
+        return [self.row("pod-lidar", "lidar attack", target_plain, target_flags,
+                         det_plain, det_flags),
+                self.row("router-any", "injection attack", router, router),
+                self.row("node-child4", "injection attack", child4, child4)]
+
+    def test_keep_when_the_target_gain_clears_the_bar(self):
+        verdict, reasons = flag_verdict.decide(self.rows())
+        self.assertEqual(verdict, "keep")
+        self.assertTrue(reasons)
+
+    def test_keep_at_the_exact_boundaries(self):
+        rows = self.rows(target_flags=0.60, router=0.65)
+        rows[1]["auc_flags"] = 0.60          # exactly the 0.05 allowed loss
+        verdict, _ = flag_verdict.decide(rows)
+        self.assertEqual(verdict, "keep")
+
+    def test_drop_when_the_target_gain_is_too_small(self):
+        verdict, reasons = flag_verdict.decide(self.rows(target_flags=0.58))
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("target AUC gain" in reason for reason in reasons))
+
+    def test_drop_when_target_detection_falls(self):
+        verdict, reasons = flag_verdict.decide(self.rows(det_plain=0.55, det_flags=0.50))
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("detection fell" in reason for reason in reasons))
+
+    def test_drop_when_another_stratum_loses_more_than_allowed(self):
+        rows = self.rows()
+        rows[1]["auc_plain"], rows[1]["auc_flags"] = 0.70, 0.63   # 0.07 loss on router-any
+        verdict, reasons = flag_verdict.decide(rows)
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("router-any" in reason for reason in reasons))
+
+    def test_undecidable_when_a_stratum_is_missing(self):
+        rows = self.rows()[:-1]
+        verdict, reasons = flag_verdict.decide(rows)
+        self.assertEqual(verdict, "undecidable")
+        self.assertTrue(any("node-child4" in reason for reason in reasons))
 
 
 if __name__ == "__main__":
