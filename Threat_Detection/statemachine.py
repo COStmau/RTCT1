@@ -22,6 +22,7 @@ from features import BENIGN_TRAIN_FRACTION, WINDOW_SIZE
 
 FLOW_COLUMNS = ["ts", "frame_len", "src_ip", "dst_ip", "src_port",
                 "dst_port", "proto"]
+FLAG_COLUMNS = ["tcp_syn", "tcp_rst"]
 TRACE_LEN = 5
 NBINS = 4
 ALERGIA_ALPHA = 0.05
@@ -31,13 +32,14 @@ SWEEP_CSV = "statemachine_sweep.csv"
 MANIFEST_FILE = "capture_manifest.csv"   # inside outputs/
 
 
-def load_flow_packets(path):
-    """Read only the packet columns flows are built from."""
-    return pd.read_csv(path, usecols=FLOW_COLUMNS, low_memory=False)
+def load_flow_packets(path, flags=False):
+    """Read only the packet columns flows are built from; flag columns when asked."""
+    columns = FLOW_COLUMNS + (FLAG_COLUMNS if flags else [])
+    return pd.read_csv(path, usecols=columns, low_memory=False)
 
 
 def make_flows(packets):
-    """One row per 5-tuple flow: start time, protocol, bytes, duration."""
+    """One row per 5-tuple flow: start time, protocol, bytes, duration, flag presence."""
     required = set(FLOW_COLUMNS) - {"proto"}
     missing = required - set(packets.columns)
     if missing:
@@ -49,11 +51,25 @@ def make_flows(packets):
     frames["frame_len"] = pd.to_numeric(frames["frame_len"], errors="raise")
     if not np.isfinite(frames[["ts", "frame_len"]].to_numpy()).all():
         raise ValueError("Packet columns ts/frame_len contain missing or nonfinite values.")
+    has_flags = all(column in frames.columns for column in FLAG_COLUMNS)
+    if has_flags:
+        for column in FLAG_COLUMNS:
+            frames[column] = pd.to_numeric(frames[column], errors="raise")
     grouped = frames.groupby(["src_ip", "dst_ip", "src_port", "dst_port",
                               "proto"], dropna=False)
-    flows = grouped.agg(start_ts=("ts", "min"), bytes=("frame_len", "sum"),
-                        duration=("ts", lambda s: float(s.max() - s.min())),
-                        proto=("proto", "first")).reset_index(drop=True)
+    aggregations = {
+        "start_ts": ("ts", "min"),
+        "bytes": ("frame_len", "sum"),
+        "duration": ("ts", lambda s: float(s.max() - s.min())),
+        "proto": ("proto", "first"),
+    }
+    if has_flags:
+        aggregations["syn_seen"] = ("tcp_syn", "max")
+        aggregations["rst_seen"] = ("tcp_rst", "max")
+    flows = grouped.agg(**aggregations).reset_index(drop=True)
+    if has_flags:
+        flows["syn_seen"] = flows["syn_seen"].astype(bool)
+        flows["rst_seen"] = flows["rst_seen"].astype(bool)
     return flows.sort_values("start_ts").reset_index(drop=True)
 
 
@@ -71,9 +87,9 @@ def segment_flows(flows, t0, window_size=WINDOW_SIZE):
     return flows[~crossing].reset_index(drop=True), int(crossing.sum())
 
 
-def fit_percentile(flows, nbins=NBINS):
+def fit_percentile(flows, nbins=NBINS, flags=False):
     """Quantile bin edges for bytes and duration, fitted on benign flows."""
-    enc = {"kind": "percentile"}
+    enc = {"kind": "percentile", "flags": bool(flags)}
     for column in ("bytes", "duration"):
         cuts = np.quantile(flows[column].to_numpy(dtype=float),
                            np.linspace(0, 1, nbins + 1))
@@ -81,13 +97,13 @@ def fit_percentile(flows, nbins=NBINS):
     return enc
 
 
-def fit_frequency(flows, nbins=NBINS, min_count=3):
+def fit_frequency(flows, nbins=NBINS, min_count=3, flags=False):
     """Frequent exact values keep their own label; the rest is binned.
 
     The paper's frequency encoding with a count threshold, adapted to
     near-continuous flow sizes: only exactly repeated values earn a label.
     """
-    enc = {"kind": "frequency"}
+    enc = {"kind": "frequency", "flags": bool(flags)}
     for column in ("bytes", "duration"):
         counts = flows[column].value_counts()
         frequent = sorted(counts[counts.ge(min_count)].index.tolist())
@@ -105,11 +121,32 @@ def _bin(values, edges):
                    0, len(edges) - 2)
 
 
+def _flag_bits(flows, enabled):
+    """`s1r0` per TCP flow when flags are enabled; empty strings otherwise."""
+    if not enabled:
+        return [""] * len(flows)
+    missing = {"syn_seen", "rst_seen"} - set(flows.columns)
+    if missing:
+        raise ValueError("Flags requested but flows lack syn_seen/rst_seen; "
+                         "load them with load_flow_packets(path, flags=True).")
+    return [f"s{int(syn)}r{int(rst)}" if str(proto).lower() == "tcp" else ""
+            for proto, syn, rst in zip(flows["proto"], flows["syn_seen"],
+                                       flows["rst_seen"])]
+
+
 def encode(flows, enc):
-    """Flows to PROTO_BYTES_DURATION symbols using the fitted encoding."""
-    return pd.Series([f"{p}_{_encode_value(b, enc['bytes'])}_{_encode_value(d, enc['duration'])}"
-                      for p, b, d in zip(flows["proto"], flows["bytes"], flows["duration"])],
-                     index=flows.index)
+    """Flows to PROTO_[FLAGS_]SIZE_DURATION symbols using the fitted encoding."""
+    symbols = []
+    for proto, flags, size, duration in zip(flows["proto"],
+                                            _flag_bits(flows, enc.get("flags", False)),
+                                            flows["bytes"], flows["duration"]):
+        parts = [str(proto)]
+        if flags:
+            parts.append(flags)
+        parts += [_encode_value(size, enc["bytes"]),
+                  _encode_value(duration, enc["duration"])]
+        symbols.append("_".join(parts))
+    return pd.Series(symbols, index=flows.index)
 
 
 def _encode_value(value, spec):
@@ -325,10 +362,10 @@ def split_flows(flows, train_fraction=BENIGN_TRAIN_FRACTION):
 
 
 def fit_model(train_flows, nbins=NBINS, trace_len=TRACE_LEN, alpha=ALERGIA_ALPHA,
-              encoding="percentile"):
+              encoding="percentile", flags=False):
     """Bin edges plus PDFA learned from benign training flows."""
     fitter = fit_frequency if encoding == "frequency" else fit_percentile
-    enc = fitter(train_flows, nbins)
+    enc = fitter(train_flows, nbins, flags=flags)
     traces = make_traces(encode(train_flows, enc), trace_len)
     if not traces:
         raise ValueError("Too few training flows for one trace.")

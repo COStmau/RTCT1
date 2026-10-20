@@ -774,6 +774,62 @@ class StateMachineChecks(unittest.TestCase):
         per_chunk = [statemachine.FrequencyScorer(pdfa).score(trace) for trace in traces]
         self.assertEqual(whole, per_chunk)
 
+    def test_load_flow_packets_reads_flags_only_when_asked(self):
+        import tempfile
+        root = Path(tempfile.mkdtemp())
+        header = ("ts,frame_len,src_ip,dst_ip,src_port,dst_port,proto,"
+                  "tcp_syn,tcp_rst\n")
+        path = root / "one.csv"
+        path.write_text(header + "10.0,100,::1,::2,1000,80,tcp,1,0\n")
+        plain = statemachine.load_flow_packets(str(path))
+        with_flags = statemachine.load_flow_packets(str(path), flags=True)
+        self.assertNotIn("tcp_syn", plain.columns)
+        self.assertIn("tcp_syn", with_flags.columns)
+        self.assertIn("tcp_rst", with_flags.columns)
+
+    def test_make_flows_marks_flag_presence_per_flow(self):
+        packets = pd.DataFrame({
+            "ts": [10.0, 10.2, 11.0],
+            "frame_len": [100, 100, 100],
+            "src_ip": ["a", "a", "c"], "dst_ip": ["b", "b", "d"],
+            "src_port": [1, 1, 2], "dst_port": [80, 80, 443],
+            "proto": ["tcp", "tcp", "tcp"],
+            "tcp_syn": [1, 0, 0], "tcp_rst": [0, 1, 0],
+        })
+        flows = statemachine.make_flows(packets)
+        self.assertEqual(list(flows["syn_seen"]), [True, False])
+        self.assertEqual(list(flows["rst_seen"]), [True, False])
+
+    def test_encode_adds_flag_bits_only_for_tcp_when_asked(self):
+        flows = pd.DataFrame({"proto": ["tcp", "tcp", "udp"],
+                              "bytes": [10, 900, 50],
+                              "duration": [0.1, 0.2, 0.1],
+                              "syn_seen": [True, False, False],
+                              "rst_seen": [False, True, False]})
+        plain = statemachine.fit_percentile(flows)
+        with_flags = statemachine.fit_percentile(flows, flags=True)
+        plain_symbols = list(statemachine.encode(flows, plain))
+        flag_symbols = list(statemachine.encode(flows, with_flags))
+        self.assertEqual(len(plain_symbols[0].split("_")), 3)
+        self.assertTrue(flag_symbols[0].startswith("tcp_s1r0_p"))
+        self.assertTrue(flag_symbols[1].startswith("tcp_s0r1_p"))
+        # UDP has no flags; its symbol stays three-part so its alphabet does not grow.
+        self.assertTrue(flag_symbols[2].startswith("udp_p"))
+        self.assertEqual(len(flag_symbols[2].split("_")), 3)
+
+    def test_encode_refuses_flags_when_flows_have_none(self):
+        flows = pd.DataFrame({"proto": ["tcp"], "bytes": [10], "duration": [0.1]})
+        enc = statemachine.fit_percentile(flows, flags=True)
+        with self.assertRaises(ValueError):
+            statemachine.encode(flows, enc)
+
+    def test_fit_model_carries_the_flag_setting(self):
+        flows = pd.DataFrame({"proto": ["tcp"] * 6, "bytes": range(6),
+                              "duration": [0.1] * 6,
+                              "syn_seen": [True] * 6, "rst_seen": [False] * 6})
+        self.assertTrue(statemachine.fit_model(flows, flags=True)["enc"]["flags"])
+        self.assertFalse(statemachine.fit_model(flows)["enc"]["flags"])
+
     def test_percentile_encoding_separates_small_from_large(self):
         train = pd.DataFrame({"proto": ["tcp"] * 4, "bytes": [10, 20, 30, 40],
                               "duration": [0.1] * 4})
