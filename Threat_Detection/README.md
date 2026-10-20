@@ -50,6 +50,7 @@ these as documented; they also run on their own.
 |---|---|
 | `tests.py` | All unit tests. |
 | `boundaries.py` | Evaluation boundaries in one place: the 70/30 split, the six bulk-transfer files that never calibrate, and the warm-up window. |
+| `flag_verdict.py` | The keep-or-drop rule for the flag alphabet, committed before the measurement, with `decide()` applying it. |
 | `local_paths.py` | Your local dataset paths. Not committed; copy `local_paths.example.py` and fill it in. Only the entry points read it. |
 | `PROGRESS.md` | Why the design is what it is: decisions, retractions, what is not claimed, what is next. |
 | `EVENT_LOG.md` | The detection → response event contract (`LogV0`). |

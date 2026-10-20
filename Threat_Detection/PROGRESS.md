@@ -208,3 +208,17 @@ nineteen to nine, and attack seconds from fifty-one to fifty-four.
 What is next: the real blocker is that we have one benign recording per capture point.
 Per-point calibration needs several, or there is nothing stationary to calibrate against.
 That is a question for the sponsor."
+
+## Flag verdict: the rule was fixed before the measurement (2026-10-20)
+
+The flag alphabet is judged by a rule committed in `1c83add`, before any AUROC existed:
+
+- keep only if `pod-lidar` on `lidar attack` gains at least 0.10 AUROC over the plain
+  alphabet, with detection at the plain model's realised benign fraction no worse;
+- keep only if neither `router-any` nor `node-child4` on `injection attack` loses more than
+  0.05 AUROC;
+- a missing stratum is `undecidable`, never a silent keep.
+
+The constants are `KEEP_AUC_GAIN` and `MAX_OTHER_LOSS` in `flag_verdict.py`, and `decide()`
+applies them. A near miss is a drop and gets reported as one; the thresholds are not
+renegotiated after the numbers arrive.
