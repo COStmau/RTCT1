@@ -8,7 +8,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import boundaries
 import data_io
+import features
 import statemachine
 import sweep
 from detectors import build
@@ -824,6 +826,21 @@ class EventLogChecks(unittest.TestCase):
         path = Path(tempfile.mkdtemp()) / "events.jsonl"
         write_events(events, path=str(path))
         self.assertEqual(len(path.read_text().strip().split("\n")), 3)
+
+
+class BoundaryChecks(unittest.TestCase):
+    """The evaluation boundaries live in one module and both paths must read it."""
+
+    def test_bulk_labels_cover_six_files(self):
+        self.assertEqual(boundaries.BULK_LABELS,
+                         {"router-any", "node-child4", "pod-robot-controller"})
+        self.assertEqual(len(boundaries.BULK_LABELS) * len(data_io.METHODS), 6)
+
+    def test_split_fraction_comes_from_boundaries(self):
+        self.assertEqual(features.BENIGN_TRAIN_FRACTION, boundaries.TRAIN_FRACTION)
+
+    def test_warmup_covers_a_whole_trace(self):
+        self.assertEqual(boundaries.WARMUP_WINDOWS, statemachine.TRACE_LEN)
 
 
 if __name__ == "__main__":

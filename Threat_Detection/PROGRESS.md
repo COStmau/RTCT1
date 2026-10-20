@@ -159,6 +159,11 @@ test of whether detection survives without the length features is
   3-window capture the same as an 80-window one. Per-scenario window counts belong beside every
   such number, and the injection column is not comparable to the others.
 
+- **`boundaries.py` names two policies the code does not enforce yet.** `BULK_LABELS` (the six
+  bulk-transfer files) and `WARMUP_WINDOWS` have no consumer. Wiring them into
+  `statemachine_rows` and the windower drops three labels from the sweep and changes the
+  numbers, so it lands with the windowed scorer, after the static baseline is frozen.
+
 ## Next: feature selection and the interface question
 
 | Candidate feature | Source column | Status |

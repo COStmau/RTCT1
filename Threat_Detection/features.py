@@ -6,6 +6,7 @@ feature set, and nothing about what counts as an anomaly.
 import numpy as np
 import pandas as pd
 
+import boundaries
 from data_io import PACKET_COLUMNS, load_capture, timebase_issues  # noqa: F401  re-exported: callers ask features for the format
 
 WINDOW_SIZE = 1.0
@@ -44,7 +45,7 @@ PACKET_COLUMNS_EXTRA = ["tcp_payload_len", "udp_length", "is_http", "is_dns", "i
 # Columns the aggregator cannot do without, regardless of which features are asked for.
 REQUIRED_COLUMNS = {"ts", "frame_len", "iat", "dst_ip", "dst_port"}
 
-BENIGN_TRAIN_FRACTION = 0.7
+BENIGN_TRAIN_FRACTION = boundaries.TRAIN_FRACTION
 
 
 def make_windows(packets, window_size=WINDOW_SIZE):
