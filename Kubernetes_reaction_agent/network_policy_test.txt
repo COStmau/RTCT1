@@ -1,0 +1,11 @@
+Terminal: kubectl exec -n network-test pod-a -- wget -T 3 -qO- http://pod-b:8080
+
+API Calls:
+    get_pod_names, network-test
+    list_network_policies, network-test
+    create_network_policy, network-test
+    list_network_policies, network-test
+    
+    delete_network_policy, deny-pod-a-egress, network-test
+
+    list_network_policies, network-test

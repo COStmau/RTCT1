@@ -4,3 +4,7 @@ ATTACK_CSV = ""
 # Optional independent benign capture. If blank or absent, use the first 70%
 # of BENIGN_CSV windows for the baseline and hold out the last 30% to evaluate.
 BENIGN_EVAL_CSV = ""
+
+# Root of the processed KUBEDATA tree (the folder containing benign/, nginx attack/,
+# lidar attack/, injection attack/). Leave blank to keep using BENIGN_CSV/ATTACK_CSV only.
+KUBEDATA_ROOT = ""

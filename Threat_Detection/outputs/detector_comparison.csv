@@ -1,0 +1,262 @@
+detector,scenario,label,method,windows,flagged,flagged_fraction,persistent,persistent_fraction
+isolation_forest,benign,node-child1,ptcp,18,1,0.0556,0,0.0
+isolation_forest,injection attack,node-child1,ptcp,6,5,0.8333,3,0.5
+isolation_forest,lidar attack,node-child1,ptcp,61,37,0.6066,23,0.377
+isolation_forest,nginx attack,node-child1,ptcp,69,41,0.5942,11,0.1594
+isolation_forest,benign,node-child1,tcp,19,1,0.0526,0,0.0
+isolation_forest,injection attack,node-child1,tcp,11,8,0.7273,4,0.3636
+isolation_forest,lidar attack,node-child1,tcp,64,48,0.75,37,0.5781
+isolation_forest,nginx attack,node-child1,tcp,72,39,0.5417,11,0.1528
+isolation_forest,benign,node-child2,ptcp,19,1,0.0526,0,0.0
+isolation_forest,injection attack,node-child2,ptcp,3,0,0.0,0,0.0
+isolation_forest,lidar attack,node-child2,ptcp,61,5,0.082,0,0.0
+isolation_forest,nginx attack,node-child2,ptcp,80,11,0.1375,4,0.05
+isolation_forest,benign,node-child2,tcp,19,1,0.0526,0,0.0
+isolation_forest,injection attack,node-child2,tcp,21,19,0.9048,15,0.7143
+isolation_forest,lidar attack,node-child2,tcp,63,10,0.1587,1,0.0159
+isolation_forest,nginx attack,node-child2,tcp,82,28,0.3415,3,0.0366
+isolation_forest,benign,node-child4,ptcp,18,1,0.0556,0,0.0
+isolation_forest,injection attack,node-child4,ptcp,16,0,0.0,0,0.0
+isolation_forest,lidar attack,node-child4,ptcp,61,0,0.0,0,0.0
+isolation_forest,nginx attack,node-child4,ptcp,80,3,0.0375,0,0.0
+isolation_forest,benign,node-child4,tcp,20,1,0.05,0,0.0
+isolation_forest,injection attack,node-child4,tcp,31,0,0.0,0,0.0
+isolation_forest,lidar attack,node-child4,tcp,64,2,0.0312,0,0.0
+isolation_forest,nginx attack,node-child4,tcp,84,1,0.0119,0,0.0
+isolation_forest,benign,node-gchild9,ptcp,17,1,0.0588,0,0.0
+isolation_forest,injection attack,node-gchild9,ptcp,22,9,0.4091,2,0.0909
+isolation_forest,lidar attack,node-gchild9,ptcp,54,3,0.0556,0,0.0
+isolation_forest,nginx attack,node-gchild9,ptcp,76,5,0.0658,0,0.0
+isolation_forest,benign,node-gchild9,tcp,19,1,0.0526,0,0.0
+isolation_forest,injection attack,node-gchild9,tcp,32,5,0.1562,0,0.0
+isolation_forest,lidar attack,node-gchild9,tcp,63,1,0.0159,0,0.0
+isolation_forest,nginx attack,node-gchild9,tcp,62,6,0.0968,0,0.0
+isolation_forest,benign,pod-camera,ptcp,18,0,0.0,0,0.0
+isolation_forest,injection attack,pod-camera,ptcp,18,5,0.2778,1,0.0556
+isolation_forest,lidar attack,pod-camera,ptcp,59,6,0.1017,2,0.0339
+isolation_forest,nginx attack,pod-camera,ptcp,79,5,0.0633,1,0.0127
+isolation_forest,benign,pod-camera,tcp,19,0,0.0,0,0.0
+isolation_forest,injection attack,pod-camera,tcp,20,9,0.45,4,0.2
+isolation_forest,lidar attack,pod-camera,tcp,62,11,0.1774,6,0.0968
+isolation_forest,nginx attack,pod-camera,tcp,79,8,0.1013,3,0.038
+isolation_forest,benign,pod-lidar,ptcp,18,0,0.0,0,0.0
+isolation_forest,injection attack,pod-lidar,ptcp,11,10,0.9091,8,0.7273
+isolation_forest,lidar attack,pod-lidar,ptcp,62,47,0.7581,38,0.6129
+isolation_forest,nginx attack,pod-lidar,ptcp,69,40,0.5797,8,0.1159
+isolation_forest,benign,pod-lidar,tcp,20,1,0.05,0,0.0
+isolation_forest,injection attack,pod-lidar,tcp,11,6,0.5455,1,0.0909
+isolation_forest,lidar attack,pod-lidar,tcp,64,46,0.7188,37,0.5781
+isolation_forest,nginx attack,pod-lidar,tcp,72,17,0.2361,1,0.0139
+isolation_forest,benign,pod-nginx,ptcp,18,1,0.0556,0,0.0
+isolation_forest,injection attack,pod-nginx,ptcp,7,0,0.0,0,0.0
+isolation_forest,lidar attack,pod-nginx,ptcp,61,1,0.0164,0,0.0
+isolation_forest,nginx attack,pod-nginx,ptcp,58,43,0.7414,30,0.5172
+isolation_forest,benign,pod-nginx,tcp,19,1,0.0526,0,0.0
+isolation_forest,injection attack,pod-nginx,tcp,9,0,0.0,0,0.0
+isolation_forest,lidar attack,pod-nginx,tcp,63,2,0.0317,0,0.0
+isolation_forest,nginx attack,pod-nginx,tcp,60,50,0.8333,46,0.7667
+isolation_forest,benign,pod-robot-controller,ptcp,19,1,0.0526,0,0.0
+isolation_forest,injection attack,pod-robot-controller,ptcp,14,0,0.0,0,0.0
+isolation_forest,lidar attack,pod-robot-controller,ptcp,62,0,0.0,0,0.0
+isolation_forest,nginx attack,pod-robot-controller,ptcp,78,6,0.0769,0,0.0
+isolation_forest,benign,pod-robot-controller,tcp,20,1,0.05,0,0.0
+isolation_forest,injection attack,pod-robot-controller,tcp,11,0,0.0,0,0.0
+isolation_forest,lidar attack,pod-robot-controller,tcp,66,3,0.0455,0,0.0
+isolation_forest,benign,pod-robot-hardware,ptcp,17,1,0.0588,0,0.0
+isolation_forest,injection attack,pod-robot-hardware,ptcp,22,9,0.4091,4,0.1818
+isolation_forest,lidar attack,pod-robot-hardware,ptcp,54,0,0.0,0,0.0
+isolation_forest,nginx attack,pod-robot-hardware,ptcp,43,4,0.093,0,0.0
+isolation_forest,benign,pod-robot-hardware,tcp,20,1,0.05,0,0.0
+isolation_forest,injection attack,pod-robot-hardware,tcp,30,4,0.1333,0,0.0
+isolation_forest,lidar attack,pod-robot-hardware,tcp,63,2,0.0317,0,0.0
+isolation_forest,nginx attack,pod-robot-hardware,tcp,58,2,0.0345,0,0.0
+isolation_forest,benign,router-any,ptcp,19,1,0.0526,0,0.0
+isolation_forest,injection attack,router-any,ptcp,61,0,0.0,0,0.0
+isolation_forest,lidar attack,router-any,ptcp,67,1,0.0149,0,0.0
+isolation_forest,nginx attack,router-any,ptcp,85,7,0.0824,1,0.0118
+isolation_forest,benign,router-any,tcp,21,1,0.0476,0,0.0
+isolation_forest,injection attack,router-any,tcp,64,0,0.0,0,0.0
+isolation_forest,lidar attack,router-any,tcp,69,3,0.0435,0,0.0
+isolation_forest,nginx attack,router-any,tcp,88,2,0.0227,0,0.0
+isolation_forest,benign,router-flannel,ptcp,16,1,0.0625,0,0.0
+isolation_forest,injection attack,router-flannel,ptcp,53,15,0.283,6,0.1132
+isolation_forest,lidar attack,router-flannel,ptcp,64,2,0.0312,0,0.0
+isolation_forest,nginx attack,router-flannel,ptcp,88,1,0.0114,0,0.0
+isolation_forest,benign,router-flannel,tcp,16,1,0.0625,0,0.0
+isolation_forest,injection attack,router-flannel,tcp,52,14,0.2692,5,0.0962
+isolation_forest,lidar attack,router-flannel,tcp,64,2,0.0312,0,0.0
+isolation_forest,nginx attack,router-flannel,tcp,87,1,0.0115,0,0.0
+one_class_svm,benign,node-child1,ptcp,18,1,0.0556,0,0.0
+one_class_svm,injection attack,node-child1,ptcp,6,4,0.6667,2,0.3333
+one_class_svm,lidar attack,node-child1,ptcp,61,49,0.8033,46,0.7541
+one_class_svm,nginx attack,node-child1,ptcp,69,30,0.4348,5,0.0725
+one_class_svm,benign,node-child1,tcp,19,1,0.0526,0,0.0
+one_class_svm,injection attack,node-child1,tcp,11,7,0.6364,3,0.2727
+one_class_svm,lidar attack,node-child1,tcp,64,43,0.6719,33,0.5156
+one_class_svm,nginx attack,node-child1,tcp,72,12,0.1667,2,0.0278
+one_class_svm,benign,node-child2,ptcp,19,1,0.0526,0,0.0
+one_class_svm,injection attack,node-child2,ptcp,3,3,1.0,1,0.3333
+one_class_svm,lidar attack,node-child2,ptcp,61,9,0.1475,1,0.0164
+one_class_svm,nginx attack,node-child2,ptcp,80,69,0.8625,51,0.6375
+one_class_svm,benign,node-child2,tcp,19,1,0.0526,0,0.0
+one_class_svm,injection attack,node-child2,tcp,21,20,0.9524,16,0.7619
+one_class_svm,lidar attack,node-child2,tcp,63,12,0.1905,1,0.0159
+one_class_svm,nginx attack,node-child2,tcp,82,72,0.878,58,0.7073
+one_class_svm,benign,node-child4,ptcp,18,1,0.0556,0,0.0
+one_class_svm,injection attack,node-child4,ptcp,16,6,0.375,3,0.1875
+one_class_svm,lidar attack,node-child4,ptcp,61,0,0.0,0,0.0
+one_class_svm,nginx attack,node-child4,ptcp,80,2,0.025,0,0.0
+one_class_svm,benign,node-child4,tcp,20,1,0.05,0,0.0
+one_class_svm,injection attack,node-child4,tcp,31,24,0.7742,22,0.7097
+one_class_svm,lidar attack,node-child4,tcp,64,2,0.0312,0,0.0
+one_class_svm,nginx attack,node-child4,tcp,84,8,0.0952,0,0.0
+one_class_svm,benign,node-gchild9,ptcp,17,1,0.0588,0,0.0
+one_class_svm,injection attack,node-gchild9,ptcp,22,9,0.4091,1,0.0455
+one_class_svm,lidar attack,node-gchild9,ptcp,54,4,0.0741,0,0.0
+one_class_svm,nginx attack,node-gchild9,ptcp,76,13,0.1711,4,0.0526
+one_class_svm,benign,node-gchild9,tcp,19,1,0.0526,0,0.0
+one_class_svm,injection attack,node-gchild9,tcp,32,6,0.1875,0,0.0
+one_class_svm,lidar attack,node-gchild9,tcp,63,1,0.0159,0,0.0
+one_class_svm,nginx attack,node-gchild9,tcp,62,6,0.0968,3,0.0484
+one_class_svm,benign,pod-camera,ptcp,18,1,0.0556,0,0.0
+one_class_svm,injection attack,pod-camera,ptcp,18,5,0.2778,1,0.0556
+one_class_svm,lidar attack,pod-camera,ptcp,59,3,0.0508,1,0.0169
+one_class_svm,nginx attack,pod-camera,ptcp,79,5,0.0633,1,0.0127
+one_class_svm,benign,pod-camera,tcp,19,1,0.0526,0,0.0
+one_class_svm,injection attack,pod-camera,tcp,20,9,0.45,4,0.2
+one_class_svm,lidar attack,pod-camera,tcp,62,5,0.0806,2,0.0323
+one_class_svm,nginx attack,pod-camera,tcp,79,6,0.0759,1,0.0127
+one_class_svm,benign,pod-lidar,ptcp,18,1,0.0556,0,0.0
+one_class_svm,injection attack,pod-lidar,ptcp,11,10,0.9091,8,0.7273
+one_class_svm,lidar attack,pod-lidar,ptcp,62,50,0.8065,48,0.7742
+one_class_svm,nginx attack,pod-lidar,ptcp,69,33,0.4783,7,0.1014
+one_class_svm,benign,pod-lidar,tcp,20,1,0.05,0,0.0
+one_class_svm,injection attack,pod-lidar,tcp,11,6,0.5455,4,0.3636
+one_class_svm,lidar attack,pod-lidar,tcp,64,10,0.1562,0,0.0
+one_class_svm,nginx attack,pod-lidar,tcp,72,6,0.0833,0,0.0
+one_class_svm,benign,pod-nginx,ptcp,18,1,0.0556,0,0.0
+one_class_svm,injection attack,pod-nginx,ptcp,7,4,0.5714,0,0.0
+one_class_svm,lidar attack,pod-nginx,ptcp,61,4,0.0656,0,0.0
+one_class_svm,nginx attack,pod-nginx,ptcp,58,51,0.8793,49,0.8448
+one_class_svm,benign,pod-nginx,tcp,19,1,0.0526,0,0.0
+one_class_svm,injection attack,pod-nginx,tcp,9,1,0.1111,0,0.0
+one_class_svm,lidar attack,pod-nginx,tcp,63,11,0.1746,0,0.0
+one_class_svm,nginx attack,pod-nginx,tcp,60,51,0.85,49,0.8167
+one_class_svm,benign,pod-robot-controller,ptcp,19,1,0.0526,0,0.0
+one_class_svm,injection attack,pod-robot-controller,ptcp,14,2,0.1429,0,0.0
+one_class_svm,lidar attack,pod-robot-controller,ptcp,62,5,0.0806,0,0.0
+one_class_svm,nginx attack,pod-robot-controller,ptcp,78,24,0.3077,2,0.0256
+one_class_svm,benign,pod-robot-controller,tcp,20,1,0.05,0,0.0
+one_class_svm,injection attack,pod-robot-controller,tcp,11,3,0.2727,1,0.0909
+one_class_svm,lidar attack,pod-robot-controller,tcp,66,3,0.0455,0,0.0
+one_class_svm,benign,pod-robot-hardware,ptcp,17,1,0.0588,0,0.0
+one_class_svm,injection attack,pod-robot-hardware,ptcp,22,14,0.6364,10,0.4545
+one_class_svm,lidar attack,pod-robot-hardware,ptcp,54,4,0.0741,0,0.0
+one_class_svm,nginx attack,pod-robot-hardware,ptcp,43,9,0.2093,0,0.0
+one_class_svm,benign,pod-robot-hardware,tcp,20,1,0.05,0,0.0
+one_class_svm,injection attack,pod-robot-hardware,tcp,30,13,0.4333,6,0.2
+one_class_svm,lidar attack,pod-robot-hardware,tcp,63,2,0.0317,0,0.0
+one_class_svm,nginx attack,pod-robot-hardware,tcp,58,7,0.1207,2,0.0345
+one_class_svm,benign,router-any,ptcp,19,1,0.0526,0,0.0
+one_class_svm,injection attack,router-any,ptcp,61,3,0.0492,0,0.0
+one_class_svm,lidar attack,router-any,ptcp,67,2,0.0299,0,0.0
+one_class_svm,nginx attack,router-any,ptcp,85,3,0.0353,0,0.0
+one_class_svm,benign,router-any,tcp,21,0,0.0,0,0.0
+one_class_svm,injection attack,router-any,tcp,64,0,0.0,0,0.0
+one_class_svm,lidar attack,router-any,tcp,69,0,0.0,0,0.0
+one_class_svm,nginx attack,router-any,tcp,88,0,0.0,0,0.0
+one_class_svm,benign,router-flannel,ptcp,16,1,0.0625,0,0.0
+one_class_svm,injection attack,router-flannel,ptcp,53,17,0.3208,9,0.1698
+one_class_svm,lidar attack,router-flannel,ptcp,64,11,0.1719,1,0.0156
+one_class_svm,nginx attack,router-flannel,ptcp,88,85,0.9659,80,0.9091
+one_class_svm,benign,router-flannel,tcp,16,1,0.0625,0,0.0
+one_class_svm,injection attack,router-flannel,tcp,52,17,0.3269,9,0.1731
+one_class_svm,lidar attack,router-flannel,tcp,64,11,0.1719,1,0.0156
+one_class_svm,nginx attack,router-flannel,tcp,87,84,0.9655,79,0.908
+z_score,benign,node-child1,ptcp,18,4,0.2222,0,0.0
+z_score,injection attack,node-child1,ptcp,6,6,1.0,4,0.6667
+z_score,lidar attack,node-child1,ptcp,61,52,0.8525,46,0.7541
+z_score,nginx attack,node-child1,ptcp,69,45,0.6522,14,0.2029
+z_score,benign,node-child1,tcp,19,6,0.3158,0,0.0
+z_score,injection attack,node-child1,tcp,11,10,0.9091,6,0.5455
+z_score,lidar attack,node-child1,tcp,64,53,0.8281,47,0.7344
+z_score,nginx attack,node-child1,tcp,72,48,0.6667,19,0.2639
+z_score,benign,node-child2,ptcp,19,8,0.4211,0,0.0
+z_score,injection attack,node-child2,ptcp,3,3,1.0,1,0.3333
+z_score,lidar attack,node-child2,ptcp,61,31,0.5082,4,0.0656
+z_score,nginx attack,node-child2,ptcp,80,71,0.8875,55,0.6875
+z_score,benign,node-child2,tcp,19,7,0.3684,1,0.0526
+z_score,injection attack,node-child2,tcp,21,20,0.9524,16,0.7619
+z_score,lidar attack,node-child2,tcp,63,25,0.3968,1,0.0159
+z_score,nginx attack,node-child2,tcp,82,76,0.9268,69,0.8415
+z_score,benign,node-child4,ptcp,18,17,0.9444,13,0.7222
+z_score,injection attack,node-child4,ptcp,16,16,1.0,14,0.875
+z_score,lidar attack,node-child4,ptcp,61,43,0.7049,26,0.4262
+z_score,nginx attack,node-child4,ptcp,80,76,0.95,68,0.85
+z_score,benign,node-child4,tcp,20,18,0.9,14,0.7
+z_score,injection attack,node-child4,tcp,31,30,0.9677,26,0.8387
+z_score,lidar attack,node-child4,tcp,64,46,0.7188,29,0.4531
+z_score,nginx attack,node-child4,tcp,84,80,0.9524,72,0.8571
+z_score,benign,node-gchild9,ptcp,17,11,0.6471,3,0.1765
+z_score,injection attack,node-gchild9,ptcp,22,12,0.5455,3,0.1364
+z_score,lidar attack,node-gchild9,ptcp,54,24,0.4444,4,0.0741
+z_score,nginx attack,node-gchild9,ptcp,76,42,0.5526,20,0.2632
+z_score,benign,node-gchild9,tcp,19,11,0.5789,6,0.3158
+z_score,injection attack,node-gchild9,tcp,32,17,0.5312,8,0.25
+z_score,lidar attack,node-gchild9,tcp,63,24,0.381,2,0.0317
+z_score,nginx attack,node-gchild9,tcp,62,32,0.5161,15,0.2419
+z_score,benign,pod-camera,ptcp,18,0,0.0,0,0.0
+z_score,injection attack,pod-camera,ptcp,18,5,0.2778,1,0.0556
+z_score,lidar attack,pod-camera,ptcp,59,3,0.0508,1,0.0169
+z_score,nginx attack,pod-camera,ptcp,79,4,0.0506,1,0.0127
+z_score,benign,pod-camera,tcp,19,0,0.0,0,0.0
+z_score,injection attack,pod-camera,tcp,20,9,0.45,4,0.2
+z_score,lidar attack,pod-camera,tcp,62,7,0.1129,5,0.0806
+z_score,nginx attack,pod-camera,tcp,79,7,0.0886,3,0.038
+z_score,benign,pod-lidar,ptcp,18,5,0.2778,0,0.0
+z_score,injection attack,pod-lidar,ptcp,11,11,1.0,9,0.8182
+z_score,lidar attack,pod-lidar,ptcp,62,55,0.8871,49,0.7903
+z_score,nginx attack,pod-lidar,ptcp,69,42,0.6087,11,0.1594
+z_score,benign,pod-lidar,tcp,20,7,0.35,1,0.05
+z_score,injection attack,pod-lidar,tcp,11,10,0.9091,6,0.5455
+z_score,lidar attack,pod-lidar,tcp,64,56,0.875,48,0.75
+z_score,nginx attack,pod-lidar,tcp,72,48,0.6667,24,0.3333
+z_score,benign,pod-nginx,ptcp,18,2,0.1111,0,0.0
+z_score,injection attack,pod-nginx,ptcp,7,0,0.0,0,0.0
+z_score,lidar attack,pod-nginx,ptcp,61,3,0.0492,0,0.0
+z_score,nginx attack,pod-nginx,ptcp,58,49,0.8448,43,0.7414
+z_score,benign,pod-nginx,tcp,19,3,0.1579,0,0.0
+z_score,injection attack,pod-nginx,tcp,9,1,0.1111,0,0.0
+z_score,lidar attack,pod-nginx,tcp,63,20,0.3175,2,0.0317
+z_score,nginx attack,pod-nginx,tcp,60,51,0.85,49,0.8167
+z_score,benign,pod-robot-controller,ptcp,19,18,0.9474,15,0.7895
+z_score,injection attack,pod-robot-controller,ptcp,14,14,1.0,12,0.8571
+z_score,lidar attack,pod-robot-controller,ptcp,62,47,0.7581,33,0.5323
+z_score,nginx attack,pod-robot-controller,ptcp,78,75,0.9615,69,0.8846
+z_score,benign,pod-robot-controller,tcp,20,18,0.9,14,0.7
+z_score,injection attack,pod-robot-controller,tcp,11,11,1.0,9,0.8182
+z_score,lidar attack,pod-robot-controller,tcp,66,48,0.7273,31,0.4697
+z_score,benign,pod-robot-hardware,ptcp,17,10,0.5882,2,0.1176
+z_score,injection attack,pod-robot-hardware,ptcp,22,19,0.8636,14,0.6364
+z_score,lidar attack,pod-robot-hardware,ptcp,54,30,0.5556,11,0.2037
+z_score,nginx attack,pod-robot-hardware,ptcp,43,31,0.7209,21,0.4884
+z_score,benign,pod-robot-hardware,tcp,20,12,0.6,6,0.3
+z_score,injection attack,pod-robot-hardware,tcp,30,19,0.6333,9,0.3
+z_score,lidar attack,pod-robot-hardware,tcp,63,31,0.4921,6,0.0952
+z_score,nginx attack,pod-robot-hardware,tcp,58,33,0.569,16,0.2759
+z_score,benign,router-any,ptcp,19,18,0.9474,16,0.8421
+z_score,injection attack,router-any,ptcp,61,40,0.6557,30,0.4918
+z_score,lidar attack,router-any,ptcp,67,48,0.7164,31,0.4627
+z_score,nginx attack,router-any,ptcp,85,82,0.9647,78,0.9176
+z_score,benign,router-any,tcp,21,20,0.9524,16,0.7619
+z_score,injection attack,router-any,tcp,64,39,0.6094,33,0.5156
+z_score,lidar attack,router-any,tcp,69,49,0.7101,30,0.4348
+z_score,nginx attack,router-any,tcp,88,82,0.9318,68,0.7727
+z_score,benign,router-flannel,ptcp,16,2,0.125,0,0.0
+z_score,injection attack,router-flannel,ptcp,53,18,0.3396,10,0.1887
+z_score,lidar attack,router-flannel,ptcp,64,18,0.2812,2,0.0312
+z_score,nginx attack,router-flannel,ptcp,88,85,0.9659,80,0.9091
+z_score,benign,router-flannel,tcp,16,2,0.125,0,0.0
+z_score,injection attack,router-flannel,tcp,52,17,0.3269,9,0.1731
+z_score,lidar attack,router-flannel,tcp,64,18,0.2812,2,0.0312
+z_score,nginx attack,router-flannel,tcp,87,84,0.9655,79,0.908
