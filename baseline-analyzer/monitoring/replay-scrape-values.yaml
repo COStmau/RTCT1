@@ -6,4 +6,3 @@ prometheus:
         static_configs:
           - targets:
               - host.minikube.internal:8000
-              - host.minikube.internal:8001
