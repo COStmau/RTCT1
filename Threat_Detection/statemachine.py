@@ -462,8 +462,12 @@ def score_pair(benign_path, attack_path, encoding="percentile"):
                                            n_windows_for(attack), cutoff)
 
 
-def statemachine_rows(described, method="tcp", encoding="percentile"):
-    """One flag_stats row per stratum, same shape as compare.compare_detectors."""
+def statemachine_rows(described, method="tcp", encoding="percentile", flag_bits=False):
+    """One flag_stats row per stratum, same shape as compare.compare_detectors.
+
+    `flag_bits` adds TCP SYN/RST presence to the symbol; the per-window boolean Series in
+    this function is also called `flags`, so the switch keeps a distinct name.
+    """
 
     packets = {}
     for _, capture in described.iterrows():
@@ -475,7 +479,7 @@ def statemachine_rows(described, method="tcp", encoding="percentile"):
         if not issues["usable"]:
             packets[key] = None
             continue
-        packets[key] = load_flow_packets(capture["path"])
+        packets[key] = load_flow_packets(capture["path"], flags=flag_bits)
     attacks = [s for s in sorted(described["scenario"].unique()) if s != "benign"]
     labels = sorted(described[described["method"].eq(method)]["label"].unique())
     rows, excluded = [], []
@@ -489,7 +493,7 @@ def statemachine_rows(described, method="tcp", encoding="percentile"):
             reference_flows, reference_dropped = segment_flows(make_flows(reference),
                                                                reference_t0)
             train, holdout = split_flows(reference_flows)
-            model = fit_model(train, encoding=encoding)
+            model = fit_model(train, encoding=encoding, flags=flag_bits)
             cutoff = score_cutoff(score_flows(model, holdout))
         except ValueError as error:
             excluded.append(f"{label} ({error})")
@@ -513,7 +517,8 @@ def statemachine_rows(described, method="tcp", encoding="percentile"):
             rows.append({"detector": "state_machine", "scenario": scenario,
                          "label": label, "method": method,
                          "states": model["pdfa"].n_states,
-                         "dropped_segments": dropped, **flag_stats(flags)})
+                         "dropped_segments": dropped,
+                         "flags": bool(flag_bits), **flag_stats(flags)})
     if excluded:
         print(f"excluded captures: {len(excluded)} ({', '.join(sorted(set(excluded)))})")
     return (pd.DataFrame(rows)
@@ -550,17 +555,20 @@ def main():
                         help="capture method; tcp and ptcp are separate measurements")
     parser.add_argument("--encoding", default="percentile",
                         choices=("percentile", "frequency"))
+    parser.add_argument("--flags", action="store_true",
+                        help="add TCP SYN/RST presence to the symbol alphabet")
     parser.add_argument("--out", default=SWEEP_CSV)
     parser.add_argument("--manifest", default=MANIFEST_FILE)
     args = parser.parse_args()
 
     manifest = load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest)
-    rows = statemachine_rows(manifest, method=args.method, encoding=args.encoding)
+    rows = statemachine_rows(manifest, method=args.method, encoding=args.encoding,
+                             flag_bits=args.flags)
     out_file = resolve_output(args.out)
     rows.to_csv(out_file, index=False)
 
     print(f"Wrote {out_file} | rows={len(rows)} | method={args.method} "
-          f"| encoding={args.encoding}")
+          f"| encoding={args.encoding} | flags={args.flags}")
     for scenario, group in rows.groupby("scenario"):
         print(f"  {scenario:<16} flagged fraction {group['flagged_fraction'].mean():.3f} "
               f"(mean over {len(group)} strata) | {int(group['windows'].sum())} windows")
