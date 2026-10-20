@@ -419,7 +419,8 @@ def statemachine_rows(described, method="tcp", encoding="percentile"):
                     excluded.append(f"{scenario}/{label} (too few flows)")
                     continue
             rows.append({"detector": "state_machine", "scenario": scenario,
-                         "label": label, "method": method, **flag_stats(flags)})
+                         "label": label, "method": method, "states": model["pdfa"].n_states,
+                         **flag_stats(flags)})
     if excluded:
         print(f"excluded captures: {len(excluded)} ({', '.join(sorted(set(excluded)))})")
     return (pd.DataFrame(rows)
