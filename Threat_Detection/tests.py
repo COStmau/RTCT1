@@ -11,6 +11,7 @@ import pandas as pd
 import boundaries
 import data_io
 import features
+import flag_scores
 import flag_verdict
 import statemachine
 import sweep
@@ -989,6 +990,40 @@ class FlagVerdictChecks(unittest.TestCase):
         verdict, reasons = flag_verdict.decide(rows)
         self.assertEqual(verdict, "undecidable")
         self.assertTrue(any("node-child4" in reason for reason in reasons))
+
+
+class FlagScoreChecks(unittest.TestCase):
+    """Orientation and matching properties of the score dump's helpers."""
+
+    def test_auroc_is_one_when_attack_always_outranks_benign(self):
+        self.assertEqual(flag_scores.auroc([0.0, 1.0], [2.0, 3.0]), 1.0)
+
+    def test_auroc_is_zero_when_the_ranking_is_inverted(self):
+        self.assertEqual(flag_scores.auroc([2.0, 3.0], [0.0, 1.0]), 0.0)
+
+    def test_auroc_counts_ties_as_half(self):
+        self.assertEqual(flag_scores.auroc([1.0, 1.0], [1.0, 1.0]), 0.5)
+
+    def test_auroc_ignores_unscored_windows_and_needs_both_sides(self):
+        self.assertEqual(flag_scores.auroc([np.nan, 0.0], [1.0]), 1.0)
+        with self.assertRaises(ValueError):
+            flag_scores.auroc([], [1.0])
+
+    def test_window_scores_keep_the_most_anomalous_trace(self):
+        scored = [(10.1, 1.0), (10.9, 4.0), (11.5, 2.0)]
+        scores = flag_scores.window_scores(scored, t0=10.0, n_windows=3)
+        self.assertEqual(scores[0], 4.0)
+        self.assertEqual(scores[1], 2.0)
+        self.assertTrue(np.isnan(scores[2]))          # no trace ends there
+
+    def test_detection_uses_the_plain_model_benign_rate(self):
+        benign = [0.0, 1.0, 2.0, 3.0, 4.0]
+        attack = [4.0, 5.0]
+        detection, realised = flag_scores.detection_at_benign_rate(benign, attack, 0.2)
+        self.assertEqual(realised, 0.2)               # exactly the top fifth
+        self.assertEqual(detection, 1.0)
+        with self.assertRaises(ValueError):
+            flag_scores.detection_at_benign_rate(benign, attack, 0.0)
 
 
 if __name__ == "__main__":
