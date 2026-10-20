@@ -55,6 +55,20 @@ def make_flows(packets):
     return flows.sort_values("start_ts").reset_index(drop=True)
 
 
+def segment_flows(flows, t0, window_size=WINDOW_SIZE):
+    """Flows lying inside a single window, plus the number dropped.
+
+    A flow cut by a window boundary would carry a partial byte count and a partial
+    duration, which is an artifact of where the slice fell rather than of behaviour, so it
+    is dropped instead of symbolized. The count comes back with the kept flows so a caller
+    can report it rather than lose it.
+    """
+    start = np.floor((flows["start_ts"] - t0) / window_size)
+    end = np.floor((flows["start_ts"] + flows["duration"] - 1e-9 - t0) / window_size)
+    crossing = start != end
+    return flows[~crossing].reset_index(drop=True), int(crossing.sum())
+
+
 def fit_percentile(flows, nbins=NBINS):
     """Quantile bin edges for bytes and duration, fitted on benign flows."""
     enc = {"kind": "percentile"}
@@ -348,30 +362,25 @@ def n_windows_for(packets, window_size=WINDOW_SIZE):
     return int(packets["ts"].max() - packets["ts"].min()) // int(window_size) + 1
 
 
-def score_capture(model, packets, cutoff):
-    """Per-window flags for one capture under a fitted model and cutoff."""
-    flows = make_flows(packets)
-    if len(flows) < model["trace_len"]:
-        return None  # too few flows to form a trace; caller records the note
-    scored = score_flows(model, flows)
-    return flags_for_windows(scored, packets["ts"].min(),
-                             n_windows_for(packets), cutoff)
-
-
 def score_pair(benign_path, attack_path, encoding="percentile"):
-    """Fit on the first 70% of benign flows; flag held-out benign and attack."""
+    """Fit on the first 70% of benign flows; flag held-out benign and attack.
+
+    Flows crossing a window boundary are dropped before symbolization, so a partial
+    segment never becomes a symbol and never reaches a trace.
+    """
     benign = load_flow_packets(benign_path)
-    benign_flows = make_flows(benign)
+    benign_t0 = benign["ts"].min()
+    benign_flows, _ = segment_flows(make_flows(benign), benign_t0)
     train, holdout = split_flows(benign_flows)
     model = fit_model(train, encoding=encoding)
     cutoff = score_cutoff(score_flows(model, holdout))
-    benign_flags = flags_for_windows(score_flows(model, holdout), benign["ts"].min(),
+    benign_flags = flags_for_windows(score_flows(model, holdout), benign_t0,
                                      n_windows_for(benign), cutoff)
     attack = load_flow_packets(attack_path)
-    attack_flags = score_capture(model, attack, cutoff)
-    if attack_flags is None:
-        attack_flags = pd.Series(False, index=range(n_windows_for(attack)))
-    return benign_flags, attack_flags
+    attack_t0 = attack["ts"].min()
+    attack_flows, _ = segment_flows(make_flows(attack), attack_t0)
+    return benign_flags, flags_for_windows(score_flows(model, attack_flows), attack_t0,
+                                           n_windows_for(attack), cutoff)
 
 
 def statemachine_rows(described, method="tcp", encoding="percentile"):
@@ -397,30 +406,35 @@ def statemachine_rows(described, method="tcp", encoding="percentile"):
             excluded.append(label)
             continue
         try:
-            train, holdout = split_flows(make_flows(reference))
+            reference_t0 = reference["ts"].min()
+            reference_flows, reference_dropped = segment_flows(make_flows(reference),
+                                                               reference_t0)
+            train, holdout = split_flows(reference_flows)
             model = fit_model(train, encoding=encoding)
             cutoff = score_cutoff(score_flows(model, holdout))
         except ValueError as error:
             excluded.append(f"{label} ({error})")
             continue
-        targets = [("benign", holdout, reference)] + [
-            (s, None, packets.get((s, label, method))) for s in attacks]
-        for scenario, holdout_flows, target in targets:
+        targets = [("benign", holdout, reference, reference_dropped)] + [
+            (s, None, packets.get((s, label, method)), None) for s in attacks]
+        for scenario, holdout_flows, target, dropped in targets:
             if target is None:
                 excluded.append(f"{scenario}/{label} (no capture)")
                 continue
+            target_t0 = target["ts"].min()
             if scenario == "benign":
                 scored = score_flows(model, holdout_flows)
-                flags = flags_for_windows(scored, target["ts"].min(),
-                                          n_windows_for(target), cutoff)
             else:
-                flags = score_capture(model, target, cutoff)
-                if flags is None:
+                target_flows, dropped = segment_flows(make_flows(target), target_t0)
+                scored = score_flows(model, target_flows)
+                if not scored:
                     excluded.append(f"{scenario}/{label} (too few flows)")
                     continue
+            flags = flags_for_windows(scored, target_t0, n_windows_for(target), cutoff)
             rows.append({"detector": "state_machine", "scenario": scenario,
-                         "label": label, "method": method, "states": model["pdfa"].n_states,
-                         **flag_stats(flags)})
+                         "label": label, "method": method,
+                         "states": model["pdfa"].n_states,
+                         "dropped_segments": dropped, **flag_stats(flags)})
     if excluded:
         print(f"excluded captures: {len(excluded)} ({', '.join(sorted(set(excluded)))})")
     return (pd.DataFrame(rows)

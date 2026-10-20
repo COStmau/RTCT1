@@ -27,7 +27,7 @@ from detectors import PERSISTENCE_WINDOW, THRESHOLD, build
 from features import FEATURE_LABELS, WINDOW_SIZE, make_windows, split_reference
 from statemachine import (encode, fit_model, flags_for_windows, load_flow_packets,
                           make_flows, n_windows_for, plot_pdfa, score_cutoff,
-                          score_flows, split_flows, write_pair)
+                          score_flows, segment_flows, split_flows, write_pair)
 
 HERE = Path(__file__).resolve().parent
 DETECTOR = "z_score"
@@ -245,9 +245,12 @@ def state_machine():
     heading("STEP 1  Read the two recordings")
     benign = load_flow_packets(local_paths.BENIGN_CSV)
     attack = load_flow_packets(local_paths.ATTACK_CSV)
-    benign_flows, attack_flows = make_flows(benign), make_flows(attack)
-    print(f"   normal traffic: {len(benign):,} packets in {len(benign_flows)} flows")
-    print(f"   attack traffic: {len(attack):,} packets in {len(attack_flows)} flows")
+    benign_flows, benign_dropped = segment_flows(make_flows(benign), benign["ts"].min())
+    attack_flows, attack_dropped = segment_flows(make_flows(attack), attack["ts"].min())
+    print(f"   normal traffic: {len(benign):,} packets in {len(benign_flows)} flows"
+          f" ({benign_dropped} crossing a window boundary, dropped)")
+    print(f"   attack traffic: {len(attack):,} packets in {len(attack_flows)} flows"
+          f" ({attack_dropped} crossing a window boundary, dropped)")
 
     heading("STEP 2  Learn the machine from normal flows")
     train, holdout = split_flows(benign_flows)

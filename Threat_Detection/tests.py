@@ -732,6 +732,31 @@ class StateMachineChecks(unittest.TestCase):
         self.assertAlmostEqual(flows.iloc[0]["duration"], 0.5)
         self.assertTrue((flows["start_ts"].diff().dropna() >= 0).all())
 
+    def test_segment_flows_drops_flows_crossing_a_window_boundary(self):
+        flows = pd.DataFrame({
+            "start_ts": [10.0, 10.1, 10.9, 10.0],
+            "bytes": [100, 100, 100, 100],
+            "duration": [1.0, 0.5, 0.3, 2.0],
+            "proto": ["tcp"] * 4,
+        })
+        kept, dropped = statemachine.segment_flows(flows, t0=10.0)
+        # Ending exactly on a boundary stays; anything reaching past it does not.
+        self.assertEqual(list(kept["duration"]), [1.0, 0.5])
+        self.assertEqual(dropped, 2)
+
+    def test_score_pair_drops_crossing_flows_before_symbolizing(self):
+        import tempfile
+        root = Path(tempfile.mkdtemp())
+        header = "ts,frame_len,src_ip,dst_ip,src_port,dst_port,proto\n"
+        # One long flow spans the whole capture; the rest fit inside their seconds.
+        lines = [header, "10.0,100,::1,::2,9999,8080,tcp\n", "70.0,100,::1,::2,9999,8080,tcp\n"]
+        lines += [f"{10.0 + w + i / 5:.4f},100,::1,::2,{1000 + w},8080,tcp\n"
+                  for w in range(30) for i in range(5)]
+        benign = root / "benign.csv"
+        benign.write_text("".join(lines))
+        benign_flags, _ = statemachine.score_pair(str(benign), str(benign))
+        self.assertEqual(len(benign_flags), 61)
+
     def test_percentile_encoding_separates_small_from_large(self):
         train = pd.DataFrame({"proto": ["tcp"] * 4, "bytes": [10, 20, 30, 40],
                               "duration": [0.1] * 4})

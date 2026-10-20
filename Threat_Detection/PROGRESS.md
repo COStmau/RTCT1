@@ -153,8 +153,8 @@ test of whether detection survives without the length features is
 ## Outstanding problems
 
 - **The flagged fractions have uneven denominators.** The state-machine sweep prints a benign
-  mean of 0.057 over 11 strata, but the windows behind that mean are not comparable across
-  scenarios: 690 benign windows against 292 injection windows in the tcp sweep, because 18 of
+  mean of 0.033 over 11 strata, but the windows behind that mean are not comparable across
+  scenarios: 690 benign windows against 240 injection windows in the tcp sweep, because 18 of
   the 22 injection strata are under 32 s and one holds 3 windows. A mean over strata weights a
   3-window capture the same as an 80-window one. Per-scenario window counts belong beside every
   such number, and the injection column is not comparable to the others.
