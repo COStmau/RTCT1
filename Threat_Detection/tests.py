@@ -757,6 +757,23 @@ class StateMachineChecks(unittest.TestCase):
         benign_flags, _ = statemachine.score_pair(str(benign), str(benign))
         self.assertEqual(len(benign_flags), 61)
 
+    @unittest.expectedFailure
+    def test_frequency_score_does_not_depend_on_chunk_boundaries(self):
+        """Fix 1's motivation: one scorer for the stream must equal one scorer per chunk.
+
+        Fails today because a per-chunk scorer starts from an empty test counter, so the same
+        trace scores differently depending on where the stream was cut. Remove the decorator
+        when the windowed scorer replaces the cumulative counter; until then this is the
+        limitation, recorded in code.
+        """
+        traces = [("a", "b", "c"), ("a", "b", "c"), ("a", "c", "b"),
+                  ("b", "a", "c"), ("a", "b", "b"), ("a", "b", "c")]
+        pdfa = statemachine.learn_pdfa(traces)
+        stream = statemachine.FrequencyScorer(pdfa)
+        whole = [stream.score(trace) for trace in traces]
+        per_chunk = [statemachine.FrequencyScorer(pdfa).score(trace) for trace in traces]
+        self.assertEqual(whole, per_chunk)
+
     def test_percentile_encoding_separates_small_from_large(self):
         train = pd.DataFrame({"proto": ["tcp"] * 4, "bytes": [10, 20, 30, 40],
                               "duration": [0.1] * 4})

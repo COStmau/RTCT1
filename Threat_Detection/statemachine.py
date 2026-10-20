@@ -11,6 +11,8 @@ their window, the same budget convention compare.py uses for the forest/SVM.
 Run it with:  .venv/bin/python demo.py 3      (the narrated pair demo)
               .venv/bin/python statemachine.py  (every stratum, one row each)
 """
+from collections import Counter
+
 import numpy as np
 import pandas as pd
 
@@ -339,6 +341,46 @@ def score_flows(model, flows):
     return [(flows["start_ts"].iloc[i + model["trace_len"] - 1],
              trace_score(model["pdfa"], tuple(symbols[i:i + model["trace_len"]])))
             for i in range(len(symbols) - model["trace_len"] + 1)]
+
+
+def trace_states(pdfa, trace):
+    """The states a trace walks, in order, stopping where the model has no transition."""
+    states, node = [], pdfa.root
+    for symbol in trace:
+        child, _ = pdfa.transition(node, symbol)
+        if child is None:
+            break
+        states.append(child)
+        node = child
+    return states
+
+
+class FrequencyScorer:
+    """SEQUENT's rolling score: test-time state frequency against a fixed training count.
+
+    One state contributes `log(freq_test + 1) - log(freq_train + 1) + log(total_train + 1)
+    + log(states_seen + 1)`, and a trace's score is the sum over the states it visits. The
+    test counter accumulates across every trace scored, so a scorer built per chunk is not
+    the same detector as one scorer held for the whole stream. That is the limitation the
+    chunk-invariance test records.
+    """
+
+    def __init__(self, pdfa):
+        self.pdfa = pdfa
+        self.train = {id(node): node.visits for node, _ in pdfa.probs.values()}
+        self.total_train = sum(self.train.values())
+        self.test = Counter()
+        self.states_seen = 0
+
+    def score(self, trace):
+        total = 0.0
+        for state in trace_states(self.pdfa, trace):
+            key = id(state)
+            total += (np.log(self.test[key] + 1) - np.log(self.train.get(key, 0) + 1)
+                      + np.log(self.total_train + 1) + np.log(self.states_seen + 1))
+            self.test[key] += 1
+            self.states_seen = len(self.test)
+        return float(total)
 
 
 def score_cutoff(holdout_scores, quantile=BENIGN_QUANTILE):
