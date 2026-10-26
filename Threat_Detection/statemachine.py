@@ -11,7 +11,7 @@ their window, the same budget convention compare.py uses for the forest/SVM.
 Run it with:  .venv/bin/python demo.py 3      (the narrated pair demo)
               .venv/bin/python statemachine.py  (every stratum, one row each)
 """
-from collections import Counter
+from collections import Counter, deque
 
 import numpy as np
 import pandas as pd
@@ -19,6 +19,7 @@ import pandas as pd
 from data_io import load_capture, resolve_output, timebase_issues
 from detectors import BENIGN_QUANTILE, flag_stats
 from features import BENIGN_TRAIN_FRACTION, WINDOW_SIZE
+import boundaries
 
 FLOW_COLUMNS = ["ts", "frame_len", "src_ip", "dst_ip", "src_port",
                 "dst_port", "proto"]
@@ -417,8 +418,8 @@ class FrequencyScorer:
     One state contributes `log(freq_test + 1) - log(freq_train + 1) + log(total_train + 1)
     + log(states_seen + 1)`, and a trace's score is the sum over the states it visits. The
     test counter accumulates across every trace scored, so a scorer built per chunk is not
-    the same detector as one scorer held for the whole stream. That is the limitation the
-    chunk-invariance test records.
+    the same detector as one scorer held for the whole stream, and a burst never stops
+    counting. `WindowedFrequencyScorer` is the bounded version.
     """
 
     def __init__(self, pdfa):
@@ -438,6 +439,80 @@ class FrequencyScorer:
             self.states_seen = len(self.test)
         return float(total)
 
+
+
+class WindowedFrequencyScorer:
+    """SEQUENT's score with the test counter bounded to the last `forget_seconds`.
+
+    The cumulative `FrequencyScorer` counts every visit for the life of the stream, so one
+    burst keeps the score elevated for good and recovery is unobservable. Here a visit stops
+    counting once it is older than the window, so the score depends only on the traces seen
+    in the trailing `forget_seconds` and falls back to baseline after a burst leaves it.
+
+    The per-state arithmetic and update order are exactly `FrequencyScorer`'s (score a state,
+    then count it, so a later state in the same trace sees the earlier one), and
+    `len(self.counts)` plays the part of `states_seen` inside the window. With an infinite
+    window the two scorers return bit-identical scores; the tests hold that.
+    """
+
+    def __init__(self, pdfa, forget_seconds=boundaries.FORGET_SECONDS):
+        if not forget_seconds > 0:
+            raise ValueError("forget_seconds must be positive.")
+        self.pdfa = pdfa
+        self.forget_seconds = float(forget_seconds)
+        self.train = {id(node): node.visits for node, _ in pdfa.probs.values()}
+        self.total_train = sum(self.train.values())
+        self.visits = deque()          # (when, state key), oldest first
+        self.counts = Counter()
+        self.last_when = float("-inf")
+
+    def _expire(self, when):
+        """Drop visits older than the trailing window ending at `when`."""
+        oldest_allowed = when - self.forget_seconds
+        while self.visits and self.visits[0][0] < oldest_allowed:
+            _, key = self.visits.popleft()
+            self.counts[key] -= 1
+            if not self.counts[key]:
+                del self.counts[key]
+
+    def score(self, trace, when):
+        """Anomaly score of one trace observed at `when` seconds; higher is more anomalous."""
+        when = float(when)
+        if when < self.last_when:
+            raise ValueError("Traces must arrive in time order.")
+        self.last_when = when
+        self._expire(when)
+        total = 0.0
+        for state in trace_states(self.pdfa, trace):
+            key = id(state)
+            total += (np.log(self.counts[key] + 1) - np.log(self.train.get(key, 0) + 1)
+                      + np.log(self.total_train + 1) + np.log(len(self.counts) + 1))
+            self.visits.append((when, key))
+            self.counts[key] += 1
+        return float(total)
+
+
+def frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds=None):
+    """Most anomalous state-frequency score per window; NaN where no trace ended.
+
+    `forget_seconds=None` is cumulative SEQUENT; a number is the windowed scorer. Each trace
+    is timed by the start of its last flow, the same convention `flags_for_windows` uses.
+    """
+    if forget_seconds is None:
+        scorer = FrequencyScorer(model["pdfa"])
+        score = lambda trace, when: scorer.score(trace)
+    else:
+        score = WindowedFrequencyScorer(model["pdfa"], forget_seconds).score
+    symbols = list(encode(flows, model["enc"]))
+    trace_len = model["trace_len"]
+    scores = np.full(n_windows, np.nan)
+    for index in range(len(symbols) - trace_len + 1):
+        when = float(flows["start_ts"].iloc[index + trace_len - 1]) - t0
+        value = score(tuple(symbols[index:index + trace_len]), when)
+        window = int(when // WINDOW_SIZE)
+        if 0 <= window < n_windows:
+            scores[window] = value if np.isnan(scores[window]) else max(scores[window], value)
+    return scores
 
 def score_cutoff(holdout_scores, quantile=BENIGN_QUANTILE):
     """Trace-score cutoff that flags the worst `quantile` of held-out benign."""

@@ -743,6 +743,109 @@ class ShowcaseReportChecks(unittest.TestCase):
             self.assertIn("per-vantage cutoff would suppress", text)
 
 
+class WindowedScorerChecks(unittest.TestCase):
+    """The expiring clock: visits leave the window, so a burst stops scoring as a burst."""
+
+    def setUp(self):
+        self.pdfa = statemachine.learn_pdfa(
+            [("a", "b", "c")] * 12 + [("a", "b", "b")] * 12 + [("c", "a")] * 12)
+
+    def stream(self, score, burst):
+        """Quiet ("c", "a") every second for 20 s, with ("a", "b", "b") x5 per second in 4-7 s.
+
+        `score(trace, when)`; the cumulative scorer ignores `when`.
+        """
+        scores = []
+        for second in range(20):
+            if burst and 4 <= second < 8:
+                for offset in range(5):
+                    score(("a", "b", "b"), second + offset / 10)
+            scores.append(score(("c", "a"), second + 0.9))
+        return scores
+
+    def windowed(self, forget):
+        return statemachine.WindowedFrequencyScorer(self.pdfa, forget).score
+
+    def cumulative(self):
+        scorer = statemachine.FrequencyScorer(self.pdfa)
+        return lambda trace, when: scorer.score(trace)
+
+    def test_infinite_window_is_cumulative_sequent(self):
+        traces = [("a", "b", "c"), ("a", "b", "b"), ("c", "a"), ("a", "b", "c"),
+                  ("a", "c", "b"), ("b", "b", "a")] * 5
+        cumulative = statemachine.FrequencyScorer(self.pdfa)
+        windowed = statemachine.WindowedFrequencyScorer(self.pdfa, float("inf"))
+        self.assertEqual([cumulative.score(trace) for trace in traces],
+                         [windowed.score(trace, float(when)) for when, trace in enumerate(traces)])
+
+    def test_score_returns_exactly_to_baseline_after_the_window(self):
+        forget = 4.0
+        control = self.stream(self.windowed(forget), False)
+        burst = self.stream(self.windowed(forget), True)
+        self.assertGreater(max(burst[4:8]), max(control[4:8]))     # the burst scores higher
+        # last burst visit is at 7.4 s; from 7.4 + 4 = 11.4 s it has left the window
+        self.assertEqual(burst[12:], control[12:])
+
+    def test_cumulative_score_never_returns_to_baseline(self):
+        control = self.stream(self.cumulative(), False)
+        burst = self.stream(self.cumulative(), True)
+        self.assertTrue(all(b > c for b, c in zip(burst[12:], control[12:])))
+
+    def test_window_is_in_seconds_not_in_traces(self):
+        scorer = statemachine.WindowedFrequencyScorer(self.pdfa, forget_seconds=2.0)
+        scorer.score(("a", "b", "b"), when=0.0)
+        scorer.score(("a", "b", "b"), when=2.0)               # 0.0 is still inside [0, 2]
+        self.assertEqual(sum(scorer.counts.values()), 6)
+        scorer.score(("c", "a"), when=5.0)                    # both earlier traces expire
+        self.assertEqual(sum(scorer.counts.values()),
+                         len(statemachine.trace_states(self.pdfa, ("c", "a"))))
+
+    def test_rejects_out_of_order_traces_and_empty_windows(self):
+        scorer = statemachine.WindowedFrequencyScorer(self.pdfa, forget_seconds=2.0)
+        scorer.score(("c", "a"), when=3.0)
+        with self.assertRaises(ValueError):
+            scorer.score(("c", "a"), when=1.0)
+        with self.assertRaises(ValueError):
+            statemachine.WindowedFrequencyScorer(self.pdfa, forget_seconds=0)
+
+    def test_default_window_comes_from_boundaries(self):
+        scorer = statemachine.WindowedFrequencyScorer(self.pdfa)
+        self.assertEqual(scorer.forget_seconds, boundaries.FORGET_SECONDS)
+
+    def flows(self, burst):
+        """One request/response pair per second for 30 s; a flood repeats it 6x in 10-13 s.
+
+        The flood is the benign pattern hammered, not a new one: SEQUENT's score rises with
+        visits to known states, and a novel sequence walks fewer states and scores lower.
+        """
+        rows = []
+        for second in range(30):
+            pairs = 6 if burst and 10 <= second < 14 else 1
+            for pair in range(pairs):
+                start = second + 0.1 + pair / 8
+                rows += [{"start_ts": start, "bytes": 200, "duration": 0.01, "proto": "tcp"},
+                         {"start_ts": start + 0.05, "bytes": 300, "duration": 0.02,
+                          "proto": "tcp"}]
+        return pd.DataFrame(rows)
+
+    def test_per_window_scores_clear_where_cumulative_never_does(self):
+        model = statemachine.fit_model(self.flows(burst=False))
+        forget = boundaries.FORGET_SECONDS
+        scores = {(name, burst): statemachine.frequency_scores_by_window(
+                      model, self.flows(burst), 0.0, 30, forget_seconds=window)
+                  for name, window in (("cumulative", None), ("windowed", forget))
+                  for burst in (False, True)}
+        self.assertGreater(scores["windowed", True][12], scores["windowed", False][12])
+        # last burst flow starts before 14 s, so from window 14 + 8 = 22 on it has expired
+        np.testing.assert_array_equal(scores["windowed", True][22:],
+                                      scores["windowed", False][22:])
+        self.assertTrue((scores["cumulative", True][22:]
+                         > scores["cumulative", False][22:]).all())
+        # two flows a second and five-flow traces: no trace has ended inside window 0 or 1
+        self.assertTrue(np.isnan(scores["windowed", False][:2]).all())
+        self.assertTrue(np.isfinite(scores["windowed", False][2:]).all())
+
+
 class StateMachineChecks(unittest.TestCase):
     def flow_packets(self):
         return pd.DataFrame({
@@ -787,22 +890,32 @@ class StateMachineChecks(unittest.TestCase):
         benign_flags, _ = statemachine.score_pair(str(benign), str(benign))
         self.assertEqual(len(benign_flags), 61)
 
-    @unittest.expectedFailure
     def test_frequency_score_does_not_depend_on_chunk_boundaries(self):
-        """Fix 1's motivation: one scorer for the stream must equal one scorer per chunk.
+        """One windowed scorer for the stream equals a fresh scorer per chunk.
 
-        Fails today because a per-chunk scorer starts from an empty test counter, so the same
-        trace scores differently depending on where the stream was cut. Remove the decorator
-        when the windowed scorer replaces the cumulative counter; until then this is the
-        limitation, recorded in code.
+        The windowed score depends only on the traces inside the trailing window, so a scorer
+        started at any chunk boundary and warmed with the previous FORGET_SECONDS of traces
+        returns bit-identical scores. Memory is bounded by the window, not the stream.
         """
         traces = [("a", "b", "c"), ("a", "b", "c"), ("a", "c", "b"),
-                  ("b", "a", "c"), ("a", "b", "b"), ("a", "b", "c")]
-        pdfa = statemachine.learn_pdfa(traces)
-        stream = statemachine.FrequencyScorer(pdfa)
-        whole = [stream.score(trace) for trace in traces]
-        per_chunk = [statemachine.FrequencyScorer(pdfa).score(trace) for trace in traces]
-        self.assertEqual(whole, per_chunk)
+                  ("b", "a", "c"), ("a", "b", "b"), ("a", "b", "c")] * 10
+        times = [0.5 * index for index in range(len(traces))]
+        pdfa = statemachine.learn_pdfa(traces[:6])
+        forget = 4.0
+        stream = statemachine.WindowedFrequencyScorer(pdfa, forget)
+        whole = [stream.score(trace, when) for trace, when in zip(traces, times)]
+        for chunk in (1, 7, 13):
+            per_chunk = []
+            for start in range(0, len(traces), chunk):
+                scorer = statemachine.WindowedFrequencyScorer(pdfa, forget)
+                for trace, when in zip(traces[:start], times[:start]):
+                    if when >= times[start] - forget:      # warm-up: the trailing window only
+                        scorer.score(trace, when)
+                per_chunk += [scorer.score(trace, when) for trace, when in
+                              zip(traces[start:start + chunk], times[start:start + chunk])]
+            with self.subTest(chunk=chunk):
+                self.assertEqual(whole, per_chunk)
+        self.assertLessEqual(len(stream.visits), 3 * (forget / 0.5 + 1))
 
     def test_load_flow_packets_reads_flags_only_when_asked(self):
         import tempfile
