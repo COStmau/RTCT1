@@ -1107,5 +1107,48 @@ class FlagScoreChecks(unittest.TestCase):
             flag_scores.detection_at_benign_rate(benign, attack, 0.0)
 
 
+    def test_alphabet_slope_draws_every_stratum_and_carries_the_verdict(self):
+            """One line per stratum, and the title's verdict is the committed rule's."""
+            import tempfile
+
+            import matplotlib.pyplot as plt
+            summary = pd.DataFrame([
+                {"label": "pod-lidar", "scenario": "lidar attack", "method": "tcp",
+                 "n_benign_plain": 15, "n_attack_plain": 55, "n_benign_flags": 15,
+                 "n_attack_flags": 55, "auc_plain": 0.50, "auc_flags": 0.65,
+                 "det_plain": 0.30, "det_flags": 0.35, "benign_rate_plain": 0.13,
+                 "benign_rate_flags": 0.13},
+                {"label": "router-any", "scenario": "injection attack", "method": "tcp",
+                 "n_benign_plain": 24, "n_attack_plain": 16, "n_benign_flags": 24,
+                 "n_attack_flags": 16, "auc_plain": 0.70, "auc_flags": 0.72,
+                 "det_plain": 0.40, "det_flags": 0.41, "benign_rate_plain": 0.20,
+                 "benign_rate_flags": 0.20},
+                {"label": "node-child4", "scenario": "injection attack", "method": "tcp",
+                 "n_benign_plain": 12, "n_attack_plain": 9, "n_benign_flags": 12,
+                 "n_attack_flags": 9, "auc_plain": 0.80, "auc_flags": 0.82,
+                 "det_plain": 0.50, "det_flags": 0.50, "benign_rate_plain": 0.25,
+                 "benign_rate_flags": 0.25},
+            ])
+            close, plt.close = plt.close, lambda *args, **kwargs: None
+            try:
+                path = Path(tempfile.mkdtemp()) / "alphabet.png"
+                flag_scores.plot_alphabet_slope(summary, path=str(path))
+                fig = plt.gcf()
+                fig.canvas.draw()
+                ax = fig.axes[0]
+                drawn = [line for line in ax.get_lines()
+                     if len(line.get_xdata()) == 2
+                     and line.get_ydata()[0] == line.get_ydata()[1]]  # rows, not axvline
+                labels = [tick.get_text() for tick in ax.get_yticklabels()]
+                title = fig.get_suptitle()
+            finally:
+                plt.close = close
+            self.assertEqual(path.stat().st_size > 1000, True)
+            self.assertEqual(len(drawn), len(summary))          # one line per stratum, none dropped
+            self.assertIn("pod-lidar · lidar", labels)
+            self.assertIn("verdict: keep", title)               # 0.50 -> 0.65 clears the 0.10 bar
+            self.assertEqual(flag_scores.verdict_rows(summary)[0]["label"], "pod-lidar")
+
+
 if __name__ == "__main__":
     unittest.main()

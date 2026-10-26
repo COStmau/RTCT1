@@ -62,6 +62,85 @@ def anomaly_scores(model, flows, t0, n_windows):
     return window_scores([(ts, -score) for ts, score in scored], t0, n_windows)
 
 
+def verdict_rows(summary):
+    """The summary rows the pre-registered rule reads, in the rule's own order."""
+    import flag_verdict
+    rows = []
+    for label, scenario in flag_verdict.STRATA:
+        match = summary[(summary["label"] == label) & (summary["scenario"] == scenario)]
+        if match.empty:
+            continue
+        row = match.iloc[0]
+        rows.append({"label": label, "scenario": scenario,
+                     "auc_plain": row["auc_plain"], "auc_flags": row["auc_flags"],
+                     "det_plain": row["det_plain"], "det_flags": row["det_flags"]})
+    return rows
+
+
+def plot_alphabet_slope(summary, path=None):
+    """One line per stratum, plain-model AUROC to flag-model AUROC, sorted by the change.
+
+    Green is a gain at or above the rule's keep bar, red a loss at or above the limit it
+    allows, grey anything inside the band. The verdict in the title is `flag_verdict`'s,
+    not this function's opinion.
+    """
+    import matplotlib
+    matplotlib.use("Agg")   # renders to a file; nothing here opens a window
+    import matplotlib.pyplot as plt
+
+    import flag_verdict
+
+    path = resolve_output(path or "alphabet_verdict.png")
+    verdict, _ = flag_verdict.decide(verdict_rows(summary))
+    view = (summary.assign(gain=summary["auc_flags"] - summary["auc_plain"])
+            .sort_values("gain", ascending=False).reset_index(drop=True))
+    named = set(flag_verdict.STRATA)
+
+    fig, ax = plt.subplots(figsize=(8.4, 5.25))
+    for row, record in view.iterrows():
+        if record["gain"] >= flag_verdict.KEEP_AUC_GAIN:
+            colour = "#2ca02c"
+        elif record["gain"] <= -flag_verdict.MAX_OTHER_LOSS:
+            colour = "#d62728"
+        else:
+            colour = "#7f7f7f"
+        ax.plot([record["auc_plain"], record["auc_flags"]], [row, row],
+                color=colour, linewidth=2, zorder=2)
+        ax.scatter([record["auc_plain"]], [row], s=24, facecolor="white",
+                   edgecolors=colour, linewidths=1.5, zorder=3)
+        ax.scatter([record["auc_flags"]], [row], s=24, color=colour, zorder=3)
+        ax.text(1.03, row, f"{int(record['n_benign_plain'])}/{int(record['n_attack_plain'])}",
+                fontsize=6.5, va="center", color="#444444")
+    ax.axvline(0.5, color="#bbbbbb", linestyle="--", linewidth=1, zorder=1)
+
+    tick_labels = [f"{record.label} · {record.scenario.replace(' attack', '')}"
+                   for record in view.itertuples()]
+    ax.set_yticks(range(len(view)))
+    ax.set_yticklabels(tick_labels, fontsize=7)
+    for tick, record in zip(ax.get_yticklabels(), view.itertuples()):
+        if (record.label, record.scenario) in named:
+            tick.set_fontweight("bold")
+    ax.set_ylim(len(view) - 0.5, -0.5)          # biggest gain on top, smallest at the foot
+    ax.set_xlim(-0.02, 1.22)
+    ax.set_xticks([0.0, 0.2, 0.4, 0.5, 0.6, 0.8, 1.0])
+    ax.set_xlabel("AUROC: probability an attack window outranks a benign one", fontsize=9)
+    ax.text(1.03, 1.01, "benign/attack windows", fontsize=6.5, color="#444444",
+            transform=ax.get_xaxis_transform(), va="bottom")
+    caption = (f"AUROC per stratum, plain alphabet against the flag alphabet"
+               f" | tcp | {len(view)} strata | same flows, windows and split"
+               f"\ngreen: gain at or above the {flag_verdict.KEEP_AUC_GAIN:.2f} keep bar"
+               f" | red: loss at or above the {flag_verdict.MAX_OTHER_LOSS:.2f} limit"
+               f" | grey: inside it | bold = named by the rule"
+               f"\nverdict: {verdict}")
+    # Centred on the figure, not on the axes: the row labels push the axes right, and a
+    # title anchored there runs off the right edge.
+    fig.suptitle(caption, fontsize=8.5, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    return path
+
+
 def score_label(reference_path, targets):
     """Per-window anomalies for one label's holdout and its attack captures."""
     reference = load_flow_packets(reference_path, flags=True)
@@ -90,6 +169,7 @@ def main():
     parser.add_argument("--method", default="tcp", choices=("tcp", "ptcp"))
     parser.add_argument("--out", default=WINDOW_CSV)
     parser.add_argument("--summary", default=SUMMARY_CSV)
+    parser.add_argument("--figure", default="alphabet_verdict.png")
     parser.add_argument("--manifest", default=MANIFEST_FILE)
     args = parser.parse_args()
 
@@ -168,19 +248,15 @@ def main():
     print(f"Wrote {summary_path} | strata={len(rows)}")
 
     import flag_verdict
-    verdict_rows = []
-    for label, scenario in flag_verdict.STRATA:
-        match = rows[(rows["label"] == label) & (rows["scenario"] == scenario)]
-        if match.empty:
-            continue
-        row = match.iloc[0]
-        verdict_rows.append({"label": label, "scenario": scenario,
-                             "auc_plain": row["auc_plain"], "auc_flags": row["auc_flags"],
-                             "det_plain": row["det_plain"], "det_flags": row["det_flags"]})
-    verdict, reasons = flag_verdict.decide(verdict_rows)
+    rule_rows = verdict_rows(rows)
+    verdict, reasons = flag_verdict.decide(rule_rows)
     print(f"\nverdict: {verdict}")
     for reason in reasons:
         print(f"  - {reason}")
+    if len(rule_rows) == len(flag_verdict.STRATA):
+        print(f"\nWrote {plot_alphabet_slope(rows, path=args.figure)}")
+    else:
+        print(f"\nno figure: {len(rule_rows)} of {len(flag_verdict.STRATA)} rule strata measured")
 
 
 if __name__ == "__main__":
