@@ -13,7 +13,7 @@ import local_paths
 from data_io import load_manifest, resolve_output
 from detectors import WINDOW_SIZE, build, flag_stats
 from features import FEATURE_GROUPS, load_all_windows, split_reference
-from reporting import plot_matrix, print_matrix
+from reporting import plot_detection_gap, plot_matrix, print_matrix
 
 MANIFEST_FILE = "capture_manifest.csv"   # inside outputs/
 DETECTOR = "z_score"
@@ -105,6 +105,7 @@ def main():
     print(f"Times are per capture; windows are {WINDOW_SIZE:g}s. Flags are deviations, not confirmed attacks.")
     if len(groups) == 1 and groups[0] is None:
         print(f"\nWrote {plot_matrix(results)}")
+        print(f"Wrote {plot_detection_gap(results)}")
 
 
 if __name__ == "__main__":

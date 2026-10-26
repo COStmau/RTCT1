@@ -19,9 +19,9 @@ from detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, SVM_NU, THRESHOLD, W
 from features import FEATURE_LABELS
 
 __all__ = ["flag_stats", "persistent_mask", "summarize_flags", "threshold_table",
-           "plot_detection", "print_matrix", "plot_matrix", "plot_comparison",
-           "print_comparison", "plot_regime_split", "plot_snaplen", "write_report",
-           "to_events", "write_events"]
+           "plot_detection", "print_matrix", "plot_matrix", "plot_detection_gap",
+           "plot_comparison", "print_comparison", "plot_regime_split", "plot_snaplen",
+           "write_report", "to_events", "write_events"]
 
 EVENT_VERSION = "LogV0"
 
@@ -217,6 +217,50 @@ def print_matrix(results):
                   f" | {WINDOW_SIZE:g}s windows | alert > {THRESHOLD:g} sigma"
                   f" | {PERSISTENCE_WINDOW}-window persistence")
             print(table.to_string(float_format=lambda value: f"{value:5.2f}"))
+
+
+def plot_detection_gap(results, path=None):
+    """Flagged fraction above each capture's own benign rate, one column per scenario.
+
+    A raw fraction puts the noisiest capture at the top of the chart, so the benign
+    column is subtracted out and carried in the row label instead: the cell says what
+    the detector found, the row says what it costs to run there.
+    """
+    path = resolve_output(path or "detection_gap.png")
+    view = results[results["group"].eq("all") & results["method"].eq("tcp")]
+    fractions = view.pivot_table(index="label", columns="scenario", values="flagged_fraction")
+    windows = view.pivot_table(index="label", columns="scenario", values="windows")
+    scenarios = sorted(name for name in fractions.columns if name != "benign")
+    labels = sorted(fractions.index)
+    benign = fractions["benign"].reindex(labels)
+    gaps = fractions[scenarios].reindex(labels).sub(benign, axis=0)
+
+    fig, ax = plt.subplots(figsize=(8.4, 5.25))
+    image = ax.imshow(gaps.to_numpy(), cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
+    for row, label in enumerate(labels):
+        for column, scenario in enumerate(scenarios):
+            gap = float(gaps.loc[label, scenario])
+            ax.text(column, row, f"{gap:+.2f}\n{int(windows.loc[label, scenario])} windows",
+                    ha="center", va="center", fontsize=8,
+                    color="white" if abs(gap) > 0.55 else "black")
+    ax.set_xticks(range(len(scenarios)))
+    ax.set_xticklabels([name.replace(" attack", "") for name in scenarios], fontsize=10)
+    ax.set_yticks(range(len(labels)))
+    ax.set_yticklabels([f"{label} ({benign[label]:.2f})" for label in labels], fontsize=8)
+    ax.set_xticks(np.arange(-0.5, len(scenarios)), minor=True)
+    ax.set_yticks(np.arange(-0.5, len(labels)), minor=True)
+    ax.grid(which="minor", color="white", linewidth=1.5)
+    ax.tick_params(which="minor", length=0)
+    bar = fig.colorbar(image, ax=ax, fraction=0.035, pad=0.02)
+    bar.set_label("fraction of windows above that capture's own benign rate", fontsize=8)
+    ax.set_title(f"Flagged fraction above each capture point's own benign rate"
+                 f"\nrow label: capture (its benign flag rate) | tcp, all 13 features"
+                 f" | {WINDOW_SIZE:g}s windows | alert > {THRESHOLD:g} sigma",
+                 fontsize=10, fontweight="bold")
+    fig.tight_layout()
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    return path
 
 
 def _fraction(view, label, scenario):

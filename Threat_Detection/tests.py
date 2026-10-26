@@ -17,7 +17,7 @@ import statemachine
 import sweep
 from detectors import build
 from features import make_windows, split_reference
-from reporting import threshold_table, to_events, write_events
+from reporting import plot_detection_gap, threshold_table, to_events, write_events
 
 # The pre-refactor function names, mapped onto their layer homes. The old
 # DetectorChecks class pins behavior through these aliases so the assertions read the same
@@ -490,6 +490,34 @@ class SweepChecks(unittest.TestCase):
         self.assertLess(benign["flagged_fraction"], 0.2)       # holdout windows, matched reference
         self.assertEqual(attack["group"], "all")
         self.assertEqual(int(attack["windows"]), 60)
+
+    def test_detection_gap_is_relative_to_each_captures_own_benign(self):
+        """The cell is the gap, not the raw fraction: a noisy vantage cannot win on volume."""
+        import tempfile
+
+        import matplotlib.pyplot as plt
+        results = pd.DataFrame([
+            {"group": "all", "method": "tcp", "label": "noisy", "scenario": "benign",
+             "windows": 20, "flagged_fraction": 0.90},
+            {"group": "all", "method": "tcp", "label": "noisy", "scenario": "nginx attack",
+             "windows": 30, "flagged_fraction": 0.95},
+            {"group": "all", "method": "tcp", "label": "quiet", "scenario": "benign",
+             "windows": 20, "flagged_fraction": 0.10},
+            {"group": "all", "method": "tcp", "label": "quiet", "scenario": "nginx attack",
+             "windows": 30, "flagged_fraction": 0.80},
+        ])
+        close, plt.close = plt.close, lambda *args, **kwargs: None
+        try:
+            path = Path(tempfile.mkdtemp()) / "gap.png"
+            plot_detection_gap(results, path=str(path))
+            fig = plt.gcf()
+            fig.canvas.draw()
+            cells = [text.get_text() for text in fig.axes[0].texts]
+        finally:
+            plt.close = close
+        self.assertEqual(path.stat().st_size > 1000, True)
+        self.assertIn("+0.05\n30 windows", cells)   # 0.95 against its own 0.90: barely above
+        self.assertIn("+0.70\n30 windows", cells)   # 0.80 against its own 0.10: clearly above
 
     def test_unusable_capture_is_recorded_not_dropped(self):
         rows = fake_stratum(active=5)
