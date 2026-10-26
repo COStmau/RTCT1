@@ -90,7 +90,11 @@ Underneath the menu, the same commands run directly:
 .venv/bin/python feature_value.py
 .venv/bin/python statemachine.py                      # PDFA sweep, 42 rows, about 13 seconds
 .venv/bin/python statemachine.py --method ptcp --out statemachine_sweep_ptcp.csv
+.venv/bin/python flag_scores.py                       # both alphabets' window scores, AUROC, verdict chart
 ```
+
+`sweep.py` writes `outputs/sweep_summary.png` and `outputs/detection_gap.png`; `flag_scores.py`
+writes `outputs/alphabet_verdict.png` alongside `flag_auc.csv`.
 
 The two sweeps do not have the same row count, and the gap is not missing captures.
 `sweep_results.csv` covers both capture methods and holds 88 rows. `statemachine_sweep.csv`
