@@ -869,6 +869,59 @@ class StateMachineChecks(unittest.TestCase):
         statemachine.plot_pdfa(pdfa, path=str(path))
         self.assertGreater(path.stat().st_size, 1000)
 
+    def test_plot_pdfa_legend_clears_the_states(self):
+        """States sit on the unit circle, so nothing in the key may reach y = -1."""
+        import tempfile
+        from pathlib import Path
+
+        import matplotlib.pyplot as plt
+        pdfa = statemachine.learn_pdfa([("a", "b")] * 8 + [("a", "c")] * 8)
+        close, plt.close = plt.close, lambda *args, **kwargs: None
+        try:
+            statemachine.plot_pdfa(pdfa, path=str(Path(tempfile.mkdtemp()) / "graph.png"))
+            fig = plt.gcf()
+            fig.canvas.draw()
+            ax = fig.axes[0]
+            key = ax.legend_.get_window_extent(fig.canvas.get_renderer())
+            top = key.transformed(ax.transData.inverted()).y1
+        finally:
+            plt.close = close
+        self.assertLessEqual(top, -1.0)
+        self.assertLess(key.x0, fig.bbox.width / 2)  # bottom left, not bottom right
+
+    def test_plot_pdfa_edge_labels_do_not_stack(self):
+        """A transition and its reverse, and a self-loop, each get their own label."""
+        import tempfile
+        from pathlib import Path
+
+        import matplotlib.pyplot as plt
+
+        # root -lb-> other is 1.00, other -lb-> root is 0.70: opposite directions on
+        # one pair of states, which matplotlib would otherwise draw on one arc.
+        other = statemachine._Node()
+        root = statemachine._Node()
+        root.visits, root.edge, root.children = 10, {"lb": 10}, {"lb": other}
+        other.visits, other.edge = 10, {"lb": 7, "loop": 3}
+        other.children = {"lb": root, "loop": other}
+        pdfa = statemachine.PDFA(root)
+        close, plt.close = plt.close, lambda *args, **kwargs: None
+        try:
+            statemachine.plot_pdfa(pdfa, path=str(Path(tempfile.mkdtemp()) / "graph.png"))
+            fig = plt.gcf()
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            labels = [(text.get_text(), text.get_window_extent(renderer))
+                      for text in fig.axes[0].texts
+                      if len(text.get_text().split()) == 2
+                      and not text.get_text()[0].isdigit()]
+        finally:
+            plt.close = close
+        self.assertGreater(len(labels), 1)
+        for i, (name, box) in enumerate(labels):
+            for other_label, other_box in labels[i + 1:]:
+                with self.subTest(labels=(name, other_label)):
+                    self.assertFalse(box.overlaps(other_box))
+
     def test_transition_probabilities_stay_within_unit_range(self):
         traces = ([("a", "b", "c")] * 8 + [("a", "b", "d")] * 8
                   + [("b", "c")] * 8 + [("a", "b")] * 8 + [("b",)] * 8)

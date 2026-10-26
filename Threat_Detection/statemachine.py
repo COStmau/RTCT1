@@ -300,8 +300,14 @@ def pdfa_states_in_order(pdfa):
 def plot_pdfa(pdfa, path=None, min_label_prob=0.25):
     """State graph: node size is visits, edge width is probability.
 
-    Only edges at or above `min_label_prob` get a symbol label; the rest
-    still draw, so nothing structural disappears.
+    Sized for a presentation slide (1.6:1, dpi 200) rather than a figure in a
+    document, so the text stays readable when the slide is projected. Only edges
+    at or above `min_label_prob` get a symbol label; the rest still draw, so nothing
+    structural disappears.
+
+    Edge labels are placed off the exact arc midpoint: a transition and its reverse
+    bend the same way in matplotlib's arc3, so a shared midpoint would stack both
+    labels on one spot, and a self-loop's midpoint is the state itself.
     """
     import matplotlib.pyplot as plt
 
@@ -311,30 +317,43 @@ def plot_pdfa(pdfa, path=None, min_label_prob=0.25):
     pos = {i: (np.cos(a), np.sin(a)) for i, a in enumerate(angles)}
     visits = np.array([node.visits for node in order], dtype=float)
 
-    fig, ax = plt.subplots(figsize=(13, 8))
+    fig, ax = plt.subplots(figsize=(8.4, 5.25))
+    # States sit on the unit circle, so the lowest is at y = -1: pad the frame below
+    # that and put the key in the empty bottom-left corner instead of over a state.
+    ax.set_xlim(-1.52, 1.28)
+    ax.set_ylim(-1.5, 1.45)
+    loop_rad, pair_rad = 0.4, 0.15
+    loop_label_radius = 1.34  # clear of the biggest state circle and its loop
     for i, node in enumerate(order):
         _, outgoing = pdfa.probs[id(node)]
         for symbol, (child, probability) in sorted(outgoing.items()):
             j = ids[id(child)]
-            style = "arc3,rad=0.3" if i == j else "arc3,rad=0.15" if i < j else "arc3,rad=-0.15"
+            # Same rad for both directions on purpose: reversing the endpoints flips
+            # the offset arc3 applies, so the two curves come out on opposite sides.
+            rad = loop_rad if i == j else pair_rad
             ax.annotate("", xy=pos[j], xytext=pos[i],
                         arrowprops={"arrowstyle": "->", "color": "#1f77b4",
-                                    "linewidth": 0.5 + 3 * probability,
+                                    "linewidth": 0.8 + 3.5 * probability,
                                     "alpha": 0.25 + 0.75 * probability,
-                                    "connectionstyle": style,
+                                    "connectionstyle": f"arc3,rad={rad}",
                                     "shrinkA": 18, "shrinkB": 18})
             if probability >= min_label_prob:
-                x, y = pos[i] if i == j else ((pos[i][0] + pos[j][0]) / 2,
-                                              (pos[i][1] + pos[j][1]) / 2)
-                ax.text(x, y, f"{symbol} {probability:.2f}", fontsize=6,
+                dx, dy = pos[j][0] - pos[i][0], pos[j][1] - pos[i][1]
+                if i == j:
+                    x, y = pos[i][0] * loop_label_radius, pos[i][1] * loop_label_radius
+                else:
+                    # Ride the arc outward, past the midpoint where its reverse sits.
+                    x = (pos[i][0] + pos[j][0]) / 2 + 1.2 * rad * dy
+                    y = (pos[i][1] + pos[j][1]) / 2 - 1.2 * rad * dx
+                ax.text(x, y, f"{symbol} {probability:.2f}", fontsize=9,
                         ha="center", va="center",
                         bbox={"facecolor": "white", "edgecolor": "none",
                               "alpha": 0.8, "pad": 1})
-    sizes = 300 + 1700 * (visits / visits.max() if visits.max() else 1)
+    sizes = 500 + 2800 * (visits / visits.max() if visits.max() else 1)
     for i, node in enumerate(order):
         ax.scatter([pos[i][0]], [pos[i][1]], s=sizes[i], color="#deebf7",
                    edgecolors="#1f77b4", linewidths=2, zorder=3)
-        ax.text(pos[i][0], pos[i][1], f"{i}\n{node.visits}", fontsize=8,
+        ax.text(pos[i][0], pos[i][1], f"{i}\n{node.visits}", fontsize=12,
                 fontweight="bold", ha="center", va="center", zorder=4)
     ax.scatter([], [], s=200, color="#deebf7", edgecolors="#1f77b4",
                label="state (id over visits)")
@@ -342,12 +361,12 @@ def plot_pdfa(pdfa, path=None, min_label_prob=0.25):
     ax.set_title(f"Learned PDFA: {len(order)} states, "
                  f"{sum(len(pdfa.probs[id(n)][1]) for n in order)} transitions"
                  f" | labels on edges >= {min_label_prob:.0%}",
-                 fontsize=11, fontweight="bold")
-    ax.legend(fontsize=9, loc="lower center")
+                 fontsize=14, fontweight="bold")
+    ax.legend(fontsize=10, loc="lower left")
     ax.set_axis_off()
     fig.tight_layout()
     out = resolve_output(path or "statemachine_graph.png")
-    fig.savefig(out, dpi=150)
+    fig.savefig(out, dpi=200)
     plt.close(fig)
     print(f"Wrote {out}")
     return out
