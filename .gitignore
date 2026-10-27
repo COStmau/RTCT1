@@ -8,3 +8,9 @@ __pycache__/
 
 # Hermes agent scratch (symlink to the plans folder outside the repo)
 .hermes/
+
+# Stray outputs from running scripts at the repo root
+/outputs/
+
+# macOS
+.DS_Store
