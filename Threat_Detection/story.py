@@ -13,6 +13,7 @@ import json
 import math
 from collections import Counter
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 
@@ -30,6 +31,8 @@ HELD_OUT = "benign (held out)"
 MAX_STEP_DETAIL = 400       # merge steps drawn one by one; the rest are counted
 MAX_STREAM = 2000           # training flows shown in the symbol stream
 STORY_HTML = "statemachine_story.html"
+TEMPLATE_DIR = Path(__file__).resolve().parent / "story_template"
+D3_FILE = "vendor/d3.v7.9.0.min.js"
 
 
 def build_story(benign, targets, cluster_captures, vantage, forget_seconds=FORGET_SECONDS):
@@ -184,3 +187,21 @@ def _clean(value):
 def to_json(story):
     """The bundle as compact JSON that JSON.parse accepts (no NaN, no Infinity)."""
     return json.dumps(_clean(story), allow_nan=False, separators=(",", ":"))
+
+
+def write_html(story, path=None):
+    """One self-contained page: template, styles, D3, renderer and bundle all inlined."""
+    page = (TEMPLATE_DIR / "index.html").read_text()
+    # "</" inside an inline script would close it early; "<\/" is the same string to JSON
+    bundle = "window.STORY = " + to_json(story).replace("</", "<\\/") + ";\n"
+    for marker, text in (("/*__CSS__*/", (TEMPLATE_DIR / "story.css").read_text()),
+                         ("/*__D3__*/", (TEMPLATE_DIR / D3_FILE).read_text()),
+                         ("/*__JS__*/", (TEMPLATE_DIR / "story.js").read_text()),
+                         ("/*__STORY__*/", bundle)):
+        head, found, tail = page.partition(marker)
+        if not found:
+            raise ValueError(f"Template is missing {marker}")
+        page = head + text + tail
+    out = resolve_output(path or STORY_HTML)
+    out.write_text(page, encoding="utf-8")
+    return out

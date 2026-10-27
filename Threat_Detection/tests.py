@@ -1688,6 +1688,20 @@ class StoryBundleChecks(unittest.TestCase):
         self.assertEqual(len(built["learning"]["steps"]), 2)
         self.assertGreater(built["learning"]["steps_total"], 2)
 
+    def test_html_is_self_contained(self):
+        import re
+        import tempfile
+        out = story.write_html(self.story, Path(tempfile.mkdtemp()) / "page.html")
+        page = out.read_text()
+        self.assertNotRegex(page, r'(src|href)="https?:')
+        self.assertIn("window.STORY = ", page)
+        self.assertIn("d3js.org v7.9.0", page)
+        self.assertLess(out.stat().st_size, 15 * 1024 * 1024)
+        # the bundle is inlined inside a script, so a "</" in it would end the script early
+        bundle = re.search(r"window\.STORY = (.*?);\n", page, re.S).group(1)
+        self.assertNotIn("</", bundle)
+        self.assertNotRegex(page, r"/\*__[A-Z0-9]+__\*/")
+
     def test_steps_point_at_pta_nodes(self):
         learning = self.story["learning"]
         ids = {node["id"] for node in learning["pta"]}
