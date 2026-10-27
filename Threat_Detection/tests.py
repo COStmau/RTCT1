@@ -1,5 +1,6 @@
 """Run from this folder with: python -m unittest -v tests"""
 import importlib.util
+import json
 import subprocess
 import sys
 import unittest
@@ -18,6 +19,7 @@ import flag_verdict
 import layout
 import reporting
 import statemachine
+import story
 import sweep
 from detectors import build
 from features import make_windows, split_reference
@@ -980,6 +982,20 @@ class StateMachineChecks(unittest.TestCase):
                                     for _, p_red, p_blue in step["tests"]))
             self.assertIsInstance(step["path"], tuple)
 
+    def test_learn_trace_paths_exist_in_the_prefix_tree(self):
+        """After a fold, a red state owns children from other branches; paths stay original."""
+        rng = np.random.default_rng(0)
+        weights = np.array([0.5 ** i for i in range(8)])
+        stream = list(rng.choice(list("abcdefgh"), size=150, p=weights / weights.sum()))
+        traces = statemachine.make_traces(stream)
+        events = []
+        statemachine.learn_pdfa(traces, trace=events)
+        prefixes = {tuple(trace[:i]) for trace in traces for i in range(len(trace) + 1)}
+        self.assertGreater(len(events), 5)
+        for step in events[1:]:
+            self.assertTrue(step["path"] in prefixes, step["path"])
+            self.assertTrue(step["red_path"] in prefixes, step["red_path"])
+
     def test_learn_trace_pta_is_unmerged(self):
         """The recorded prefix tree keeps one node per distinct prefix, before any fold."""
         events = []
@@ -1534,6 +1550,152 @@ class LayoutChecks(unittest.TestCase):
         landed = sorted(i for ids in mapping.values() for i in ids)
         self.assertEqual(landed, [n["id"] for n in nodes])
         self.assertEqual(mapping[0][0], 0)          # the root state holds the PTA root
+
+
+def flow_capture(seconds=60, burst=None, proto="tcp", start=1000.0, vary=False):
+    """Packets for a request/response pair each second, each flow its own 5-tuple.
+
+    `burst=(first, last)` repeats the pair six times a second in [first, last): the benign
+    pattern hammered, which SEQUENT scores high because it visits known states too often.
+    `vary` cycles the response through three sizes, so learning takes several red-blue steps.
+    """
+    rows, port = [], 30000
+    for second in range(seconds):
+        pairs = 6 if burst and burst[0] <= second < burst[1] else 1
+        for pair in range(pairs):
+            t = start + second + 0.1 + pair / 8
+            reply = (150, 900, 4000, 900, 150)[second % 5] if vary else 150
+            for offset, size, duration, src, dst in ((0.0, 100, 0.01, "10.42.3.4", "10.43.0.10"),
+                                                     (0.05, reply, 0.03, "10.43.0.10", "10.42.3.4")):
+                port += 1
+                for ts in (t + offset, t + offset + duration):
+                    rows.append({"ts": ts, "frame_len": size, "src_ip": src, "dst_ip": dst,
+                                 "src_port": port, "dst_port": 53, "proto": proto})
+    return pd.DataFrame(rows)
+
+
+class StoryBundleChecks(unittest.TestCase):
+    """The page shows only what the bundle says, so the bundle must say what the pipeline did."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.benign = flow_capture()
+        cls.attack = flow_capture(burst=(20, 25))
+        cls.story = story.build_story(cls.benign, {"flood": cls.attack},
+                                      {"pod-lidar": cls.benign}, "pod-lidar")
+        cls.captures = {c["scenario"]: c for c in cls.story["playback"]["captures"]}
+
+    def model_and_flows(self, packets):
+        flows, _ = statemachine.segment_flows(statemachine.make_flows(packets),
+                                              packets["ts"].min())
+        return flows
+
+    def test_make_flows_keeps_endpoints(self):
+        flows = statemachine.make_flows(self.benign)
+        self.assertEqual(set(flows["src_ip"]), {"10.42.3.4", "10.43.0.10"})
+
+    def test_fit_model_trace_is_the_detector_model(self):
+        train, _ = statemachine.split_flows(self.model_and_flows(self.benign))
+        events = []
+        traced = statemachine.fit_model(train, trace=events)
+        self.assertEqual(traced["pdfa"].n_states, statemachine.fit_model(train)["pdfa"].n_states)
+        self.assertEqual(len(self.story["learning"]["pdfa"]["states"]), traced["pdfa"].n_states)
+        self.assertEqual(events[0][0], "pta")
+
+    def test_held_out_benign_comes_first(self):
+        names = [c["scenario"] for c in self.story["playback"]["captures"]]
+        self.assertEqual(names, ["benign (held out)", "flood"])
+
+    def test_bundle_scores_match_pipeline(self):
+        flows = self.model_and_flows(self.attack)
+        train, _ = statemachine.split_flows(self.model_and_flows(self.benign))
+        model = statemachine.fit_model(train)
+        t0 = self.attack["ts"].min()
+        n = statemachine.n_windows_for(self.attack)
+        expected = statemachine.frequency_scores_by_window(
+            model, flows, t0, n, forget_seconds=statemachine.FORGET_SECONDS)
+        capture = self.captures["flood"]
+        got = np.full(n, np.nan)
+        for trace in capture["traces"]:
+            w = int(trace["t"] // features.WINDOW_SIZE)
+            got[w] = trace["windowed"] if np.isnan(got[w]) else max(got[w], trace["windowed"])
+        np.testing.assert_allclose(got, expected, equal_nan=True)
+
+    def test_bundle_likelihood_matches_score_flows(self):
+        flows = self.model_and_flows(self.attack)
+        train, _ = statemachine.split_flows(self.model_and_flows(self.benign))
+        expected = [s for _, s in statemachine.score_flows(statemachine.fit_model(train), flows)]
+        got = [t["likelihood"] for t in self.captures["flood"]["traces"]]
+        np.testing.assert_allclose(got, expected)
+
+    def test_replaying_expiry_reconstructs_counts(self):
+        from collections import Counter
+        flows = self.model_and_flows(self.attack)
+        train, _ = statemachine.split_flows(self.model_and_flows(self.benign))
+        model = statemachine.fit_model(train)
+        ids = {id(n): i for i, n in enumerate(statemachine.pdfa_states_in_order(model["pdfa"]))}
+        scorer = statemachine.WindowedFrequencyScorer(model["pdfa"])
+        symbols = list(statemachine.encode(flows, model["enc"]))
+        t0 = self.attack["ts"].min()
+        for i in range(len(symbols) - model["trace_len"] + 1):
+            scorer.score(tuple(symbols[i:i + model["trace_len"]]),
+                         flows["start_ts"].iloc[i + model["trace_len"] - 1] - t0)
+        counts = Counter()
+        for trace in self.captures["flood"]["traces"]:
+            for _, state in trace["expired"]:
+                counts[state] -= 1
+            counts.update(trace["states"])
+        self.assertEqual(+counts, Counter({ids[k]: v for k, v in scorer.counts.items()}))
+
+    def test_burst_alerts_then_releases(self):
+        windows = self.captures["flood"]["windows"]
+        alerts = [w["index"] for w in windows if w["alert"]]
+        released = [w["index"] for w in windows if w["released"]]
+        self.assertTrue(alerts)
+        self.assertTrue(released and released[0] > alerts[0])
+        self.assertFalse(windows[-1]["flagged"])
+        last = self.captures["flood"]["traces"][-1]
+        self.assertGreater(last["cumulative"], self.captures["flood"]["cutoffs"]["cumulative"])
+        self.assertFalse(any(w["alert"] for w in self.captures["benign (held out)"]["windows"]))
+
+    def test_trace_flows_map_to_cluster_elements(self):
+        capture = self.captures["flood"]
+        self.assertIn(["pod:10.42.3.4", "svc:10.43.0.10"], capture["flow_edges"])
+        self.assertEqual(capture["traces"][0]["i"], 0)
+
+    def test_json_has_no_nonfinite(self):
+        def refuse(constant):
+            raise ValueError(constant)
+        parsed = json.loads(story.to_json(self.story), parse_constant=refuse)
+        self.assertEqual(parsed["meta"]["vantage"], "pod-lidar")
+        self.assertEqual(parsed["meta"]["forget_seconds"], statemachine.FORGET_SECONDS)
+
+    def test_all_unseen_attack_falls_off_first_symbol(self):
+        unseen = flow_capture(seconds=20, proto="udp")
+        built = story.build_story(self.benign, {"udp": unseen}, {}, "pod-lidar")
+        traces = built["playback"]["captures"][1]["traces"]
+        self.assertTrue(traces)
+        self.assertTrue(all(t["fell_off_at"] == 0 and t["states"] == [] for t in traces))
+        self.assertTrue(all(np.isfinite(t["likelihood"]) for t in traces))
+
+    def test_step_detail_is_capped(self):
+        original = story.MAX_STEP_DETAIL
+        story.MAX_STEP_DETAIL = 2
+        try:
+            built = story.build_story(flow_capture(vary=True), {}, {}, "pod-lidar")
+        finally:
+            story.MAX_STEP_DETAIL = original
+        self.assertEqual(len(built["learning"]["steps"]), 2)
+        self.assertGreater(built["learning"]["steps_total"], 2)
+
+    def test_steps_point_at_pta_nodes(self):
+        learning = self.story["learning"]
+        ids = {node["id"] for node in learning["pta"]}
+        for step in learning["steps"]:
+            self.assertIn(step["blue"], ids)
+            self.assertIn(step["red"], ids)
+        merged = [i for state in learning["pdfa"]["states"] for i in state["pta_ids"]]
+        self.assertEqual(sorted(merged), sorted(ids))
 
 
 if __name__ == "__main__":

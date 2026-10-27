@@ -45,7 +45,7 @@ def load_flow_packets(path, flags=False):
 
 
 def make_flows(packets):
-    """One row per 5-tuple flow: start time, protocol, bytes, duration, flag presence."""
+    """One row per 5-tuple flow: start time, protocol, endpoints, bytes, duration, flags."""
     required = set(FLOW_COLUMNS) - {"proto"}
     missing = required - set(packets.columns)
     if missing:
@@ -68,6 +68,8 @@ def make_flows(packets):
         "bytes": ("frame_len", "sum"),
         "duration": ("ts", lambda s: float(s.max() - s.min())),
         "proto": ("proto", "first"),
+        "src_ip": ("src_ip", "first"),
+        "dst_ip": ("dst_ip", "first"),
     }
     if has_flags:
         aggregations["syn_seen"] = ("tcp_syn", "max")
@@ -275,25 +277,28 @@ def learn_pdfa(traces, alpha=ALERGIA_ALPHA, trace=None):
     A state is named by its symbol path from the root in the unmerged tree.
     """
     root = _Node()
+    paths = {id(root): ()}      # each node's prefix in the unmerged tree; folds keep identity
     for sequence in traces:
         node = root
         node.visits += 1
         for symbol in sequence:
             node.edge[symbol] = node.edge.get(symbol, 0) + 1
-            node = node.children.setdefault(symbol, _Node())
+            if symbol not in node.children:
+                node.children[symbol] = _Node()
+                paths[id(node.children[symbol])] = paths[id(node)] + (symbol,)
+            node = node.children[symbol]
             node.visits += 1
         node.final += 1
     if trace is not None:
         trace.append(("pta", _copy_tree(root)))
     red = [root]
-    paths = {id(root): ()}
     while True:
         fringe = [(parent, s, c) for parent in red
                   for s, c in sorted(parent.children.items()) if c not in red]
         if not fringe:
             break
         parent, symbol, blue = fringe[0]
-        path = paths[id(parent)] + (symbol,)
+        path = paths[id(blue)]
         for candidate in red:
             if _compatible(candidate, blue, alpha):
                 if trace is not None:
@@ -306,7 +311,6 @@ def learn_pdfa(traces, alpha=ALERGIA_ALPHA, trace=None):
             if trace is not None:
                 trace.append(_step("promote", red[-1], blue, path, paths[id(red[-1])], alpha))
             red.append(blue)
-            paths[id(blue)] = path
     return PDFA(root)
 
 
@@ -428,14 +432,14 @@ def split_flows(flows, train_fraction=BENIGN_TRAIN_FRACTION):
 
 
 def fit_model(train_flows, nbins=NBINS, trace_len=TRACE_LEN, alpha=ALERGIA_ALPHA,
-              encoding="percentile", flags=False):
-    """Bin edges plus PDFA learned from benign training flows."""
+              encoding="percentile", flags=False, trace=None):
+    """Bin edges plus PDFA learned from benign training flows; `trace` as in learn_pdfa."""
     fitter = fit_frequency if encoding == "frequency" else fit_percentile
     enc = fitter(train_flows, nbins, flags=flags)
     traces = make_traces(encode(train_flows, enc), trace_len)
     if not traces:
         raise ValueError("Too few training flows for one trace.")
-    return {"enc": enc, "pdfa": learn_pdfa(traces, alpha), "trace_len": trace_len}
+    return {"enc": enc, "pdfa": learn_pdfa(traces, alpha, trace=trace), "trace_len": trace_len}
 
 
 def score_flows(model, flows):
