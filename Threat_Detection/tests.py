@@ -15,6 +15,7 @@ import evaluation
 import features
 import flag_scores
 import flag_verdict
+import layout
 import reporting
 import statemachine
 import sweep
@@ -1464,6 +1465,75 @@ class ClusterChecks(unittest.TestCase):
         self.assertEqual(element_of("10.43.0.10"), "svc:10.43.0.10")
         self.assertEqual(element_of("9.9.9.9"), "internet")
         self.assertIsNone(element_of("127.0.0.1"))
+
+
+class LayoutChecks(unittest.TestCase):
+    """Positions are computed, so they must be deterministic and stay inside the canvas."""
+
+    TRACES = ([("a", "b", "c")] * 12 + [("a", "b", "b")] * 12 + [("c", "a")] * 12
+              + [("b", "a", "c")] * 5 + [("a",)] * 3)
+
+    def learned(self):
+        events = []
+        pdfa = statemachine.learn_pdfa(self.TRACES, trace=events)
+        return pdfa, events[0][1]
+
+    def test_icicle_children_tile_parent(self):
+        _, root = self.learned()
+        nodes = layout.icicle(root)
+        by_id = {node["id"]: node for node in nodes}
+        self.assertEqual((nodes[0]["x0"], nodes[0]["x1"]), (0.0, 1.0))
+        for parent in nodes:
+            children = [n for n in nodes if n["parent"] == parent["id"]]
+            if not children:
+                continue
+            span = parent["x1"] - parent["x0"]
+            covered = sum(c["x1"] - c["x0"] for c in children)
+            ended = span * parent["final"] / parent["visits"]
+            self.assertAlmostEqual(covered + ended, span, places=12)
+            self.assertAlmostEqual(min(c["x0"] for c in children), parent["x0"], places=12)
+            self.assertTrue(all(by_id[c["parent"]]["depth"] == c["depth"] - 1 for c in children))
+
+    def test_icicle_is_deterministic_and_breadth_first(self):
+        _, root = self.learned()
+        first, second = layout.icicle(root), layout.icicle(root)
+        self.assertEqual(first, second)
+        self.assertEqual([n["id"] for n in first], list(range(len(first))))
+        self.assertEqual([n["depth"] for n in first], sorted(n["depth"] for n in first))
+        self.assertEqual(first[0]["path"], ())
+
+    def test_layered_root_is_leftmost(self):
+        pdfa, _ = self.learned()
+        states = layout.layered(pdfa)["states"]
+        self.assertEqual(states[0]["x"], min(s["x"] for s in states))
+
+    def test_layered_is_deterministic(self):
+        pdfa, _ = self.learned()
+        self.assertEqual(layout.layered(pdfa), layout.layered(pdfa))
+
+    def test_layered_coordinates_in_unit_square(self):
+        pdfa, _ = self.learned()
+        for state in layout.layered(pdfa)["states"]:
+            self.assertTrue(0.0 <= state["x"] <= 1.0 and 0.0 <= state["y"] <= 1.0)
+
+    def test_layered_has_every_transition(self):
+        pdfa, _ = self.learned()
+        edges = layout.layered(pdfa)["edges"]
+        self.assertEqual(len(edges), sum(len(out) for _, out in pdfa.probs.values()))
+        self.assertTrue(all(0.0 < e["prob"] <= 1.0 for e in edges))
+
+    def test_layered_single_state(self):
+        pdfa = statemachine.learn_pdfa([("a",)] * 4)
+        states = layout.layered(pdfa)["states"]
+        self.assertTrue(all(0.0 <= s["x"] <= 1.0 and 0.0 <= s["y"] <= 1.0 for s in states))
+
+    def test_every_pta_node_lands_in_a_state(self):
+        pdfa, root = self.learned()
+        nodes = layout.icicle(root)
+        mapping = layout.pta_to_pdfa_map(pdfa, nodes)
+        landed = sorted(i for ids in mapping.values() for i in ids)
+        self.assertEqual(landed, [n["id"] for n in nodes])
+        self.assertEqual(mapping[0][0], 0)          # the root state holds the PTA root
 
 
 if __name__ == "__main__":
