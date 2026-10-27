@@ -1702,6 +1702,11 @@ class StoryBundleChecks(unittest.TestCase):
         self.assertNotIn("</", bundle)
         self.assertNotRegex(page, r"/\*__[A-Z0-9]+__\*/")
 
+    def test_meta_carries_train_span(self):
+        train, _ = statemachine.split_flows(self.model_and_flows(self.benign))
+        self.assertAlmostEqual(self.story["meta"]["train_span_s"],
+                               train["start_ts"].max() - train["start_ts"].min())
+
     def test_steps_point_at_pta_nodes(self):
         learning = self.story["learning"]
         ids = {node["id"] for node in learning["pta"]}

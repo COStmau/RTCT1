@@ -72,6 +72,7 @@ def build_story(benign, targets, cluster_captures, vantage, forget_seconds=FORGE
                  "forget_seconds": float(forget_seconds), "trace_len": model["trace_len"],
                  "window_size": float(WINDOW_SIZE), "persistence": PERSISTENCE_WINDOW,
                  "train_flows": len(train), "holdout_flows": len(holdout),
+                 "train_span_s": float(train["start_ts"].max() - train["start_ts"].min()),
                  "dropped_flows": dropped,
                  "generated": datetime.now(timezone.utc).isoformat(timespec="seconds")},
         "cluster": found,

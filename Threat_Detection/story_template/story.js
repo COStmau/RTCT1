@@ -628,8 +628,380 @@ function drawHoeffding(step) {
 }
 
 // ---------------------------------------------------------------- act 3: detection
+// The replay: one Player clock drives every view. Views subscribe with player.on("tick").
+const HEAT = ["--div-n3", "--div-n2", "--div-n1", "--div-0", "--div-p1", "--div-p2", "--div-p3"];
+const HEAT_EDGES = [-2, -1, -0.4, 0.4, 1, 2];   // log2(visits in clock / visits expected)
+const heatColor = ratio => `var(${HEAT[d3.bisectRight(HEAT_EDGES, Math.log2(ratio))]})`;
+
+const player = {
+  capture: 0, t: 0, playing: false, speed: 2, timer: null, last: null, listeners: [],
+  on(name, fn) { this.listeners.push(fn); },
+  emit() { for (const fn of this.listeners) fn(this.t); },
+  play() {
+    const c = capture();
+    if (this.t >= c.end - 1e-6) this.t = c.begin;
+    this.playing = true; this.last = null;
+    d3.select("#d-play").text("❚❚ Pause");
+    if (!this.timer) this.timer = d3.timer(elapsed => this.frame(elapsed));
+  },
+  pause() {
+    this.playing = false;
+    d3.select("#d-play").text("▶ Play");
+    if (this.timer) { this.timer.stop(); this.timer = null; }
+  },
+  frame(elapsed) {
+    if (this.last !== null) this.t += (elapsed - this.last) / 1000 * this.speed;
+    this.last = elapsed;
+    const c = capture();
+    if (this.t >= c.end) { this.t = c.end; this.pause(); }
+    this.emit();
+  },
+  seek(t) { const c = capture(); this.t = Math.max(c.begin, Math.min(c.end, t)); this.emit(); },
+};
+window.__stopPlayer = () => player.pause();
+
+// per-capture indexes, built once: every state visit in time order, for the anomaly clock
+const prepared = new Map();
+function capture() {
+  const i = player.capture;
+  if (!prepared.has(i)) {
+    const c = S.playback.captures[i];
+    const vt = [], vs = [];
+    for (const tr of c.traces) for (const s of tr.states) { vt.push(tr.t); vs.push(s); }
+    const begin = c.scenario === S.playback.captures[0].scenario ? Math.max(0, c.start_s - 2) : 0;
+    prepared.set(i, { c, vt, vs, tt: c.traces.map(tr => tr.t), begin, end: c.duration_s });
+  }
+  return prepared.get(i);
+}
+
 function actDetection() {
-  panel.html(`<h2>Detection</h2><p>Coming in the next step.</p>`);
+  const caps = S.playback.captures;
+  controls.html(`
+    <select id="d-cap" aria-label="recording">${caps.map((c, i) =>
+      `<option value="${i}" ${i === player.capture ? "selected" : ""}>${c.scenario}</option>`).join("")}</select>
+    <button class="primary" id="d-play">▶ Play</button>
+    <div class="seg" id="d-speed">${[1, 2, 4, 8].map(v =>
+      `<button data-v="${v}" aria-pressed="${v === player.speed}">${v}×</button>`).join("")}</div>
+    <span class="readout" id="d-time"></span>
+    <span class="spacer"></span>
+    <span class="readout">clock ${S.meta.forget_seconds} s · alert after ${S.meta.persistence} flagged windows in a row</span>`);
+  d3.select("#d-cap").on("change", e => { player.pause(); player.capture = +e.target.value; player.t = capture().begin; rebuild(); });
+  d3.select("#d-play").on("click", () => player.playing ? player.pause() : player.play());
+  d3.selectAll("#d-speed button").on("click", function () {
+    player.speed = +this.dataset.v;
+    d3.selectAll("#d-speed button").attr("aria-pressed", function () { return +this.dataset.v === player.speed; });
+  });
+  if (player.t < capture().begin || player.t > capture().end) player.t = capture().begin;
+  rebuild();
+}
+
+function rebuild() {
+  svg.selectAll("*").remove();
+  defs();
+  player.listeners = [];
+  const { w, h } = size();
+  const top = { x: 24, y: 16, w: w * 0.62 - 24, h: h * 0.56 - 16 };
+  const inset = { x: w * 0.64, y: 34, w: w * 0.36 - 20, h: h * 0.56 - 40 };
+  const strip = { x: 70, y: h * 0.59, w: w - 100, h: h * 0.41 - 30 };
+  machineView(svg.append("g"), top);
+  clusterInset(svg.append("g"), inset);
+  scoreStrip(svg.append("g"), strip);
+  detectionPanel();
+  window.onkeydown = e => {
+    if (currentAct !== "detection" || e.target.tagName === "SELECT") return;
+    if (e.code === "Space") { e.preventDefault(); player.playing ? player.pause() : player.play(); }
+    if (e.code === "ArrowRight") player.seek(player.t + 1);
+    if (e.code === "ArrowLeft") player.seek(player.t - 1);
+  };
+  player.emit();
+}
+
+// index of the last trace at or before t, -1 if none
+const traceAt = t => d3.bisectRight(capture().tt, t) - 1;
+
+function machineView(g, box) {
+  const states = L.pdfa.states;
+  const pad = 60;
+  const at = s => [box.x + pad + s.x * (box.w - 2 * pad), box.y + pad + s.y * (box.h - 2 * pad)];
+  // each state plus its clock ring must fit halfway to its own nearest neighbour
+  const nearest = new Map(states.map(a => [a.id, d3.min(states.filter(b => b !== a),
+    b => Math.hypot(at(a)[0] - at(b)[0], at(a)[1] - at(b)[1])) ?? Infinity]));
+  const rScale = d3.scaleSqrt().domain([0, d3.max(states, s => s.visits)]).range([12, Math.min(40, box.h / 5)]);
+  const radius = s => Math.max(9, Math.min(rScale(s.visits), nearest.get(s.id) / 2 - 22));
+  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", box.y + 4)
+    .text("the machine · each dot circles its state's clock once, then is forgotten");
+  const links = drawMachineEdges(g.append("g"), L.pdfa, at, radius);
+  const forget = S.meta.forget_seconds, span = Math.max(S.meta.train_span_s, 1e-9);
+  const expected = s => Math.max(s.visits * forget / span, 1e-3);
+
+  const sg = g.append("g").selectAll("g").data(states).join("g")
+    .attr("transform", s => `translate(${at(s)})`);
+  sg.append("circle").attr("class", "clock-track").attr("r", s => radius(s) + 15);
+  sg.append("line").attr("class", "clock-noon").attr("x1", 0).attr("x2", 0)
+    .attr("y1", s => -radius(s) - 9).attr("y2", s => -radius(s) - 21);
+  const heat = sg.append("circle").attr("class", "state-heat").attr("r", radius)
+    .style("stroke", s => stateColor(s.id)).style("fill", "var(--div-0)");
+  sg.append("text").attr("class", "t-title halo").attr("text-anchor", "middle").attr("y", 5).text(s => s.id);
+  hover(sg, s => {
+    const n = clockCounts().get(s.id) || 0;
+    return `<div class="tt-title">state ${s.id}</div>
+      <div class="tt-row">${n} visit${n === 1 ? "" : "s"} on the clock now</div>
+      <div class="tt-row">${f1(expected(s))} expected in ${forget} s at the training rate</div>`;
+  });
+
+  const dots = g.append("g");
+  const walk = g.append("g");
+  const token = g.append("circle").attr("class", "token").attr("r", 6).attr("opacity", 0);
+  const fall = g.append("g").attr("opacity", 0);
+  fall.append("text").attr("class", "falloff").attr("text-anchor", "middle").text("✕");
+  const fallLabel = fall.append("text").attr("class", "falloff-label halo").attr("text-anchor", "middle").attr("y", 18);
+  const byId = new Map(states.map(s => [s.id, s]));
+  let shownTrace = null;
+
+  player.on("tick", t => {
+    const { vt, vs, c } = capture();
+    const lo = d3.bisectLeft(vt, t - forget), hi = d3.bisectRight(vt, t);
+    const counts = new Map();
+    for (let i = lo; i < hi; i++) counts.set(vs[i], (counts.get(vs[i]) || 0) + 1);
+    heat.style("fill", s => (counts.get(s.id) || 0) === 0 ? "var(--surface-2)" : heatColor(counts.get(s.id) / expected(s)));
+
+    // visits orbit their state: angle is age, a full turn is the forgetting window
+    const visits = d3.range(lo, hi);
+    dots.selectAll("circle").data(visits, i => i).join("circle").attr("class", "visit").attr("r", 2.6)
+      .attr("cx", i => { const s = byId.get(vs[i]); const a = (t - vt[i]) / forget * 2 * Math.PI;
+        return at(s)[0] + Math.sin(a) * (radius(s) + 10 + (i % 3) * 5); })
+      .attr("cy", i => { const s = byId.get(vs[i]); const a = (t - vt[i]) / forget * 2 * Math.PI;
+        return at(s)[1] - Math.cos(a) * (radius(s) + 10 + (i % 3) * 5); })
+      .attr("opacity", i => 1 - 0.7 * (t - vt[i]) / forget);
+
+    // the current trace walks the machine; a missing transition drops it off with a cross
+    const k = traceAt(t);
+    if (k === shownTrace) return;
+    shownTrace = k;
+    const trace = k >= 0 ? c.traces[k] : null;
+    const path = trace ? [0, ...trace.states] : [];
+    const keys = new Set(path.slice(1).map((s, i) => `${path[i]}>${s}`));
+    links.classed("walk", l => keys.has(l.key)).attr("marker-end", l => keys.has(l.key) ? "url(#arrow-hot)" : "url(#arrow)");
+    walk.selectAll("*").remove();
+    if (!trace) { token.attr("opacity", 0); fall.attr("opacity", 0); return; }
+    const points = path.map(s => at(byId.get(s)));
+    token.interrupt().attr("opacity", 1).attr("cx", points[0][0]).attr("cy", points[0][1]);
+    let tr = token.transition().duration(0);
+    for (const p of points.slice(1)) tr = tr.transition().duration(Math.max(40, 220 / player.speed)).attr("cx", p[0]).attr("cy", p[1]);
+    if (trace.fell_off_at !== null) {
+      const last = points[points.length - 1];
+      fall.attr("opacity", 1).attr("transform", `translate(${last[0] + 26},${last[1] + 30})`);
+      fallLabel.text(`unseen: ${trace.symbols[trace.fell_off_at]}`);
+    } else {
+      fall.attr("opacity", 0);
+    }
+  });
+
+  function clockCounts() {
+    const { vt, vs } = capture(), t = player.t;
+    const counts = new Map();
+    for (let i = d3.bisectLeft(vt, t - forget); i < d3.bisectRight(vt, t); i++) counts.set(vs[i], (counts.get(vs[i]) || 0) + 1);
+    return counts;
+  }
+}
+
+function clusterInset(g, box) {
+  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", box.y - 14).text("where the current trace's flows run");
+  const { edges } = renderCluster(g, S.cluster, box, { focus: S.meta.vantage, compact: true });
+  const halo = g.select(".tap.focus .tap-halo");
+  let shown = null;
+  player.on("tick", t => {
+    const { c } = capture();
+    const k = traceAt(t);
+    const w = c.windows[Math.floor(t / S.meta.window_size)];
+    halo.style("stroke", w && w.alert ? "var(--critical)" : w && w.flagged ? "var(--warning)" : "var(--accent)")
+      .style("opacity", w && w.alert ? 0.9 : 0.35);
+    if (k === shown) return;
+    shown = k;
+    const hot = new Set();
+    if (k >= 0) {
+      const tr = c.traces[k];
+      for (const [a, b] of c.flow_edges.slice(tr.i, tr.i + S.meta.trace_len)) if (a && b) hot.add([a, b].sort().join("|"));
+    }
+    edges.classed("hot", e => hot.has([e.src, e.dst].sort().join("|")));
+  });
+}
+
+function scoreStrip(g, box) {
+  const { c, begin, end } = capture();
+  const traces = c.traces;
+  const x = d3.scaleLinear().domain([begin, end]).range([box.x, box.x + box.w]);
+  const hA = box.h * 0.5, hB = box.h * 0.26, gap = 14, bandH = 9;
+  const yA0 = box.y, yB0 = yA0 + hA + gap, band0 = yB0 + hB + 8;
+  const freq = traces.flatMap(t => [t.windowed, t.cumulative]).concat([c.cutoffs.windowed, c.cutoffs.cumulative]);
+  const yA = d3.scaleLinear().domain(d3.extent(freq.length ? freq : [0, 1])).nice().range([yA0 + hA, yA0 + 14]);
+  const lik = traces.map(t => t.likelihood).concat([c.cutoffs.likelihood, 0]);
+  const yB = d3.scaleLinear().domain(d3.extent(lik)).nice().range([yB0 + hB, yB0 + 12]);
+
+  // the anomaly clock's window, behind the lines
+  const clock = g.append("rect").attr("class", "clock-window").attr("y", yA0).attr("height", band0 + 2 * bandH + 4 - yA0).attr("rx", 3);
+
+  for (const [y, top, h, ticks] of [[yA, yA0, hA, 4], [yB, yB0, hB, 3]]) {
+    g.append("g").attr("class", "grid").attr("transform", `translate(${box.x},0)`)
+      .call(d3.axisLeft(y).ticks(ticks).tickSize(-box.w).tickFormat("")).call(s => s.select(".domain").remove());
+    g.append("g").attr("class", "axis").attr("transform", `translate(${box.x},0)`)
+      .call(d3.axisLeft(y).ticks(ticks).tickSize(3)).call(s => s.select(".domain").remove());
+  }
+  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", yA0 + 4).text("SEQUENT frequency score · higher = more unusual");
+  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", yB0 + 4).text("trace likelihood · lower = more unusual");
+
+  // cutoff labels sit at opposite ends, so two close cutoffs never print on top of each other
+  const cut = (y, value, color, text, end) => {
+    g.append("line").attr("class", "cutoff").attr("x1", box.x).attr("x2", box.x + box.w)
+      .attr("y1", y(value)).attr("y2", y(value)).style("stroke", color);
+    g.append("text").attr("class", "t-small halo").attr("text-anchor", end ? "end" : "start")
+      .attr("x", end ? box.x + box.w - 2 : box.x + 4).attr("y", y(value) - 4).text(text).style("fill", "var(--ink-2)");
+  };
+  cut(yA, c.cutoffs.windowed, "var(--s1)", `windowed cutoff ${f1(c.cutoffs.windowed)}`, false);
+  cut(yA, c.cutoffs.cumulative, "var(--s2)", `cumulative cutoff ${f1(c.cutoffs.cumulative)}`, true);
+  cut(yB, c.cutoffs.likelihood, "var(--muted)", `cutoff ${f2(c.cutoffs.likelihood)}`, true);
+
+  const line = (y, key) => d3.line().x(d => x(d.t)).y(d => y(d[key]))(traces);
+  if (traces.length) {
+    g.append("path").attr("class", "series").attr("d", line(yA, "cumulative"))
+      .style("stroke", "var(--s2)").attr("stroke-width", 1.5).attr("stroke-dasharray", "5 3");
+    g.append("path").attr("class", "series").attr("d", line(yA, "windowed")).style("stroke", "var(--s1)").attr("stroke-width", 2);
+    g.append("path").attr("class", "series").attr("d", line(yB, "likelihood")).style("stroke", "var(--ink-2)").attr("stroke-width", 1.5);
+    g.append("g").selectAll("circle").data(traces.filter(t => t.likelihood < c.cutoffs.likelihood)).join("circle")
+      .attr("cx", t => x(t.t)).attr("cy", t => yB(t.likelihood)).attr("r", 2.5).style("fill", "var(--warning)");
+  }
+  // legend for the two series sharing chart A
+  const legend = g.append("g").attr("transform", `translate(${box.x + box.w - 420},${yA0 - 4})`);
+  [["windowed (forgets after " + S.meta.forget_seconds + " s)", "var(--s1)", null],
+   ["cumulative (never forgets)", "var(--s2)", "5 3"]].forEach(([text, color, dash], i) => {
+    const lg = legend.append("g").attr("transform", `translate(${i * 220},0)`);
+    lg.append("line").attr("x1", 0).attr("x2", 18).attr("y1", -4).attr("y2", -4).style("stroke", color)
+      .attr("stroke-width", 2).attr("stroke-dasharray", dash);
+    lg.append("text").attr("class", "t-small t-2").attr("x", 24).attr("y", 0).text(text);
+  });
+
+  // window verdicts: flagged, alert (sustained), released
+  const ws = S.meta.window_size;
+  const bands = g.append("g");
+  bands.append("text").attr("class", "t-small t-muted").attr("text-anchor", "end").attr("x", box.x - 6).attr("y", band0 + 8).text("windows");
+  bands.selectAll("rect").data(c.windows.filter(w => w.index * ws < end && (w.index + 1) * ws > begin)).join("rect")
+    .attr("x", w => x(Math.max(begin, w.index * ws)) + 0.5).attr("y", band0)
+    .attr("width", w => Math.max(x(Math.min(end, (w.index + 1) * ws)) - x(Math.max(begin, w.index * ws)) - 1, 1))
+    .attr("height", bandH).attr("rx", 2)
+    .style("fill", w => w.alert ? "var(--critical)" : w.flagged ? "var(--warning)" : "var(--surface-2)");
+  bands.selectAll("text.rel").data(c.windows.filter(w => w.released && w.index * ws >= begin)).join("text")
+    .attr("class", "rel").attr("text-anchor", "middle").attr("x", w => x((w.index + 0.5) * ws)).attr("y", band0 + bandH + 13)
+    .style("fill", "var(--good-ink)").style("font-size", "12px").style("font-weight", 700).text("✓");
+  g.append("g").attr("class", "axis").attr("transform", `translate(0,${band0 + bandH + 18})`)
+    .call(d3.axisBottom(x).ticks(10).tickFormat(v => `${v}s`).tickSize(3));
+  const key = g.append("g").attr("transform", `translate(${box.x},${band0 + bandH + 44})`);
+  [["flagged window", "var(--warning)"], [`alert: ${S.meta.persistence}+ in a row`, "var(--critical)"]].forEach(([text, color], i) => {
+    key.append("rect").attr("x", i * 150).attr("y", -9).attr("width", 12).attr("height", 9).attr("rx", 2).style("fill", color);
+    key.append("text").attr("class", "t-small t-2").attr("x", i * 150 + 18).attr("y", 0).text(text);
+  });
+  key.append("text").attr("x", 300).attr("y", 0).style("fill", "var(--good-ink)").style("font-weight", 700).text("✓");
+  key.append("text").attr("class", "t-small t-2").attr("x", 314).attr("y", 0).text("released: back under the cutoff");
+  key.append("rect").attr("class", "clock-window").attr("x", 520).attr("y", -9).attr("width", 18).attr("height", 9).attr("rx", 2);
+  key.append("text").attr("class", "t-small t-2").attr("x", 544).attr("y", 0).text(`anomaly clock: the last ${S.meta.forget_seconds} s`);
+
+  // playhead, crosshair tooltip, click or drag to seek
+  const head = g.append("line").attr("class", "playhead").attr("y1", yA0).attr("y2", band0 + bandH);
+  const cross = g.append("line").attr("class", "crosshair").attr("y1", yA0).attr("y2", band0 + bandH).attr("opacity", 0);
+  const overlay = g.append("rect").attr("x", box.x).attr("y", yA0).attr("width", box.w)
+    .attr("height", band0 + bandH - yA0).attr("fill", "transparent").style("cursor", "pointer");
+  const seekTo = e => player.seek(x.invert(d3.pointer(e)[0]));
+  overlay.on("pointerdown", e => { seekTo(e); overlay.node().setPointerCapture(e.pointerId); })
+    .on("pointermove", e => {
+      if (e.buttons) seekTo(e);
+      const t = x.invert(d3.pointer(e)[0]);
+      const k = Math.max(0, d3.bisectRight(capture().tt, t) - 1);
+      const tr = traces[k], w = c.windows[Math.floor(t / ws)];
+      cross.attr("x1", x(t)).attr("x2", x(t)).attr("opacity", 1);
+      if (!tr) return;
+      showTip(e, `<div class="tt-title">${f1(t)} s · window ${Math.floor(t / ws)}</div>
+        <div class="tt-row">windowed ${f1(tr.windowed)} · cumulative ${f1(tr.cumulative)}</div>
+        <div class="tt-row">likelihood ${f2(tr.likelihood)}</div>
+        <div class="tt-row">${w ? (w.alert ? "alert" : w.flagged ? "flagged" : w.released ? "released" : "normal") : ""}</div>`);
+    })
+    .on("pointerleave", () => { cross.attr("opacity", 0); hideTip(); });
+
+  player.on("tick", t => {
+    head.attr("x1", x(t)).attr("x2", x(t));
+    const left = Math.max(begin, t - S.meta.forget_seconds);
+    clock.attr("x", x(left)).attr("width", Math.max(x(t) - x(left), 0));
+    d3.select("#d-time").text(`${f1(t)} s / ${f1(end)} s`);
+  });
+}
+
+function statusOf(t) {
+  const { c } = capture();
+  const index = Math.floor(t / S.meta.window_size);
+  const w = c.windows[index];
+  if (!w) return { cls: "idle", text: "NO DATA" };
+  if (w.alert) return { cls: "critical", text: "ALERT · sustained" };
+  if (w.flagged) return { cls: "warning", text: "FLAGGED window" };
+  const recent = c.windows.slice(Math.max(0, index - 2), index + 1).some(x => x.released);
+  if (recent) return { cls: "good", text: "RELEASED · forgotten" };
+  return { cls: "good", text: "NORMAL" };
+}
+
+function detectionPanel() {
+  let shownKey = null;
+  player.on("tick", t => {
+    const { c } = capture();
+    const k = traceAt(t), status = statusOf(t);
+    const key = `${player.capture}:${k}:${status.text}`;
+    if (key === shownKey) return;
+    shownKey = key;
+    const tr = k >= 0 ? c.traces[k] : null;
+    const totalAlerts = c.windows.filter(w => w.alert).length;
+    const heatLegend = `<div class="heatbar">${HEAT.map(v => `<span style="background:var(${v})"></span>`).join("")}</div>
+      <div class="heatlabels"><span>quieter</span><span>as in training</span><span>busier</span></div>`;
+    if (!tr) {
+      panel.html(`<div class="status ${status.cls}"><span class="dot"></span>${status.text}</div>
+        <h2>${c.scenario}</h2>
+        <p class="big">${c.traces.length} traces over ${f1(c.duration_s)} s. ${totalAlerts} window${totalAlerts === 1 ? "" : "s"} in sustained alert.</p>
+        <p>Press <b>Play</b> (or space). Each trace of ${S.meta.trace_len} flows walks the machine;
+          every state it visits drops a dot on that state's clock. A dot takes
+          ${S.meta.forget_seconds} s to go round once, then it is <b>forgotten</b>.</p>
+        <p>The score asks: are states being visited more often, in the last ${S.meta.forget_seconds} s,
+          than training said they would be?</p>
+        <h2>State fill · visits on the clock vs training rate</h2>${heatLegend}`);
+      return;
+    }
+    const contributions = tr.terms.map((terms, i) => ({
+      state: tr.states[i], total: d3.sum(terms),
+      seen: Math.round(Math.exp(terms[0]) - 1), trained: Math.round(Math.exp(-terms[1]) - 1),
+    }));
+    const maxC = d3.max(contributions, d => Math.abs(d.total)) || 1;
+    const above = tr.windowed > c.cutoffs.windowed, cumAbove = tr.cumulative > c.cutoffs.cumulative;
+    const falloff = tr.fell_off_at !== null;
+    const lostTime = cumAbove && !above && status.cls === "good";
+    panel.html(`
+      <div class="status ${status.cls}"><span class="dot"></span>${status.text}</div>
+      <h2>Trace at ${f1(tr.t)} s</h2>
+      <div class="chips">${tr.symbols.map((s, i) => chip(s, falloff && i >= tr.fell_off_at ? "off" : "")).join("")}</div>
+      <p style="margin-top:8px">${falloff
+        ? `Walks ${tr.fell_off_at === 0 ? "no state" : "states " + tr.states.join(" → ")}, then <b>falls off</b>: benign traffic never took <span class="mono">${tr.symbols[tr.fell_off_at]}</span> from there. Likelihood takes the floor (${f2(tr.likelihood)}).`
+        : `Walks states 0 → ${tr.states.join(" → ")}. Likelihood ${f2(tr.likelihood)} (cutoff ${f2(c.cutoffs.likelihood)}).`}</p>
+      <h2>Why it scores ${f1(tr.windowed)} ${above ? "· above" : "· under"} the cutoff ${f1(c.cutoffs.windowed)}</h2>
+      <div class="contrib">${contributions.map(d => `
+        <span class="sid" style="background:${stateColor(d.state)}">${d.state}</span>
+        <span class="bar" style="width:${Math.max(4, 100 * Math.abs(d.total) / maxC)}%"></span>
+        <span class="num">${f1(d.total)}</span>
+        <span class="sub">${d.seen} visit${d.seen === 1 ? "" : "s"} on its clock · ${fmt(d.trained)} in training</span>`).join("") || "<p>No state reached: nothing to count.</p>"}</div>
+      <p style="margin-top:8px">Each visited state adds log(clock visits + 1) − log(training visits + 1),
+        plus the training total and how many states are on the clock.</p>
+      <h2>Forgetting</h2>
+      <dl class="kv">
+        <dt>windowed</dt><dd>${f1(tr.windowed)} vs ${f1(c.cutoffs.windowed)} ${above ? "▲" : "✓"}</dd>
+        <dt>cumulative</dt><dd>${f1(tr.cumulative)} vs ${f1(c.cutoffs.cumulative)} ${cumAbove ? "▲" : "✓"}</dd>
+        <dt>forgot now</dt><dd>${tr.expired.length} visit${tr.expired.length === 1 ? "" : "s"} left the clock</dd>
+      </dl>
+      ${lostTime ? `<p style="margin-top:8px"><b>This is why it forgets.</b> The cumulative score is still
+        above its line, so without the ${S.meta.forget_seconds} s clock this alert would never clear.</p>` : ""}
+      <h2>State fill · visits on the clock vs training rate</h2>${heatLegend}`);
+  });
 }
 
 // ---------------------------------------------------------------- app shell
