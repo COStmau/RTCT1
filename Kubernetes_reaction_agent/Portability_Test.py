@@ -1,0 +1,1 @@
+print("We, can run this code on any platform!")

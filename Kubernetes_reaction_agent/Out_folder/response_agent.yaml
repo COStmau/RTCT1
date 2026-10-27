@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: response-agent-test
+  namespace: default
+
+spec:
+  serviceAccountName: response-agent
+  restartPolicy: Never
+
+  containers:
+  - name: response-agent-test
+    image: response-agent1.0:latest
+    imagePullPolicy: Never
+    stdin: true
+    tty: true

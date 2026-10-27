@@ -122,3 +122,5 @@ Retrieve password from Kubernetes secret.
 
 Then quit Docker Desktop.
 
+NOTE:
+The monitoring folder was used to help me understand using Prometheus and Grafana and get a better grasp so I can utilize it proficiently with the real-time data provided for us

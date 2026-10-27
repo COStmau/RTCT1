@@ -1,5 +1,21 @@
 import argparse
 from pathlib import Path
+"""
+aggregate_benign_1s.py
+
+Convert packet-level benign network traffic into fixed-duration
+time-series feature windows.
+
+The raw CSV contains one row per captured packet. This script groups
+those packets into configurable time windows and calculates features
+that can later be used to train the benign baseline.
+
+Although the filename contains "1s", the window size is configurable.
+The current Baseline Analyzer primarily uses 5-second windows.
+"""
+
+import argparse
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -7,8 +23,11 @@ import pandas as pd
 
 def numeric_column(df, column):
     """
-    Return a numeric version of a column.
-    Missing/non-numeric values become NaN.
+    Convert a dataframe column to numeric values.
+
+    Missing or invalid values become NaN. Returning NaN is useful for
+    statistics such as packet size or IAT because those values should
+    remain undefined if they were not present in the original data.
     """
     if column not in df.columns:
         return pd.Series(np.nan, index=df.index)
@@ -18,8 +37,10 @@ def numeric_column(df, column):
 
 def indicator_column(df, column):
     """
-    Convert a 0/1-style column to numeric values.
-    Missing values become 0.
+    Convert a 0/1 indicator column to numeric values.
+
+    Indicator fields represent events such as TCP SYN, TCP RST, or DNS.
+    If the column is missing or a value cannot be read, treat it as 0.
     """
     if column not in df.columns:
         return pd.Series(0, index=df.index, dtype=float)
@@ -28,37 +49,63 @@ def indicator_column(df, column):
 
 
 def aggregate_benign(input_file, output_file, window_seconds=1):
+    """
+    Aggregate raw packet rows into fixed-duration network feature windows.
+
+    Parameters
+    ----------
+    input_file:
+        Packet-level benign CSV file.
+
+    output_file:
+        Location where the processed feature CSV will be saved.
+
+    window_seconds:
+        Size of each aggregation window in seconds.
+    """
+
     print(f"Reading: {input_file}")
 
+    # Load the packet-level capture.
     df = pd.read_csv(input_file)
 
+    # The timestamp is required because all feature calculations depend
+    # on assigning packets to the correct time window.
     if "ts" not in df.columns:
         raise ValueError("CSV must contain a 'ts' timestamp column.")
 
-    # Ensure timestamps are numeric Unix timestamps.
+    # Convert timestamps to numeric Unix timestamps.
+    # Invalid timestamps are removed because they cannot be placed
+    # into a time window.
     df["ts"] = pd.to_numeric(df["ts"], errors="coerce")
     df = df.dropna(subset=["ts"])
 
-    # Sort chronologically.
+    # Keep packets in chronological order before aggregation.
     df = df.sort_values("ts").reset_index(drop=True)
 
-    # Assign each packet to a fixed time bucket.
+    # Assign every packet to the beginning of its fixed time window.
     #
-    # Example for 1-second windows:
-    # 100.1 -> 100
-    # 100.8 -> 100
-    # 101.2 -> 101
+    # Example using 1-second windows:
+    #   100.1 -> window 100
+    #   100.8 -> window 100
+    #   101.2 -> window 101
+    #
+    # With 5-second windows, packets between 100 and 104.999...
+    # would all belong to the same window.
     df["window_start"] = (
         np.floor(df["ts"] / window_seconds) * window_seconds
     )
 
-    # Convert useful packet fields to numeric form.
+    # Convert packet fields that will be used for mathematical
+    # calculations into numeric values.
     df["frame_len_num"] = numeric_column(df, "frame_len")
     df["iat_num"] = numeric_column(df, "iat")
     df["tcp_payload_len_num"] = numeric_column(df, "tcp_payload_len")
     df["udp_length_num"] = numeric_column(df, "udp_length")
 
-    # Boolean / indicator fields.
+    # These columns behave like boolean indicators.
+    # Each 1 represents that the packet contained the corresponding
+    # flag or protocol characteristic.
     indicator_fields = [
         "tcp_syn",
         "tcp_fin",
@@ -73,20 +120,26 @@ def aggregate_benign(input_file, output_file, window_seconds=1):
     for column in indicator_fields:
         df[f"{column}_num"] = indicator_column(df, column)
 
+    # Group all packets belonging to the same time window.
     grouped = df.groupby("window_start")
 
+    # Each output row represents one aggregated time window.
     output = pd.DataFrame(index=grouped.size().index)
 
     # ---------------------------------------------------------
-    # Basic traffic-rate features
+    # Traffic volume / rate
     # ---------------------------------------------------------
 
+    # Total packets observed in each window.
     output["packet_count"] = grouped.size()
 
+    # Normalize by the window length so this metric can still be
+    # interpreted as packets per second.
     output["packets_per_second"] = (
         output["packet_count"] / window_seconds
     )
 
+    # Total number of captured bytes in the window.
     output["total_bytes"] = grouped["frame_len_num"].sum()
 
     output["bytes_per_second"] = (
@@ -94,26 +147,32 @@ def aggregate_benign(input_file, output_file, window_seconds=1):
     )
 
     # ---------------------------------------------------------
-    # Packet-size characteristics
+    # Packet-size behavior
     # ---------------------------------------------------------
 
+    # These features describe the size distribution of packets
+    # observed during each time window.
     output["mean_packet_size"] = grouped["frame_len_num"].mean()
     output["std_packet_size"] = grouped["frame_len_num"].std()
     output["max_packet_size"] = grouped["frame_len_num"].max()
     output["min_packet_size"] = grouped["frame_len_num"].min()
 
     # ---------------------------------------------------------
-    # Packet timing / inter-arrival characteristics
+    # Packet timing behavior
     # ---------------------------------------------------------
 
+    # IAT = inter-arrival time between packets.
+    # These values describe how regularly packets arrive.
     output["mean_iat"] = grouped["iat_num"].mean()
     output["std_iat"] = grouped["iat_num"].std()
     output["max_iat"] = grouped["iat_num"].max()
 
     # ---------------------------------------------------------
-    # TCP behavior
+    # TCP flag behavior
     # ---------------------------------------------------------
 
+    # Count each TCP flag in the window and normalize the count
+    # into a per-second rate.
     output["tcp_syn_per_second"] = (
         grouped["tcp_syn_num"].sum() / window_seconds
     )
@@ -135,9 +194,11 @@ def aggregate_benign(input_file, output_file, window_seconds=1):
     )
 
     # ---------------------------------------------------------
-    # Application/protocol behavior
+    # Application / protocol behavior
     # ---------------------------------------------------------
 
+    # These metrics describe how much application-specific traffic
+    # occurs inside each window.
     output["dns_packets_per_second"] = (
         grouped["is_dns_num"].sum() / window_seconds
     )
@@ -163,9 +224,11 @@ def aggregate_benign(input_file, output_file, window_seconds=1):
     )
 
     # ---------------------------------------------------------
-    # Diversity / fan-out features
+    # Communication diversity / fan-out
     # ---------------------------------------------------------
 
+    # Unique counts help describe who the workload communicates
+    # with and how many different ports or protocols are involved.
     if "src_ip" in df.columns:
         output["unique_src_ips"] = grouped["src_ip"].nunique()
 
@@ -181,24 +244,82 @@ def aggregate_benign(input_file, output_file, window_seconds=1):
     if "proto" in df.columns:
         output["unique_protocols"] = grouped["proto"].nunique()
 
-    # Restore timestamp as a normal column.
+    # ---------------------------------------------------------
+    # Restore windows where no packets were observed
+    # ---------------------------------------------------------
+
+    # groupby() only creates windows containing at least one packet.
+    # For baseline analysis, true inactivity is meaningful behavior,
+    # so missing time intervals must also exist in the processed data.
+    start_window = int(output.index.min())
+    end_window = int(output.index.max())
+
+    all_windows = np.arange(
+        start_window,
+        end_window + window_seconds,
+        window_seconds
+    )
+
+    # Insert rows for any completely idle windows.
+    output = output.reindex(all_windows)
+    output.index.name = "window_start"
+
+    # Count and rate metrics genuinely equal zero when no traffic exists.
+    #
+    # Packet-size and IAT statistics are intentionally NOT included here.
+    # If no packets exist, there is no meaningful average packet size or
+    # inter-arrival time, so those values should remain NaN.
+    zero_when_idle = [
+        "packet_count",
+        "packets_per_second",
+        "total_bytes",
+        "bytes_per_second",
+
+        "tcp_syn_per_second",
+        "tcp_fin_per_second",
+        "tcp_rst_per_second",
+        "tcp_psh_per_second",
+        "tcp_ack_per_second",
+
+        "dns_packets_per_second",
+        "http_packets_per_second",
+        "https_packets_per_second",
+
+        "tcp_payload_bytes_per_second",
+        "udp_bytes_per_second",
+
+        "unique_src_ips",
+        "unique_dst_ips",
+        "unique_src_ports",
+        "unique_dst_ports",
+        "unique_protocols",
+    ]
+
+    for column in zero_when_idle:
+        if column in output.columns:
+            output[column] = output[column].fillna(0)
+
+    # Restore window_start as a normal dataframe column.
     output = output.reset_index()
 
-    # Optional readable timestamp for debugging / visualization.
+    # Add a readable UTC timestamp in addition to the Unix timestamp.
+    # This is useful when inspecting the processed CSV manually.
     output["datetime_utc"] = pd.to_datetime(
         output["window_start"],
         unit="s",
         utc=True
     )
 
-    # Keep readable datetime near the beginning.
+    # Place the human-readable datetime near the start of the CSV.
     columns = list(output.columns)
     columns.remove("datetime_utc")
     columns.insert(1, "datetime_utc")
     output = output[columns]
 
-    # Save.
+    # Create the destination directory if it does not already exist.
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+
+    # Save the processed time-series features.
     output.to_csv(output_file, index=False)
 
     print()
@@ -214,6 +335,10 @@ def aggregate_benign(input_file, output_file, window_seconds=1):
 
 
 def main():
+    """
+    Parse command-line arguments and start the aggregation process.
+    """
+
     parser = argparse.ArgumentParser(
         description="Aggregate benign packet-level CSV data into time-series features."
     )
