@@ -6,7 +6,7 @@ feature set, and nothing about what counts as an anomaly.
 import numpy as np
 import pandas as pd
 
-import boundaries
+import evaluation
 from data_io import load_capture, timebase_issues
 
 WINDOW_SIZE = 1.0
@@ -44,7 +44,7 @@ FEATURE_GROUPS = {
 # of data_io.PACKET_REQUIRED: that one is the load-time gate, this one is what a window needs.
 WINDOW_COLUMNS = {"ts", "frame_len", "iat", "dst_ip", "dst_port"}
 
-BENIGN_TRAIN_FRACTION = boundaries.TRAIN_FRACTION
+BENIGN_TRAIN_FRACTION = evaluation.TRAIN_FRACTION
 
 
 def make_windows(packets, window_size=WINDOW_SIZE):

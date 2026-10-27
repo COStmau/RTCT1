@@ -50,7 +50,7 @@ these as documented; they also run on their own.
 | File | What it does |
 |---|---|
 | `tests.py` | All unit tests. |
-| `boundaries.py` | Evaluation boundaries in one place: the 70/30 split, the six bulk-transfer files that never calibrate, and the warm-up window. |
+| `evaluation.py` | How a result is judged, in one place: the 70/30 split, the six bulk-transfer files that never calibrate, and the warm-up window. |
 | `flag_verdict.py` | The keep-or-drop rule for the flag alphabet, committed before the measurement, with `decide()` applying it. |
 | `local_paths.py` | Your local dataset paths. Not committed; copy `local_paths.example.py` and fill it in. Only the entry points read it. |
 | `requirements.txt` | The pinned runtime: Python 3.11 with numpy, pandas, matplotlib and scikit-learn at the versions the numbers were measured under. |

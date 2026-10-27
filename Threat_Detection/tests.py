@@ -8,9 +8,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-import boundaries
 import data_io
 import demo
+import evaluation
 import features
 import flag_scores
 import flag_verdict
@@ -810,9 +810,9 @@ class WindowedScorerChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             statemachine.WindowedFrequencyScorer(self.pdfa, forget_seconds=0)
 
-    def test_default_window_comes_from_boundaries(self):
+    def test_default_window_is_the_module_constant(self):
         scorer = statemachine.WindowedFrequencyScorer(self.pdfa)
-        self.assertEqual(scorer.forget_seconds, boundaries.FORGET_SECONDS)
+        self.assertEqual(scorer.forget_seconds, statemachine.FORGET_SECONDS)
 
     def flows(self, burst):
         """One request/response pair per second for 30 s; a flood repeats it 6x in 10-13 s.
@@ -832,7 +832,7 @@ class WindowedScorerChecks(unittest.TestCase):
 
     def test_per_window_scores_clear_where_cumulative_never_does(self):
         model = statemachine.fit_model(self.flows(burst=False))
-        forget = boundaries.FORGET_SECONDS
+        forget = statemachine.FORGET_SECONDS
         scores = {(name, burst): statemachine.frequency_scores_by_window(
                       model, self.flows(burst), 0.0, 30, forget_seconds=window)
                   for name, window in (("cumulative", None), ("windowed", forget))
@@ -1125,24 +1125,24 @@ class EventLogChecks(unittest.TestCase):
 
 
 class BoundaryChecks(unittest.TestCase):
-    """The evaluation boundaries live in one module, and the scoring paths read that one."""
+    """The evaluation policy lives in one module, and the scoring paths read that one."""
 
     def test_bulk_labels_cover_six_files(self):
-        self.assertEqual(boundaries.BULK_LABELS,
+        self.assertEqual(evaluation.BULK_LABELS,
                          {"router-any", "node-child4", "pod-robot-controller"})
-        self.assertEqual(len(boundaries.BULK_LABELS) * len(data_io.METHODS), 6)
+        self.assertEqual(len(evaluation.BULK_LABELS) * len(data_io.METHODS), 6)
 
     def test_bulk_labels_have_one_definition(self):
         # reporting used to carry its own copy, so the label set could drift from the one
-        # the tests pin. demo.py and reporting.py must both resolve to boundaries'.
-        self.assertIs(reporting.BULK_LABELS, boundaries.BULK_LABELS)
-        self.assertIs(demo.BULK_LABELS, boundaries.BULK_LABELS)
+        # the tests pin. demo.py and reporting.py must both resolve to evaluation's.
+        self.assertIs(reporting.BULK_LABELS, evaluation.BULK_LABELS)
+        self.assertIs(demo.BULK_LABELS, evaluation.BULK_LABELS)
 
-    def test_split_fraction_comes_from_boundaries(self):
-        self.assertEqual(features.BENIGN_TRAIN_FRACTION, boundaries.TRAIN_FRACTION)
+    def test_split_fraction_comes_from_evaluation(self):
+        self.assertEqual(features.BENIGN_TRAIN_FRACTION, evaluation.TRAIN_FRACTION)
 
     def test_warmup_covers_a_whole_trace(self):
-        self.assertEqual(boundaries.WARMUP_WINDOWS, statemachine.TRACE_LEN)
+        self.assertEqual(evaluation.WARMUP_WINDOWS, statemachine.TRACE_LEN)
 
 
 class FlagVerdictChecks(unittest.TestCase):

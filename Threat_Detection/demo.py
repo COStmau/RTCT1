@@ -22,7 +22,7 @@ import pandas as pd
 from reporting import plot_detection, summarize_flags, write_report
 import matplotlib.pyplot as plt
 
-from boundaries import BULK_LABELS
+from evaluation import BULK_LABELS
 
 from data_io import load_capture, resolve_output
 from detectors import PERSISTENCE_WINDOW, THRESHOLD, build

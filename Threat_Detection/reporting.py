@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from data_io import SNAPLEN_CEILINGS, SNAPLEN_REPORT_AT, resolve_output
-from boundaries import BULK_LABELS, TRAIN_FRACTION
+from evaluation import BULK_LABELS, TRAIN_FRACTION
 from detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, SVM_NU, THRESHOLD,
                        flag_stats, persistent_mask)
 from features import FEATURE_LABELS, WINDOW_SIZE
@@ -25,6 +25,10 @@ __all__ = ["flag_stats", "persistent_mask", "summarize_flags", "threshold_table"
            "write_report", "to_events", "write_events"]
 
 EVENT_VERSION = "LogV0"
+
+# Incident lifetime: consecutive clean windows before a flag may clear. Nothing enforces it
+# yet; the rule belongs to the event stream this module writes, not to the detector.
+CLEAR_WINDOWS = 3
 
 # Severity bands on the raw z_score. Only flagged windows reach here, so every
 # score sits above the detector's cutoff: low is borderline, high is far outside normal.

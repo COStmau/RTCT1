@@ -8,7 +8,7 @@ ALERGIA state-merging test, and new traces score by mean log transition
 probability. Traces below the 5th percentile of held-out benign scores flag
 their window, the same budget convention compare.py uses for the forest/SVM.
 
-Run it with:  .venv/bin/python demo.py 3      (the narrated pair demo)
+Run it with:  .venv/bin/python demo.py 3      (the pair demo)
               .venv/bin/python statemachine.py  (every stratum, one row each)
 """
 from collections import Counter, deque
@@ -19,7 +19,6 @@ import pandas as pd
 from data_io import MANIFEST_NAME, load_capture, load_manifest, resolve_output, timebase_issues
 from detectors import BENIGN_QUANTILE, flag_stats
 from features import BENIGN_TRAIN_FRACTION, WINDOW_SIZE
-import boundaries
 
 FLOW_COLUMNS = ["ts", "frame_len", "src_ip", "dst_ip", "src_port",
                 "dst_port", "proto"]
@@ -30,6 +29,13 @@ ALERGIA_ALPHA = 0.05
 MISSING_PROB = 1e-6
 PAIR_CSV = "statemachine_pair.csv"
 SWEEP_CSV = "statemachine_sweep.csv"
+
+# The anomaly clock: a state visit counts only while it is inside this trailing window of
+# observed seconds, so an attack's excess visits expire instead of accumulating forever.
+# Sized against the dataset: captures run 51-69 s, so a 25 s window would hold an attack
+# past the end of most recordings and release could never be observed inside one. 8 s holds
+# a 5 s LiDAR replay loop and leaves room for a few clean windows of runway after it.
+FORGET_SECONDS = 8.0
 
 
 def load_flow_packets(path, flags=False):
@@ -454,7 +460,7 @@ class WindowedFrequencyScorer:
     window the two scorers return bit-identical scores; the tests hold that.
     """
 
-    def __init__(self, pdfa, forget_seconds=boundaries.FORGET_SECONDS):
+    def __init__(self, pdfa, forget_seconds=FORGET_SECONDS):
         if not forget_seconds > 0:
             raise ValueError("forget_seconds must be positive.")
         self.pdfa = pdfa
