@@ -1,0 +1,1534 @@
+apiVersion: v1
+groupVersion: ""
+kind: APIResourceList
+resources:
+- kind: Binding
+  name: bindings
+  namespaced: true
+  singularName: binding
+  verbs:
+  - create
+  version: v1
+- kind: ComponentStatus
+  name: componentstatuses
+  namespaced: false
+  shortNames:
+  - cs
+  singularName: componentstatus
+  verbs:
+  - get
+  - list
+  version: v1
+- kind: ConfigMap
+  name: configmaps
+  namespaced: true
+  shortNames:
+  - cm
+  singularName: configmap
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- kind: Endpoints
+  name: endpoints
+  namespaced: true
+  shortNames:
+  - ep
+  singularName: endpoints
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- kind: Event
+  name: events
+  namespaced: true
+  shortNames:
+  - ev
+  singularName: event
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- kind: LimitRange
+  name: limitranges
+  namespaced: true
+  shortNames:
+  - limits
+  singularName: limitrange
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- kind: Namespace
+  name: namespaces
+  namespaced: false
+  shortNames:
+  - ns
+  singularName: namespace
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- kind: Node
+  name: nodes
+  namespaced: false
+  shortNames:
+  - "no"
+  singularName: node
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- kind: PersistentVolumeClaim
+  name: persistentvolumeclaims
+  namespaced: true
+  shortNames:
+  - pvc
+  singularName: persistentvolumeclaim
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- kind: PersistentVolume
+  name: persistentvolumes
+  namespaced: false
+  shortNames:
+  - pv
+  singularName: persistentvolume
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - all
+  kind: Pod
+  name: pods
+  namespaced: true
+  shortNames:
+  - po
+  singularName: pod
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- kind: PodTemplate
+  name: podtemplates
+  namespaced: true
+  singularName: podtemplate
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - all
+  kind: ReplicationController
+  name: replicationcontrollers
+  namespaced: true
+  shortNames:
+  - rc
+  singularName: replicationcontroller
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- kind: ResourceQuota
+  name: resourcequotas
+  namespaced: true
+  shortNames:
+  - quota
+  singularName: resourcequota
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- kind: Secret
+  name: secrets
+  namespaced: true
+  singularName: secret
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- kind: ServiceAccount
+  name: serviceaccounts
+  namespaced: true
+  shortNames:
+  - sa
+  singularName: serviceaccount
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - all
+  kind: Service
+  name: services
+  namespaced: true
+  shortNames:
+  - svc
+  singularName: service
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - api-extensions
+  group: admissionregistration.k8s.io
+  kind: MutatingWebhookConfiguration
+  name: mutatingwebhookconfigurations
+  namespaced: false
+  singularName: mutatingwebhookconfiguration
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - api-extensions
+  group: admissionregistration.k8s.io
+  kind: ValidatingAdmissionPolicy
+  name: validatingadmissionpolicies
+  namespaced: false
+  singularName: validatingadmissionpolicy
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - api-extensions
+  group: admissionregistration.k8s.io
+  kind: ValidatingAdmissionPolicyBinding
+  name: validatingadmissionpolicybindings
+  namespaced: false
+  singularName: validatingadmissionpolicybinding
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - api-extensions
+  group: admissionregistration.k8s.io
+  kind: ValidatingWebhookConfiguration
+  name: validatingwebhookconfigurations
+  namespaced: false
+  singularName: validatingwebhookconfiguration
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - api-extensions
+  group: apiextensions.k8s.io
+  kind: CustomResourceDefinition
+  name: customresourcedefinitions
+  namespaced: false
+  shortNames:
+  - crd
+  - crds
+  singularName: customresourcedefinition
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - api-extensions
+  group: apiregistration.k8s.io
+  kind: APIService
+  name: apiservices
+  namespaced: false
+  singularName: apiservice
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: apps
+  kind: ControllerRevision
+  name: controllerrevisions
+  namespaced: true
+  singularName: controllerrevision
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - all
+  group: apps
+  kind: DaemonSet
+  name: daemonsets
+  namespaced: true
+  shortNames:
+  - ds
+  singularName: daemonset
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - all
+  group: apps
+  kind: Deployment
+  name: deployments
+  namespaced: true
+  shortNames:
+  - deploy
+  singularName: deployment
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - all
+  group: apps
+  kind: ReplicaSet
+  name: replicasets
+  namespaced: true
+  shortNames:
+  - rs
+  singularName: replicaset
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - all
+  group: apps
+  kind: StatefulSet
+  name: statefulsets
+  namespaced: true
+  shortNames:
+  - sts
+  singularName: statefulset
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: authentication.k8s.io
+  kind: SelfSubjectReview
+  name: selfsubjectreviews
+  namespaced: false
+  singularName: selfsubjectreview
+  verbs:
+  - create
+  version: v1
+- group: authentication.k8s.io
+  kind: TokenReview
+  name: tokenreviews
+  namespaced: false
+  singularName: tokenreview
+  verbs:
+  - create
+  version: v1
+- group: authorization.k8s.io
+  kind: LocalSubjectAccessReview
+  name: localsubjectaccessreviews
+  namespaced: true
+  singularName: localsubjectaccessreview
+  verbs:
+  - create
+  version: v1
+- group: authorization.k8s.io
+  kind: SelfSubjectAccessReview
+  name: selfsubjectaccessreviews
+  namespaced: false
+  singularName: selfsubjectaccessreview
+  verbs:
+  - create
+  version: v1
+- group: authorization.k8s.io
+  kind: SelfSubjectRulesReview
+  name: selfsubjectrulesreviews
+  namespaced: false
+  singularName: selfsubjectrulesreview
+  verbs:
+  - create
+  version: v1
+- group: authorization.k8s.io
+  kind: SubjectAccessReview
+  name: subjectaccessreviews
+  namespaced: false
+  singularName: subjectaccessreview
+  verbs:
+  - create
+  version: v1
+- categories:
+  - all
+  group: autoscaling
+  kind: HorizontalPodAutoscaler
+  name: horizontalpodautoscalers
+  namespaced: true
+  shortNames:
+  - hpa
+  singularName: horizontalpodautoscaler
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v2
+- categories:
+  - all
+  group: batch
+  kind: CronJob
+  name: cronjobs
+  namespaced: true
+  shortNames:
+  - cj
+  singularName: cronjob
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- categories:
+  - all
+  group: batch
+  kind: Job
+  name: jobs
+  namespaced: true
+  singularName: job
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: certificates.k8s.io
+  kind: CertificateSigningRequest
+  name: certificatesigningrequests
+  namespaced: false
+  shortNames:
+  - csr
+  singularName: certificatesigningrequest
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: coordination.k8s.io
+  kind: Lease
+  name: leases
+  namespaced: true
+  singularName: lease
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: BGPConfiguration
+  name: bgpconfigurations
+  namespaced: false
+  singularName: bgpconfiguration
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: BGPFilter
+  name: bgpfilters
+  namespaced: false
+  singularName: bgpfilter
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: BGPPeer
+  name: bgppeers
+  namespaced: false
+  singularName: bgppeer
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: BlockAffinity
+  name: blockaffinities
+  namespaced: false
+  singularName: blockaffinity
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: CalicoNodeStatus
+  name: caliconodestatuses
+  namespaced: false
+  singularName: caliconodestatus
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: ClusterInformation
+  name: clusterinformations
+  namespaced: false
+  singularName: clusterinformation
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: FelixConfiguration
+  name: felixconfigurations
+  namespaced: false
+  singularName: felixconfiguration
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: GlobalNetworkPolicy
+  name: globalnetworkpolicies
+  namespaced: false
+  singularName: globalnetworkpolicy
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: GlobalNetworkSet
+  name: globalnetworksets
+  namespaced: false
+  singularName: globalnetworkset
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: HostEndpoint
+  name: hostendpoints
+  namespaced: false
+  singularName: hostendpoint
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: IPAMBlock
+  name: ipamblocks
+  namespaced: false
+  singularName: ipamblock
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: IPAMConfig
+  name: ipamconfigs
+  namespaced: false
+  singularName: ipamconfig
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: IPAMHandle
+  name: ipamhandles
+  namespaced: false
+  singularName: ipamhandle
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: IPPool
+  name: ippools
+  namespaced: false
+  singularName: ippool
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: IPReservation
+  name: ipreservations
+  namespaced: false
+  singularName: ipreservation
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: KubeControllersConfiguration
+  name: kubecontrollersconfigurations
+  namespaced: false
+  singularName: kubecontrollersconfiguration
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: NetworkPolicy
+  name: networkpolicies
+  namespaced: true
+  singularName: networkpolicy
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: NetworkSet
+  name: networksets
+  namespaced: true
+  singularName: networkset
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: StagedGlobalNetworkPolicy
+  name: stagedglobalnetworkpolicies
+  namespaced: false
+  singularName: stagedglobalnetworkpolicy
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: StagedKubernetesNetworkPolicy
+  name: stagedkubernetesnetworkpolicies
+  namespaced: true
+  singularName: stagedkubernetesnetworkpolicy
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: StagedNetworkPolicy
+  name: stagednetworkpolicies
+  namespaced: true
+  singularName: stagednetworkpolicy
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: crd.projectcalico.org
+  kind: Tier
+  name: tiers
+  namespaced: false
+  singularName: tier
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: discovery.k8s.io
+  kind: EndpointSlice
+  name: endpointslices
+  namespaced: true
+  singularName: endpointslice
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: events.k8s.io
+  kind: Event
+  name: events
+  namespaced: true
+  shortNames:
+  - ev
+  singularName: event
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: flowcontrol.apiserver.k8s.io
+  kind: FlowSchema
+  name: flowschemas
+  namespaced: false
+  singularName: flowschema
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: flowcontrol.apiserver.k8s.io
+  kind: PriorityLevelConfiguration
+  name: prioritylevelconfigurations
+  namespaced: false
+  singularName: prioritylevelconfiguration
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: groupsnapshot.storage.k8s.io
+  kind: VolumeGroupSnapshotClass
+  name: volumegroupsnapshotclasses
+  namespaced: false
+  shortNames:
+  - vgsclass
+  - vgsclasses
+  singularName: volumegroupsnapshotclass
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1beta2
+- group: groupsnapshot.storage.k8s.io
+  kind: VolumeGroupSnapshotContent
+  name: volumegroupsnapshotcontents
+  namespaced: false
+  shortNames:
+  - vgsc
+  - vgscs
+  singularName: volumegroupsnapshotcontent
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1beta2
+- group: groupsnapshot.storage.k8s.io
+  kind: VolumeGroupSnapshot
+  name: volumegroupsnapshots
+  namespaced: true
+  shortNames:
+  - vgs
+  singularName: volumegroupsnapshot
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1beta2
+- group: helm.cattle.io
+  kind: HelmChartConfig
+  name: helmchartconfigs
+  namespaced: true
+  shortNames:
+  - hcc
+  singularName: helmchartconfig
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: helm.cattle.io
+  kind: HelmChart
+  name: helmcharts
+  namespaced: true
+  shortNames:
+  - hc
+  singularName: helmchart
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: k3s.cattle.io
+  kind: Addon
+  name: addons
+  namespaced: true
+  singularName: addon
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: k3s.cattle.io
+  kind: ETCDSnapshotFile
+  name: etcdsnapshotfiles
+  namespaced: false
+  singularName: etcdsnapshotfile
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: metrics.k8s.io
+  kind: NodeMetrics
+  name: nodes
+  namespaced: false
+  singularName: ""
+  verbs:
+  - get
+  - list
+  version: v1beta1
+- group: metrics.k8s.io
+  kind: PodMetrics
+  name: pods
+  namespaced: true
+  singularName: ""
+  verbs:
+  - get
+  - list
+  version: v1beta1
+- group: networking.k8s.io
+  kind: IngressClass
+  name: ingressclasses
+  namespaced: false
+  singularName: ingressclass
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: networking.k8s.io
+  kind: Ingress
+  name: ingresses
+  namespaced: true
+  shortNames:
+  - ing
+  singularName: ingress
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: networking.k8s.io
+  kind: IPAddress
+  name: ipaddresses
+  namespaced: false
+  shortNames:
+  - ip
+  singularName: ipaddress
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: networking.k8s.io
+  kind: NetworkPolicy
+  name: networkpolicies
+  namespaced: true
+  shortNames:
+  - netpol
+  singularName: networkpolicy
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: networking.k8s.io
+  kind: ServiceCIDR
+  name: servicecidrs
+  namespaced: false
+  singularName: servicecidr
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: node.k8s.io
+  kind: RuntimeClass
+  name: runtimeclasses
+  namespaced: false
+  singularName: runtimeclass
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: policy
+  kind: PodDisruptionBudget
+  name: poddisruptionbudgets
+  namespaced: true
+  shortNames:
+  - pdb
+  singularName: poddisruptionbudget
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: policy.networking.k8s.io
+  kind: ClusterNetworkPolicy
+  name: clusternetworkpolicies
+  namespaced: false
+  shortNames:
+  - cnp
+  singularName: clusternetworkpolicy
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1alpha2
+- group: rbac.authorization.k8s.io
+  kind: ClusterRoleBinding
+  name: clusterrolebindings
+  namespaced: false
+  singularName: clusterrolebinding
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: clusterroles
+  namespaced: false
+  singularName: clusterrole
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: rbac.authorization.k8s.io
+  kind: RoleBinding
+  name: rolebindings
+  namespaced: true
+  singularName: rolebinding
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: rbac.authorization.k8s.io
+  kind: Role
+  name: roles
+  namespaced: true
+  singularName: role
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: resource.k8s.io
+  kind: DeviceClass
+  name: deviceclasses
+  namespaced: false
+  singularName: deviceclass
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: resource.k8s.io
+  kind: ResourceClaim
+  name: resourceclaims
+  namespaced: true
+  singularName: resourceclaim
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: resource.k8s.io
+  kind: ResourceClaimTemplate
+  name: resourceclaimtemplates
+  namespaced: true
+  singularName: resourceclaimtemplate
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: resource.k8s.io
+  kind: ResourceSlice
+  name: resourceslices
+  namespaced: false
+  singularName: resourceslice
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: scheduling.k8s.io
+  kind: PriorityClass
+  name: priorityclasses
+  namespaced: false
+  shortNames:
+  - pc
+  singularName: priorityclass
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: snapshot.storage.k8s.io
+  kind: VolumeSnapshotClass
+  name: volumesnapshotclasses
+  namespaced: false
+  shortNames:
+  - vsclass
+  - vsclasses
+  singularName: volumesnapshotclass
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: snapshot.storage.k8s.io
+  kind: VolumeSnapshotContent
+  name: volumesnapshotcontents
+  namespaced: false
+  shortNames:
+  - vsc
+  - vscs
+  singularName: volumesnapshotcontent
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: snapshot.storage.k8s.io
+  kind: VolumeSnapshot
+  name: volumesnapshots
+  namespaced: true
+  shortNames:
+  - vs
+  singularName: volumesnapshot
+  verbs:
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - create
+  - update
+  - watch
+  version: v1
+- group: storage.k8s.io
+  kind: CSIDriver
+  name: csidrivers
+  namespaced: false
+  singularName: csidriver
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: storage.k8s.io
+  kind: CSINode
+  name: csinodes
+  namespaced: false
+  singularName: csinode
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: storage.k8s.io
+  kind: CSIStorageCapacity
+  name: csistoragecapacities
+  namespaced: true
+  singularName: csistoragecapacity
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: storage.k8s.io
+  kind: StorageClass
+  name: storageclasses
+  namespaced: false
+  shortNames:
+  - sc
+  singularName: storageclass
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: storage.k8s.io
+  kind: VolumeAttachment
+  name: volumeattachments
+  namespaced: false
+  singularName: volumeattachment
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1
+- group: storage.k8s.io
+  kind: VolumeAttributesClass
+  name: volumeattributesclasses
+  namespaced: false
+  shortNames:
+  - vac
+  singularName: volumeattributesclass
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  version: v1

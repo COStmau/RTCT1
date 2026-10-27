@@ -1,0 +1,81 @@
+
+{
+  "rule_id": "R001",
+  "name": "Pod Traffic Flood",
+  "description": "Mitigates excessive incoming traffic to a pod",
+  "enabled": true,
+  "priority": 50,
+
+  "conditions": {
+    "issue_type": "traffic_flood",
+    "location_type": "pod",
+    "minimum_severity": "low"
+  },
+
+  "response_steps": [
+    {
+      "step": 1,
+      "name": "Limit Ingress to Baseline",
+      "action": "limit_ingress",
+      "parameters": {
+        "limit": "baseline"
+      },
+
+      "escalation": {
+        "logic": "OR",
+        "criteria": [
+          { "type": "detection_agent_increase" }
+        ]
+      },
+
+      "deescalation": {
+        "logic": "OR",
+        "criteria": [
+          { "type": "detection_agent_decrease" }
+        ]
+      }
+    },
+
+    {
+      "step": 2,
+      "name": "Restrict Ingress",
+      "action": "limit_ingress",
+      "parameters": {
+        "limit": "restrictive"
+      },
+
+      "escalation": {
+        "logic": "OR",
+        "criteria": [
+          { "type": "detection_agent_increase" }
+        ]
+      },
+
+      "deescalation": {
+        "logic": "OR",
+        "criteria": [
+          { "type": "detection_agent_decrease" }
+        ]
+      }
+    },
+
+    {
+      "step": 3,
+      "name": "Block Source IP",
+      "action": "block_source_ip",
+      "parameters": {},
+
+      "escalation": {
+        "logic": "OR",
+        "criteria": []
+      },
+
+      "deescalation": {
+        "logic": "OR",
+        "criteria": [
+          { "type": "detection_agent_decrease" }
+        ]
+      }
+    }
+  ]
+}

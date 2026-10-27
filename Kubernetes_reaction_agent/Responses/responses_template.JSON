@@ -1,0 +1,39 @@
+
+{
+  "actions": {
+    
+    "monitor": {
+      "description": "Monitor the affected resource",
+      "manual_intervention": {
+        "required": false
+      }
+    },
+
+    "restrict_egress": {
+      "description": "Restrict outgoing network traffic",
+      "manual_intervention": {
+        "required": false
+      }
+    },
+
+    "isolate_pod": {
+      "description": "Isolate the pod from network traffic",
+      "manual_intervention": {
+        "required": true,
+        "reason": "Isolation may disrupt critical services",
+        "approval_timeout_seconds": 120,
+        "on_timeout": "manual_review"
+      }
+    },
+
+    "delete_pod": {
+      "description": "Delete the affected pod",
+      "manual_intervention": {
+        "required": true,
+        "reason": "Deleting a pod may interrupt services",
+        "approval_timeout_seconds": 120,
+        "on_timeout": "manual_review"
+      }
+    }
+  }
+}

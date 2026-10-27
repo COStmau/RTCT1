@@ -1,2 +1,10 @@
 2026-10-13 11:12:08,024 - INFO - list_namespaced_pod succeeded with arguments: {'namespace': 'default', 'watch': False}
 2026-10-13 11:32:22,852 - ERROR - delete_namespaced_pod failed: HTTP 404 - Not Found
+2026-10-22 13:27:35,170 - INFO - list_namespaced_pod succeeded with arguments: {'namespace': 'default', 'watch': False}
+2026-10-22 13:29:05,109 - ERROR - delete_namespaced_pod failed: HTTP 404 - Not Found
+2026-10-22 13:29:57,729 - ERROR - delete_namespaced_pod failed: HTTP 404 - Not Found
+2026-10-22 13:30:57,113 - INFO - delete_namespaced_pod succeeded with arguments: {'name': 'response-agent-57554c7848-pgmvf', 'namespace': 'default'}
+2026-10-22 13:33:58,946 - INFO - list_namespaced_pod succeeded with arguments: {'namespace': 'default', 'watch': False}
+2026-10-22 13:34:26,674 - INFO - list_namespaced_deployment succeeded with arguments: {'namespace': 'default', 'watch': False}
+2026-10-22 13:35:26,732 - INFO - delete_namespaced_pod succeeded with arguments: {'name': 'response-agent-57554c7848-4bmnh', 'namespace': 'default'}
+2026-10-22 13:35:43,982 - INFO - list_namespaced_pod succeeded with arguments: {'namespace': 'default', 'watch': False}
