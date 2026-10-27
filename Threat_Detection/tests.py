@@ -10,9 +10,11 @@ import pandas as pd
 
 import boundaries
 import data_io
+import demo
 import features
 import flag_scores
 import flag_verdict
+import reporting
 import statemachine
 import sweep
 from detectors import build
@@ -194,8 +196,8 @@ class DetectorProtocolChecks(unittest.TestCase):
 
         Mean/std is the wrong summary when 8 of 47 benign windows carry the whole dynamic
         range: the standard deviation is set by those windows, so a window near either mode
-        lands 3 sigma out and a third of held-out benign traffic flags. Median/MAD ignores
-        them. This is the router-any shape.
+        lands outside the cutoff and a third of held-out benign traffic flags. Median/MAD
+        ignores them. This is the router-any shape.
         """
         import detectors
         # 40 quiet windows at 50, one 146 MB window, 6 held-out windows near the quiet mode.
@@ -1123,12 +1125,18 @@ class EventLogChecks(unittest.TestCase):
 
 
 class BoundaryChecks(unittest.TestCase):
-    """The evaluation boundaries live in one module and both paths must read it."""
+    """The evaluation boundaries live in one module, and the scoring paths read that one."""
 
     def test_bulk_labels_cover_six_files(self):
         self.assertEqual(boundaries.BULK_LABELS,
                          {"router-any", "node-child4", "pod-robot-controller"})
         self.assertEqual(len(boundaries.BULK_LABELS) * len(data_io.METHODS), 6)
+
+    def test_bulk_labels_have_one_definition(self):
+        # reporting used to carry its own copy, so the label set could drift from the one
+        # the tests pin. demo.py and reporting.py must both resolve to boundaries'.
+        self.assertIs(reporting.BULK_LABELS, boundaries.BULK_LABELS)
+        self.assertIs(demo.BULK_LABELS, boundaries.BULK_LABELS)
 
     def test_split_fraction_comes_from_boundaries(self):
         self.assertEqual(features.BENIGN_TRAIN_FRACTION, boundaries.TRAIN_FRACTION)

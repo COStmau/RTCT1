@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 import boundaries
-from data_io import PACKET_COLUMNS, load_capture, timebase_issues  # noqa: F401  re-exported: callers ask features for the format
+from data_io import load_capture, timebase_issues
 
 WINDOW_SIZE = 1.0
 
@@ -36,14 +36,13 @@ FEATURE_GROUPS = {
     "protocol": ["http_count", "dns_count", "https_count", "http_frac"],
 }
 
-# Packet columns this pipeline reads. The CSVs carry 34; these are the ones turned into
-# features. tcp_payload_len/udp_length are the encapsulation-free volume -- frame_len is
-# inflated by a different overlay overhead at every vantage, so total_bytes is not
-# comparable between pod, node and router.
-PACKET_COLUMNS_EXTRA = ["tcp_payload_len", "udp_length", "is_http", "is_dns", "is_https"]
+# Packet columns this pipeline reads are named once, in data_io.PACKET_COLUMNS: tcp_payload_len
+# and udp_length are the encapsulation-free volume, because frame_len is inflated by a different
+# overlay overhead at every vantage, so total_bytes is not comparable between pod, node and router.
 
-# Columns the aggregator cannot do without, regardless of which features are asked for.
-REQUIRED_COLUMNS = {"ts", "frame_len", "iat", "dst_ip", "dst_port"}
+# Columns the aggregator cannot do without, regardless of which features are asked for. A subset
+# of data_io.PACKET_REQUIRED: that one is the load-time gate, this one is what a window needs.
+WINDOW_COLUMNS = {"ts", "frame_len", "iat", "dst_ip", "dst_port"}
 
 BENIGN_TRAIN_FRACTION = boundaries.TRAIN_FRACTION
 
@@ -55,7 +54,7 @@ def make_windows(packets, window_size=WINDOW_SIZE):
     interarrival averages are undefined without packets -- NaN, never zero, so the detection
     layer can report them as insufficient_data rather than normal.
     """
-    missing = REQUIRED_COLUMNS - set(packets.columns)
+    missing = WINDOW_COLUMNS - set(packets.columns)
     if missing:
         raise ValueError(f"Missing packet columns: {', '.join(sorted(missing))}")
     if packets.empty:

@@ -16,7 +16,7 @@ from collections import Counter, deque
 import numpy as np
 import pandas as pd
 
-from data_io import load_capture, resolve_output, timebase_issues
+from data_io import MANIFEST_NAME, load_capture, load_manifest, resolve_output, timebase_issues
 from detectors import BENIGN_QUANTILE, flag_stats
 from features import BENIGN_TRAIN_FRACTION, WINDOW_SIZE
 import boundaries
@@ -30,7 +30,6 @@ ALERGIA_ALPHA = 0.05
 MISSING_PROB = 1e-6
 PAIR_CSV = "statemachine_pair.csv"
 SWEEP_CSV = "statemachine_sweep.csv"
-MANIFEST_FILE = "capture_manifest.csv"   # inside outputs/
 
 
 def load_flow_packets(path, flags=False):
@@ -640,7 +639,6 @@ def main():
     import argparse
 
     import local_paths
-    from data_io import load_manifest
 
     parser = argparse.ArgumentParser(
         description="Score every capture against its matched benign reference with the "
@@ -652,7 +650,7 @@ def main():
     parser.add_argument("--flags", action="store_true",
                         help="add TCP SYN/RST presence to the symbol alphabet")
     parser.add_argument("--out", default=SWEEP_CSV)
-    parser.add_argument("--manifest", default=MANIFEST_FILE)
+    parser.add_argument("--manifest", default=MANIFEST_NAME)
     args = parser.parse_args()
 
     manifest = load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest)

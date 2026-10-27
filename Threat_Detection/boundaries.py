@@ -20,4 +20,4 @@ WARMUP_WINDOWS = 5            # a scorer that needs a full trace cannot judge it
 # past the end of most recordings and release could never be observed inside one. 8 s holds
 # a 5 s LiDAR replay loop and leaves room for CLEAR_WINDOWS of runway after it.
 FORGET_SECONDS = 8.0
-CLEAR_WINDOWS = 3             # consecutive clean windows before an incident may clear
+CLEAR_WINDOWS = 3             # consecutive clean windows before an incident may clear (no consumer yet)

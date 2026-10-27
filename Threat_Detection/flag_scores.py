@@ -10,12 +10,11 @@ import argparse
 import numpy as np
 import pandas as pd
 
-from data_io import describe_captures, load_manifest, resolve_output
+from data_io import MANIFEST_NAME, describe_captures, load_manifest, resolve_output
 from features import WINDOW_SIZE
 from statemachine import (fit_model, load_flow_packets, make_flows, n_windows_for,
                           score_cutoff, score_flows, segment_flows, split_flows)
 
-MANIFEST_FILE = "capture_manifest.csv"
 WINDOW_CSV = "flag_window_scores.csv"
 SUMMARY_CSV = "flag_auc.csv"
 
@@ -170,7 +169,7 @@ def main():
     parser.add_argument("--out", default=WINDOW_CSV)
     parser.add_argument("--summary", default=SUMMARY_CSV)
     parser.add_argument("--figure", default="alphabet_verdict.png")
-    parser.add_argument("--manifest", default=MANIFEST_FILE)
+    parser.add_argument("--manifest", default=MANIFEST_NAME)
     args = parser.parse_args()
 
     import local_paths

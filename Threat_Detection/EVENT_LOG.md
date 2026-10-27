@@ -12,7 +12,7 @@ will change; the `version` field marks the version so both sides can tell.
 `version` names this contract version. `detector` names the method that scored
 the window. `locations` holds the affected pods as a list, so later events can
 name more than one. Only flagged windows are emitted, so
-every event is already above the 3.0 cutoff.
+every event is already above the detector's cutoff.
 
 `severity` buckets the raw score: low below 5, med from 5 to 10, high at 10
 and above. Low is borderline and mostly noise, high is far outside normal. An

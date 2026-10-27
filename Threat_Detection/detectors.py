@@ -17,34 +17,24 @@ learned models return None so that a comparison between them is not quietly bias
 the detector that explains itself.
 """
 from collections.abc import Callable
-from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
-from features import WINDOW_SIZE  # noqa: F401  re-exported: chart titles and split logic need it
 
 # Detection policy. These constants are the whole tuning surface.
-THRESHOLD = 2.5 ##Changed from 3
+THRESHOLD = 2.5                 # design cutoff; the FSR asks for 3 sigma, the captures support 2.5
 PERSISTENCE_WINDOW = 3
 BENIGN_QUANTILE = 0.05
 
-# Scales MAD to a consistent estimator of sigma for normal data, so the 3-sigma cutoff
-# means the same thing on a median/MAD baseline as on a mean/std one.
+# Scales MAD to a consistent estimator of sigma for normal data, so the cutoff means the
+# same thing on a median/MAD baseline as it does on a mean/std one.
 MAD_TO_SIGMA = 1.4826
 
 # Learned-model hyperparameters.
 N_ESTIMATORS = 100
 RANDOM_STATE = 0
 SVM_NU = 0.10
-
-
-@dataclass
-class ScoreResult:
-    """What one detector says about a set of windows."""
-    score: pd.Series
-    cutoff: float
-    evidence: pd.DataFrame | None = None   # present only when explain() is implemented
 
 
 class Detector:
@@ -116,8 +106,8 @@ class ZScoreDetector(Detector):
     deviation. A captured workload mixes idle web traffic with a few enormous bulk-transfer
     windows, and on the KUBEDATA captures 8 of 47 benign windows at router-any carry the
     entire dynamic range (up to 146 MB against a 50 KB median). A mean/std summary is set by
-    those windows, so a held-out window sitting in the dominant quiet mode still lands 3
-    sigma away and a third of normal traffic flags. Median/MAD ignores them.
+    those windows, so a held-out window sitting in the dominant quiet mode still lands outside
+    the cutoff and a third of normal traffic flags. Median/MAD ignores them.
 
     Where MAD is 0 -- a feature that is genuinely constant in the reference -- the standard
     deviation is used instead, because a zero divisor would flag every window. `degenerate`
@@ -137,7 +127,7 @@ class ZScoreDetector(Detector):
         if reference.empty or reference.count().lt(2).any():
             raise ValueError("Insufficient baseline data: each feature needs at least two observations.")
         # 1.4826 scales MAD to be a consistent estimator of sigma for normal data, so the
-        # 3-sigma cutoff keeps the same meaning it has on a mean/std baseline.
+        # cutoff keeps the same meaning it has on a mean/std baseline.
         mad = (reference - reference.median()).abs().median() * MAD_TO_SIGMA
         std = reference.std()
         if not np.isfinite(mad).all() or not np.isfinite(std).all():
@@ -151,7 +141,7 @@ class ZScoreDetector(Detector):
         return self
 
     def calibrate(self, held_out_benign):
-        """A design constant, not a fitted quantile: the 3-sigma default from the FSR."""
+        """A design constant, not a fitted quantile: the FSR's 3 sigma, overridden by `threshold`."""
         self.cutoff = float(self.threshold)
         return self
 

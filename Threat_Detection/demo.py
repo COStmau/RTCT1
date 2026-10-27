@@ -19,8 +19,10 @@ import pandas as pd
 
 # reporting pins matplotlib to Agg before it imports pyplot, so importing it first gives
 # this module the same headless backend instead of opening a window.
-from reporting import BULK_LABELS, plot_detection, summarize_flags, write_report
+from reporting import plot_detection, summarize_flags, write_report
 import matplotlib.pyplot as plt
+
+from boundaries import BULK_LABELS
 
 from data_io import load_capture, resolve_output
 from detectors import PERSISTENCE_WINDOW, THRESHOLD, build
@@ -276,10 +278,10 @@ def state_machine():
     print(f"   attack:        {int(attack_flags.sum()):>3} of {len(attack_flags)} seconds flagged")
     pair_csv = write_pair(benign_flags, attack_flags)
     print(f"   wrote {pair_csv}")
-    first = attack_flags[attack_flags].index
-    if len(first):
-        second = int(first[0])
-        print(f"   the attack recording first looks nothing like normal at second {second}:")
+    flagged_seconds = attack_flags[attack_flags].index
+    if len(flagged_seconds):
+        print(f"   the attack recording first looks nothing like normal at second "
+              f"{int(flagged_seconds[0])}:")
         worst = min(attack_scored, key=lambda pair: pair[1])
         print(f"   its strangest trace scores {worst[1]:.1f}, against a cutoff of {cutoff:.2f}")
     else:
