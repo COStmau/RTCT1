@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import cluster
 import data_io
 import demo
 import evaluation
@@ -1340,6 +1341,129 @@ class FlagScoreChecks(unittest.TestCase):
             self.assertIn("pod-lidar · lidar", labels)
             self.assertIn("verdict: keep", title)               # 0.50 -> 0.65 clears the 0.10 bar
             self.assertEqual(flag_scores.verdict_rows(summary)[0]["label"], "pod-lidar")
+
+
+def packets(rows):
+    """Packet frame from (src_ip, dst_ip, src_port, dst_port) tuples, all tcp."""
+    return pd.DataFrame(rows, columns=["src_ip", "dst_ip", "src_port", "dst_port"]
+                        ).assign(proto="tcp")
+
+
+class ClusterChecks(unittest.TestCase):
+    """The cluster drawing is inferred from traffic, so each inference rule is pinned here."""
+
+    CONTROL, WORKER = "192.168.50.32", "192.168.50.29"
+
+    def captures(self):
+        return {
+            # a node capture on the worker: its own address and its pod subnet dominate
+            "node-child1": packets(
+                [(self.WORKER, self.CONTROL, 40000, 6443)] * 30
+                + [("10.42.3.4", "10.43.0.10", 41000, 53)] * 10
+                + [("10.42.3.7", self.CONTROL, 41001, 2049)] * 4
+                + [(self.WORKER, "192.168.50.1", 41002, 53)] * 3
+                + [("127.0.0.1", "127.0.0.1", 5000, 5001)] * 50),
+            # a node capture on the control plane
+            "node-child4": packets(
+                [(self.CONTROL, self.CONTROL, 40001, 2049)] * 60
+                + [("10.42.0.56", "8.8.8.8", 42000, 53)] * 8
+                + [(self.CONTROL, "224.0.0.1", 1, 1)] * 3),
+            # a pod with its own address
+            "pod-nginx": packets([("10.42.0.56", "10.43.0.10", 43000, 53)] * 20
+                                 + [("::1", "::1", 1, 8080)] * 5),
+            # a host-network pod: no pod address of its own, looks like the worker
+            "pod-lidar": packets([(self.WORKER, self.CONTROL, 40000, 6443)] * 20
+                                 + [("10.42.3.4", "10.43.0.10", 41000, 53)] * 3),
+            "router-flannel": packets([("10.42.0.56", "10.42.3.4", 44000, 53)] * 5),
+            "router-any": packets([(self.WORKER, self.CONTROL, 40000, 6443)] * 30
+                                  + [("10.42.9.5", "1.1.1.1", 45000, 443)] * 2),
+        }
+
+    def test_pod_named_from_pod_capture(self):
+        pods = {pod["id"]: pod for pod in cluster.infer_cluster(self.captures())["pods"]}
+        self.assertEqual(pods["pod:10.42.0.56"]["name"], "pod-nginx")
+        self.assertFalse(pods["pod:10.42.0.56"]["host_network"])
+
+    def test_host_network_pod_lands_on_its_host(self):
+        pods = {pod["id"]: pod for pod in cluster.infer_cluster(self.captures())["pods"]}
+        lidar = pods["pod:pod-lidar"]
+        self.assertTrue(lidar["host_network"])
+        self.assertEqual(lidar["host"], f"host:{self.WORKER}")
+        self.assertEqual(lidar["name"], "pod-lidar")
+
+    def test_node_capture_claims_pod_subnet(self):
+        found = cluster.infer_cluster(self.captures())
+        hosts = {host["id"]: host for host in found["hosts"]}
+        self.assertEqual(hosts[f"host:{self.WORKER}"]["pod_cidr"], "10.42.3.0/24")
+        self.assertEqual(hosts[f"host:{self.WORKER}"]["name"], "child1")
+        self.assertEqual(hosts[f"host:{self.CONTROL}"]["pod_cidr"], "10.42.0.0/24")
+        pods = {pod["id"]: pod for pod in found["pods"]}
+        self.assertEqual(pods["pod:10.42.3.7"]["host"], f"host:{self.WORKER}")
+
+    def test_each_node_capture_claims_exactly_one_host(self):
+        found = cluster.infer_cluster(self.captures())
+        named = [host["name"] for host in found["hosts"] if host["name"]]
+        self.assertEqual(sorted(named), ["child1", "child4"])
+
+    def test_broadcast_is_not_a_host(self):
+        captures = self.captures()
+        captures["node-child1"] = pd.concat([captures["node-child1"], packets(
+            [(self.WORKER, "255.255.255.255", 68, 67)] * 2
+            + [(self.WORKER, "192.168.50.255", 137, 137)] * 2)])
+        found = cluster.infer_cluster(captures)
+        everything = {e["id"] for kind in ("hosts", "external") for e in found[kind]}
+        self.assertFalse(any(m.endswith(".255") for m in everything))
+
+    def test_control_plane_from_apiserver_port(self):
+        hosts = {h["id"]: h for h in cluster.infer_cluster(self.captures())["hosts"]}
+        self.assertIn("control-plane", hosts[f"host:{self.CONTROL}"]["roles"])
+        self.assertIn("nfs", hosts[f"host:{self.CONTROL}"]["roles"])
+        self.assertEqual(hosts[f"host:{self.WORKER}"]["roles"], ["worker"])
+
+    def test_unclaimed_subnet_is_unattributed(self):
+        pods = {pod["id"]: pod for pod in cluster.infer_cluster(self.captures())["pods"]}
+        self.assertIsNone(pods["pod:10.42.9.5"]["host"])
+
+    def test_loopback_multicast_and_public_are_not_cluster_members(self):
+        found = cluster.infer_cluster(self.captures())
+        members = {e["id"] for kind in ("hosts", "pods", "services", "external")
+                   for e in found[kind]}
+        self.assertFalse(any("127.0.0.1" in m or "::1" in m or "224.0.0.1" in m
+                             for m in members))
+        self.assertIn("internet", members)
+        self.assertNotIn("pod:8.8.8.8", members)
+        services = {s["id"]: s for s in found["services"]}
+        self.assertEqual(services["svc:10.43.0.10"]["port_names"], ["dns"])
+
+    def test_router_vantages_attach_by_suffix(self):
+        vantages = {v["label"]: v for v in cluster.infer_cluster(self.captures())["vantages"]}
+        self.assertEqual(vantages["router-flannel"]["element"], "overlay")
+        self.assertEqual(vantages["router-any"]["element"], "uplink")
+        self.assertEqual(vantages["node-child4"]["element"], f"host:{self.CONTROL}")
+        self.assertEqual(vantages["pod-nginx"]["element"], "pod:10.42.0.56")
+        self.assertEqual(vantages["pod-lidar"]["level"], "pod")
+
+    def test_edges_take_the_best_vantage_not_the_sum(self):
+        edges = cluster.infer_cluster(self.captures())["edges"]
+        api = [e for e in edges if {e["src"], e["dst"]} == {f"host:{self.WORKER}",
+                                                            f"host:{self.CONTROL}"}]
+        self.assertEqual(len(api), 1)
+        self.assertEqual(api[0]["packets"], 30)
+        self.assertEqual(api[0]["ports"], ["kube-apiserver"])
+
+    def test_vantage_without_pods_still_builds(self):
+        found = cluster.infer_cluster({"router-any": self.captures()["router-any"]})
+        self.assertEqual([v["label"] for v in found["vantages"]], ["router-any"])
+        self.assertTrue(found["hosts"])
+
+    def test_element_of_maps_addresses(self):
+        found = cluster.infer_cluster(self.captures())
+        element_of = cluster.element_index(found)
+        self.assertEqual(element_of("10.42.0.56"), "pod:10.42.0.56")
+        self.assertEqual(element_of(self.WORKER), f"host:{self.WORKER}")
+        self.assertEqual(element_of("10.43.0.10"), "svc:10.43.0.10")
+        self.assertEqual(element_of("9.9.9.9"), "internet")
+        self.assertIsNone(element_of("127.0.0.1"))
 
 
 if __name__ == "__main__":
