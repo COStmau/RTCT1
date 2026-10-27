@@ -1717,5 +1717,53 @@ class StoryBundleChecks(unittest.TestCase):
         self.assertEqual(sorted(merged), sorted(ids))
 
 
+class StoryEntryChecks(unittest.TestCase):
+    """The page is reachable from the menu and the CLI, from the manifest alone."""
+
+    def manifest(self):
+        import tempfile
+        root = Path(tempfile.mkdtemp())
+        rows = []
+        for scenario, label, usable, burst in (
+                ("benign", "pod-lidar", True, None), ("benign", "pod-nginx", True, None),
+                ("benign", "pod-camera", False, None),
+                ("lidar attack", "pod-lidar", True, (20, 25)),
+                ("nginx attack", "pod-lidar", True, (30, 35)),
+                ("lidar attack", "pod-nginx", True, (20, 25))):
+            path = root / f"{scenario}-{label}.csv"
+            flow_capture(burst=burst).to_csv(path, index=False)
+            rows.append({"scenario": scenario, "level": "pod", "label": label, "method": "tcp",
+                         "path": str(path), "usable": usable})
+        return pd.DataFrame(rows)
+
+    def test_story_is_menu_item_10(self):
+        names = [name for name, _, _ in demo.ITEMS]
+        self.assertEqual(names[:9], ["Pair demo", "Walkthrough", "State machine", "Sweep",
+                                     "Ablation", "Compare", "Feature value", "Everything",
+                                     "Tests"])
+        self.assertEqual(names[9], "Story")
+
+    def test_inputs_pick_the_vantage_and_every_attack(self):
+        benign, targets, cluster_captures = story.story_inputs(self.manifest(), "pod-lidar")
+        self.assertEqual(sorted(targets), ["lidar attack", "nginx attack"])
+        self.assertEqual(sorted(cluster_captures), ["pod-lidar", "pod-nginx"])   # unusable skipped
+        self.assertTrue(benign.equals(cluster_captures["pod-lidar"]))
+
+    def test_inputs_filter_scenarios(self):
+        _, targets, _ = story.story_inputs(self.manifest(), "pod-lidar", scenarios=["nginx attack"])
+        self.assertEqual(list(targets), ["nginx attack"])
+
+    def test_unknown_vantage_says_which_exist(self):
+        with self.assertRaisesRegex(ValueError, "pod-lidar"):
+            story.story_inputs(self.manifest(), "pod-nowhere")
+
+    def test_main_writes_the_page(self):
+        import tempfile
+        out = Path(tempfile.mkdtemp()) / "story.html"
+        written = story.main(["--vantage", "pod-lidar", "--out", str(out)], manifest=self.manifest())
+        self.assertEqual(written, out)
+        self.assertIn("window.STORY = ", out.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

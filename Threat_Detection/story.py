@@ -19,14 +19,16 @@ import numpy as np
 
 import cluster as topology
 import layout
-from data_io import level_from_label, resolve_output
+from data_io import MANIFEST_NAME, level_from_label, load_manifest, resolve_output
 from detectors import PERSISTENCE_WINDOW, persistent_mask
 from features import WINDOW_SIZE
 from statemachine import (FORGET_SECONDS, FrequencyScorer, WindowedFrequencyScorer, encode,
                           fit_model, frequency_cutoff, frequency_scores_by_window, make_flows,
                           n_windows_for, pdfa_states_in_order, score_cutoff, score_flows,
-                          segment_flows, split_flows, trace_score, trace_states)
+                          load_flow_packets, segment_flows, split_flows, trace_score,
+                          trace_states)
 
+DEFAULT_VANTAGE = "pod-lidar"   # its 5 s replay loop is what FORGET_SECONDS was sized for
 HELD_OUT = "benign (held out)"
 MAX_STEP_DETAIL = 400       # merge steps drawn one by one; the rest are counted
 MAX_STREAM = 2000           # training flows shown in the symbol stream
@@ -206,3 +208,59 @@ def write_html(story, path=None):
     out = resolve_output(path or STORY_HTML)
     out.write_text(page, encoding="utf-8")
     return out
+
+
+def story_inputs(manifest, vantage, method="tcp", scenarios=None):
+    """(benign packets, {scenario: attack packets}, {label: benign packets}) for one vantage.
+
+    Captures whose timebase the manifest marks unusable are skipped. The benign captures of
+    every label feed the cluster drawing; only `vantage` is learned and replayed.
+    """
+    rows = manifest[manifest["method"].eq(method)]
+    if "usable" in rows.columns:
+        rows = rows[rows["usable"].astype(str).str.lower().eq("true")]
+    benign = rows[rows["scenario"].eq("benign")]
+    if vantage not in set(benign["label"]):
+        raise ValueError(f"No usable benign {method} capture for {vantage}; "
+                         f"choose one of {', '.join(sorted(benign['label']))}.")
+    cluster_captures = {row.label: load_flow_packets(row.path) for row in benign.itertuples()}
+    attacks = rows[rows["label"].eq(vantage) & ~rows["scenario"].eq("benign")]
+    if scenarios is not None:
+        attacks = attacks[attacks["scenario"].isin(scenarios)]
+    targets = {row.scenario: load_flow_packets(row.path)
+               for row in attacks.sort_values("scenario").itertuples()}
+    return cluster_captures[vantage], targets, cluster_captures
+
+
+def main(argv=None, manifest=None):
+    """Build the story for one vantage and write the page; returns its path."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="The state machine learned and replayed, as one interactive page.")
+    parser.add_argument("--vantage", default=DEFAULT_VANTAGE,
+                        help="capture label to learn and replay (default: %(default)s)")
+    parser.add_argument("--method", default="tcp", choices=("tcp", "ptcp"))
+    parser.add_argument("--scenarios", nargs="*", default=None,
+                        help="attack scenarios to replay (default: every one in the manifest)")
+    parser.add_argument("--forget", type=float, default=FORGET_SECONDS,
+                        help="anomaly clock, seconds (default: %(default)s)")
+    parser.add_argument("--out", default=STORY_HTML)
+    parser.add_argument("--manifest", default=MANIFEST_NAME)
+    args = parser.parse_args(argv)
+
+    if manifest is None:
+        import local_paths
+        manifest = load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest)
+    benign, targets, cluster_captures = story_inputs(manifest, args.vantage, args.method,
+                                                     args.scenarios)
+    built = build_story(benign, targets, cluster_captures, args.vantage, args.forget)
+    out = write_html(built, args.out)
+    print(f"Wrote {out} | {out.stat().st_size / 1e6:.1f} MB | vantage={args.vantage} "
+          f"| replays: held-out benign, {', '.join(targets) or 'no attacks'}")
+    print("Open it in a browser; it needs no network.")
+    return out
+
+
+if __name__ == "__main__":
+    main()

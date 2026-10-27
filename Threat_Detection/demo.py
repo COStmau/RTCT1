@@ -362,6 +362,14 @@ def run_tests():
     _run("-m", "unittest", "tests")
 
 
+# --- 10. The story page -----------------------------------------------------------
+
+def story_page():
+    """The state machine learned and replayed, as one self-contained interactive page."""
+    import story
+    story.main([])
+
+
 # --- 8. Everything ---------------------------------------------------------------
 
 def everything():
@@ -384,6 +392,7 @@ ITEMS = [
     ("Feature value", feature_value, "what each measurement is worth on its own"),
     ("Everything", everything, "all of the above, in the order the report needs it"),
     ("Tests", run_tests, "the unit suite"),
+    ("Story", story_page, "the state machine learned and replayed, as an interactive page"),
 ]
 
 

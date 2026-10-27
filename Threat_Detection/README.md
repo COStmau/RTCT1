@@ -27,12 +27,14 @@ testable on their own.
 | `features.py` | Packets → one row per second. The 13 features, the ablation groups, and the temporal train/held-out split. Stateless: no baseline, no thresholds, no detection. |
 | `detectors.py` | Every detection method behind one interface: `fit` → `calibrate` → `score` → `flag`, with optional `explain`. The z-score baseline is median + MAD. Add one by writing a class and adding it to `REGISTRY`. |
 | `reporting.py` | Console reports, charts, the `SHOWCASE.md` handover file, and the event log the response side reads. Takes results, renders them; computes no detection logic. Pins matplotlib to `Agg`, so nothing here opens a window. |
+| `cluster.py` | The k3s cluster's shape inferred from benign traffic: nodes, pods (including host-network ones), services, conversations and where each capture listened. Used by the story page. |
+| `layout.py` | Computed positions for the story page: the prefix tree as an icicle, the learned machine in columns. |
 
 **The one entry point** — everything a person looks at goes through it.
 
 | File | What it does |
 |---|---|
-| `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 are the experiments below; 8 regenerates every artifact; 9 runs the tests. |
+| `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 are the experiments below; 8 regenerates every artifact; 9 runs the tests; 10 builds the interactive state-machine story page. |
 
 **The experiments** — each runs one measurement and writes its own CSV. `demo.py` runs
 these as documented; they also run on their own.
@@ -44,6 +46,7 @@ these as documented; they also run on their own.
 | `feature_value.py` | Per-feature value: threshold-free separation (auc) and detection at a 5% benign budget. |
 | `statemachine.py` | PDFA anomaly detection after Cao et al. (ARES 2022): packet flows to symbols, ALERGIA state merging, trace likelihood flags. A second detection method; `demo.py` item 3 is its presentation. `--flags` adds TCP SYN/RST presence to the symbol; default is the old alphabet. |
 | `flag_scores.py` | Per-window anomaly scores under the plain and flag alphabets, plus AUROC and matched-rate detection per stratum. Prints the pre-registered verdict. |
+| `story.py` | The state machine as one interactive page, `outputs/statemachine_story.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). Self-contained; opens offline. `demo.py` item 10. The renderer is `story_template/`. |
 
 **Supporting files**
 
@@ -82,12 +85,13 @@ The menu, in order:
  7  Feature value   what each measurement is worth on its own
  8  Everything      all of the above, in the order the report needs it
  9  Tests           the unit suite
+10  Story           the state machine learned and replayed, as an interactive page
 ```
 
 Underneath the menu, the same commands run directly:
 
 ```bash
-.venv/bin/python -m unittest tests                    # 92 tests
+.venv/bin/python -m unittest tests                    # 139 tests
 .venv/bin/python sweep.py                             # all 88 captures, about 8 seconds
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv
 .venv/bin/python compare.py
@@ -95,6 +99,7 @@ Underneath the menu, the same commands run directly:
 .venv/bin/python statemachine.py                      # PDFA sweep, 42 rows, about 13 seconds
 .venv/bin/python statemachine.py --method ptcp --out statemachine_sweep_ptcp.csv
 .venv/bin/python flag_scores.py                       # both alphabets' window scores, AUROC, verdict chart
+.venv/bin/python story.py                             # interactive page; --vantage pod-nginx for another tap
 ```
 
 `sweep.py` writes `outputs/sweep_summary.png` and `outputs/detection_gap.png`; `flag_scores.py`
