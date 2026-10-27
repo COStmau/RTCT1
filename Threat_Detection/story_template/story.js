@@ -603,9 +603,18 @@ function protocolLegend() {
     `<span><i class="disc" style="background:${protoColor(p)}"></i>${p}</span>`).join("")}</div>`;
 }
 
-function drawHoeffding(step) {
-  const tests = step.tests.slice().sort((a, b) => (a.symbol === "#") - (b.symbol === "#")
+// the rows the Hoeffding chart shows: failing symbols first, so a promotion always shows
+// why, then the most probable; at most 12
+function hoeffdingRows(step) {
+  const fails = t => Math.abs(t.p_red - t.p_blue) >= step.bound;
+  return step.tests.slice().sort((a, b) => fails(b) - fails(a)
+    || (a.symbol === "#") - (b.symbol === "#")
     || d3.descending(Math.max(a.p_red, a.p_blue), Math.max(b.p_red, b.p_blue))).slice(0, 12);
+}
+window.STORY_CHECKS = { hoeffdingRows };
+
+function drawHoeffding(step) {
+  const tests = hoeffdingRows(step);
   const rowH = 24, left = 118, w = 300, h = tests.length * rowH + 26;
   const g = d3.select("#hoeffding").attr("height", h).attr("viewBox", `0 0 ${w} ${h}`);
   const x = d3.scaleLinear().domain([0, 1]).range([left, w - 26]);
@@ -814,7 +823,7 @@ function clusterInset(g, box) {
     const { c } = capture();
     const k = traceAt(t);
     const w = c.windows[Math.floor(t / S.meta.window_size)];
-    halo.style("stroke", w && w.alert ? "var(--critical)" : w && w.flagged ? "var(--warning)" : "var(--accent)")
+    halo.style("stroke", w && w.alert ? "var(--critical)" : w && (w.flagged || w.likelihood_flag) ? "var(--warning)" : "var(--accent)")
       .style("opacity", w && w.alert ? 0.9 : 0.35);
     if (k === shown) return;
     shown = k;
@@ -831,15 +840,15 @@ function scoreStrip(g, box) {
   const { c, begin, end } = capture();
   const traces = c.traces;
   const x = d3.scaleLinear().domain([begin, end]).range([box.x, box.x + box.w]);
-  const hA = box.h * 0.5, hB = box.h * 0.26, gap = 14, bandH = 9;
-  const yA0 = box.y, yB0 = yA0 + hA + gap, band0 = yB0 + hB + 8;
+  const hA = box.h * 0.48, hB = box.h * 0.24, gap = 14, bandH = 8;
+  const yA0 = box.y, yB0 = yA0 + hA + gap, band0 = yB0 + hB + 8, band1 = band0 + bandH + 3;
   const freq = traces.flatMap(t => [t.windowed, t.cumulative]).concat([c.cutoffs.windowed, c.cutoffs.cumulative]);
   const yA = d3.scaleLinear().domain(d3.extent(freq.length ? freq : [0, 1])).nice().range([yA0 + hA, yA0 + 14]);
   const lik = traces.map(t => t.likelihood).concat([c.cutoffs.likelihood, 0]);
   const yB = d3.scaleLinear().domain(d3.extent(lik)).nice().range([yB0 + hB, yB0 + 12]);
 
   // the anomaly clock's window, behind the lines
-  const clock = g.append("rect").attr("class", "clock-window").attr("y", yA0).attr("height", band0 + 2 * bandH + 4 - yA0).attr("rx", 3);
+  const clock = g.append("rect").attr("class", "clock-window").attr("y", yA0).attr("height", band1 + bandH - yA0).attr("rx", 3);
 
   for (const [y, top, h, ticks] of [[yA, yA0, hA, 4], [yB, yB0, hB, 3]]) {
     g.append("g").attr("class", "grid").attr("transform", `translate(${box.x},0)`)
@@ -883,32 +892,39 @@ function scoreStrip(g, box) {
   // window verdicts: flagged, alert (sustained), released
   const ws = S.meta.window_size;
   const bands = g.append("g");
-  bands.append("text").attr("class", "t-small t-muted").attr("text-anchor", "end").attr("x", box.x - 6).attr("y", band0 + 8).text("windows");
-  bands.selectAll("rect").data(c.windows.filter(w => w.index * ws < end && (w.index + 1) * ws > begin)).join("rect")
-    .attr("x", w => x(Math.max(begin, w.index * ws)) + 0.5).attr("y", band0)
-    .attr("width", w => Math.max(x(Math.min(end, (w.index + 1) * ws)) - x(Math.max(begin, w.index * ws)) - 1, 1))
-    .attr("height", bandH).attr("rx", 2)
-    .style("fill", w => w.alert ? "var(--critical)" : w.flagged ? "var(--warning)" : "var(--surface-2)");
+  // one row per detector: SEQUENT windows (flagged, alert) and likelihood windows (unseen)
+  const shown = c.windows.filter(w => w.index * ws < end && (w.index + 1) * ws > begin);
+  const wx = w => x(Math.max(begin, w.index * ws)) + 0.5;
+  const ww = w => Math.max(x(Math.min(end, (w.index + 1) * ws)) - x(Math.max(begin, w.index * ws)) - 1, 1);
+  for (const [y, label, fill] of [
+      [band0, "SEQUENT", w => w.alert ? "var(--critical)" : w.flagged ? "var(--warning)" : "var(--surface-2)"],
+      [band1, "likelihood", w => w.likelihood_flag ? "var(--serious)" : "var(--surface-2)"]]) {
+    bands.append("text").attr("class", "t-small t-muted").attr("text-anchor", "end").attr("x", box.x - 6).attr("y", y + 7).text(label);
+    bands.append("g").selectAll("rect").data(shown).join("rect")
+      .attr("x", wx).attr("y", y).attr("width", ww).attr("height", bandH).attr("rx", 2).style("fill", fill);
+  }
   bands.selectAll("text.rel").data(c.windows.filter(w => w.released && w.index * ws >= begin)).join("text")
-    .attr("class", "rel").attr("text-anchor", "middle").attr("x", w => x((w.index + 0.5) * ws)).attr("y", band0 + bandH + 13)
+    .attr("class", "rel").attr("text-anchor", "middle").attr("x", w => x((w.index + 0.5) * ws)).attr("y", band0 - 2)
     .style("fill", "var(--good-ink)").style("font-size", "12px").style("font-weight", 700).text("✓");
-  g.append("g").attr("class", "axis").attr("transform", `translate(0,${band0 + bandH + 18})`)
+  g.append("g").attr("class", "axis").attr("transform", `translate(0,${band1 + bandH + 4})`)
     .call(d3.axisBottom(x).ticks(10).tickFormat(v => `${v}s`).tickSize(3));
-  const key = g.append("g").attr("transform", `translate(${box.x},${band0 + bandH + 44})`);
-  [["flagged window", "var(--warning)"], [`alert: ${S.meta.persistence}+ in a row`, "var(--critical)"]].forEach(([text, color], i) => {
-    key.append("rect").attr("x", i * 150).attr("y", -9).attr("width", 12).attr("height", 9).attr("rx", 2).style("fill", color);
-    key.append("text").attr("class", "t-small t-2").attr("x", i * 150 + 18).attr("y", 0).text(text);
+  const key = g.append("g").attr("transform", `translate(${box.x},${band1 + bandH + 30})`);
+  [["flagged", "var(--warning)"], [`alert: ${S.meta.persistence}+ in a row`, "var(--critical)"],
+   ["unseen behaviour (likelihood)", "var(--serious)"]].forEach(([text, color], i) => {
+    const kx = [0, 80, 220][i];
+    key.append("rect").attr("x", kx).attr("y", -9).attr("width", 12).attr("height", 9).attr("rx", 2).style("fill", color);
+    key.append("text").attr("class", "t-small t-2").attr("x", kx + 18).attr("y", 0).text(text);
   });
-  key.append("text").attr("x", 300).attr("y", 0).style("fill", "var(--good-ink)").style("font-weight", 700).text("✓");
-  key.append("text").attr("class", "t-small t-2").attr("x", 314).attr("y", 0).text("released: back under the cutoff");
-  key.append("rect").attr("class", "clock-window").attr("x", 520).attr("y", -9).attr("width", 18).attr("height", 9).attr("rx", 2);
-  key.append("text").attr("class", "t-small t-2").attr("x", 544).attr("y", 0).text(`anomaly clock: the last ${S.meta.forget_seconds} s`);
+  key.append("text").attr("x", 420).attr("y", 0).style("fill", "var(--good-ink)").style("font-weight", 700).text("✓");
+  key.append("text").attr("class", "t-small t-2").attr("x", 434).attr("y", 0).text("released");
+  key.append("rect").attr("class", "clock-window").attr("x", 500).attr("y", -9).attr("width", 18).attr("height", 9).attr("rx", 2);
+  key.append("text").attr("class", "t-small t-2").attr("x", 524).attr("y", 0).text(`anomaly clock: the last ${S.meta.forget_seconds} s`);
 
   // playhead, crosshair tooltip, click or drag to seek
-  const head = g.append("line").attr("class", "playhead").attr("y1", yA0).attr("y2", band0 + bandH);
-  const cross = g.append("line").attr("class", "crosshair").attr("y1", yA0).attr("y2", band0 + bandH).attr("opacity", 0);
+  const head = g.append("line").attr("class", "playhead").attr("y1", yA0).attr("y2", band1 + bandH);
+  const cross = g.append("line").attr("class", "crosshair").attr("y1", yA0).attr("y2", band1 + bandH).attr("opacity", 0);
   const overlay = g.append("rect").attr("x", box.x).attr("y", yA0).attr("width", box.w)
-    .attr("height", band0 + bandH - yA0).attr("fill", "transparent").style("cursor", "pointer");
+    .attr("height", band1 + bandH - yA0).attr("fill", "transparent").style("cursor", "pointer");
   const seekTo = e => player.seek(x.invert(d3.pointer(e)[0]));
   overlay.on("pointerdown", e => { seekTo(e); overlay.node().setPointerCapture(e.pointerId); })
     .on("pointermove", e => {
@@ -921,7 +937,7 @@ function scoreStrip(g, box) {
       showTip(e, `<div class="tt-title">${f1(t)} s · window ${Math.floor(t / ws)}</div>
         <div class="tt-row">windowed ${f1(tr.windowed)} · cumulative ${f1(tr.cumulative)}</div>
         <div class="tt-row">likelihood ${f2(tr.likelihood)}</div>
-        <div class="tt-row">${w ? (w.alert ? "alert" : w.flagged ? "flagged" : w.released ? "released" : "normal") : ""}</div>`);
+        <div class="tt-row">${w ? STATUS[w.status].text.toLowerCase() : ""}</div>`);
     })
     .on("pointerleave", () => { cross.attr("opacity", 0); hideTip(); });
 
@@ -933,17 +949,15 @@ function scoreStrip(g, box) {
   });
 }
 
-function statusOf(t) {
-  const { c } = capture();
-  const index = Math.floor(t / S.meta.window_size);
-  const w = c.windows[index];
-  if (!w) return { cls: "idle", text: "NO DATA" };
-  if (w.alert) return { cls: "critical", text: "ALERT · sustained" };
-  if (w.flagged) return { cls: "warning", text: "FLAGGED window" };
-  const recent = c.windows.slice(Math.max(0, index - 2), index + 1).some(x => x.released);
-  if (recent) return { cls: "good", text: "RELEASED · forgotten" };
-  return { cls: "good", text: "NORMAL" };
-}
+const STATUS = {
+  alert: { cls: "critical", text: "ALERT · sustained" },
+  flagged: { cls: "warning", text: "FLAGGED window" },
+  unseen: { cls: "warning", text: "UNSEEN BEHAVIOUR · likelihood" },
+  released: { cls: "good", text: "RELEASED · forgotten" },
+  normal: { cls: "good", text: "NORMAL" },
+};
+const windowAt = t => capture().c.windows[Math.floor(t / S.meta.window_size)];
+const statusOf = t => { const w = windowAt(t); return w ? STATUS[w.status] : { cls: "idle", text: "NO DATA" }; };
 
 function detectionPanel() {
   let shownKey = null;
@@ -976,13 +990,14 @@ function detectionPanel() {
     const maxC = d3.max(contributions, d => Math.abs(d.total)) || 1;
     const above = tr.windowed > c.cutoffs.windowed, cumAbove = tr.cumulative > c.cutoffs.cumulative;
     const falloff = tr.fell_off_at !== null;
-    const lostTime = cumAbove && !above && status.cls === "good";
+    const w = windowAt(t);
+    const lostTime = Boolean(w && w.forgetting_shown);
     panel.html(`
       <div class="status ${status.cls}"><span class="dot"></span>${status.text}</div>
       <h2>Trace at ${f1(tr.t)} s</h2>
       <div class="chips">${tr.symbols.map((s, i) => chip(s, falloff && i >= tr.fell_off_at ? "off" : "")).join("")}</div>
       <p style="margin-top:8px">${falloff
-        ? `Walks ${tr.fell_off_at === 0 ? "no state" : "states " + tr.states.join(" → ")}, then <b>falls off</b>: benign traffic never took <span class="mono">${tr.symbols[tr.fell_off_at]}</span> from there. Likelihood takes the floor (${f2(tr.likelihood)}).`
+        ? `Walks ${tr.fell_off_at === 0 ? "no state" : "states " + tr.states.join(" → ")}, then <b>falls off</b>: benign traffic never took <span class="mono">${tr.symbols[tr.fell_off_at]}</span> from there. Likelihood takes the floor (${f2(tr.likelihood)}). A fall-off visits fewer states, so it <i>lowers</i> the frequency score: unseen behaviour is the likelihood detector's catch, not SEQUENT's.`
         : `Walks states 0 → ${tr.states.join(" → ")}. Likelihood ${f2(tr.likelihood)} (cutoff ${f2(c.cutoffs.likelihood)}).`}</p>
       <h2>Why it scores ${f1(tr.windowed)} ${above ? "· above" : "· under"} the cutoff ${f1(c.cutoffs.windowed)}</h2>
       <div class="contrib">${contributions.map(d => `
@@ -998,8 +1013,11 @@ function detectionPanel() {
         <dt>cumulative</dt><dd>${f1(tr.cumulative)} vs ${f1(c.cutoffs.cumulative)} ${cumAbove ? "▲" : "✓"}</dd>
         <dt>forgot now</dt><dd>${tr.expired.length} visit${tr.expired.length === 1 ? "" : "s"} left the clock</dd>
       </dl>
-      ${lostTime ? `<p style="margin-top:8px"><b>This is why it forgets.</b> The cumulative score is still
-        above its line, so without the ${S.meta.forget_seconds} s clock this alert would never clear.</p>` : ""}
+      ${lostTime ? `<p style="margin-top:8px"><b>This is why it forgets.</b> An alert fired earlier and the
+        windowed score has let it go, but the cumulative score is still above its line: without the
+        ${S.meta.forget_seconds} s clock this alert would not clear.</p>` : ""}
+      <p style="margin-top:8px;font-size:12.5px">The cumulative score also creeps up with capture length alone,
+        since every visit ever made still counts; part of its height is age, not attack.</p>
       <h2>State fill · visits on the clock vs training rate</h2>${heatLegend}`);
   });
 }

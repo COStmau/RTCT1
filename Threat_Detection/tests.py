@@ -1563,10 +1563,12 @@ def flow_capture(seconds=60, burst=None, proto="tcp", start=1000.0, vary=False):
     for second in range(seconds):
         pairs = 6 if burst and burst[0] <= second < burst[1] else 1
         for pair in range(pairs):
-            t = start + second + 0.1 + pair / 8
+            # binary-exact times: 0.1-style offsets round, and a rounded start can land a flow
+            # across a window boundary, where segment_flows drops it
+            t = start + second + 0.125 + pair / 8
             reply = (150, 900, 4000, 900, 150)[second % 5] if vary else 150
-            for offset, size, duration, src, dst in ((0.0, 100, 0.01, "10.42.3.4", "10.43.0.10"),
-                                                     (0.05, reply, 0.03, "10.43.0.10", "10.42.3.4")):
+            for offset, size, duration, src, dst in ((0.0, 100, 0.015625, "10.42.3.4", "10.43.0.10"),
+                                                     (0.0625, reply, 0.03125, "10.43.0.10", "10.42.3.4")):
                 port += 1
                 for ts in (t + offset, t + offset + duration):
                     rows.append({"ts": ts, "frame_len": size, "src_ip": src, "dst_ip": dst,
@@ -1657,6 +1659,48 @@ class StoryBundleChecks(unittest.TestCase):
         last = self.captures["flood"]["traces"][-1]
         self.assertGreater(last["cumulative"], self.captures["flood"]["cutoffs"]["cumulative"])
         self.assertFalse(any(w["alert"] for w in self.captures["benign (held out)"]["windows"]))
+
+    def test_quiet_replay_never_alerts(self):
+        """Control: the benign pattern replayed with no burst must not alert."""
+        built = story.build_story(self.benign, {"quiet": flow_capture()}, {}, "pod-lidar")
+        windows = built["playback"]["captures"][1]["windows"]
+        self.assertFalse(any(w["alert"] for w in windows))
+        self.assertFalse(any(w["forgetting_shown"] for w in windows))
+
+    def test_release_follows_the_burst_by_the_clock(self):
+        windows = self.captures["flood"]["windows"]
+        released = [w["index"] for w in windows if w["released"]]
+        forget = statemachine.FORGET_SECONDS
+        # the last burst flow starts before 25 s; it leaves the clock 8 s later
+        self.assertTrue(released)
+        self.assertGreaterEqual(released[-1], 25)
+        self.assertLessEqual(released[-1], 25 + forget + 1)
+
+    def test_window_status_names_the_strongest_verdict(self):
+        statuses = {w["status"] for w in self.captures["flood"]["windows"]}
+        self.assertIn("alert", statuses)
+        self.assertIn("released", statuses)
+        unseen = story.build_story(self.benign, {"udp": flow_capture(seconds=20, proto="udp")},
+                                   {}, "pod-lidar")["playback"]["captures"][1]["windows"]
+        self.assertIn("unseen", {w["status"] for w in unseen})
+        self.assertTrue(all(w["status"] in story.WINDOW_STATUSES for w in unseen))
+
+    def test_forgetting_is_shown_only_after_an_alert(self):
+        windows = self.captures["flood"]["windows"]
+        first_alert = min(w["index"] for w in windows if w["alert"])
+        shown = [w["index"] for w in windows if w["forgetting_shown"]]
+        self.assertTrue(shown)
+        self.assertTrue(all(i > first_alert for i in shown))
+        self.assertFalse(any(windows[i]["flagged"] for i in shown))
+
+    def test_template_is_read_as_utf8_whatever_the_locale(self):
+        code = ("import warnings, tempfile, pathlib, story, tests; "
+                "warnings.simplefilter('error', EncodingWarning); "
+                "story.write_html(story.build_story(tests.flow_capture(), {}, {}, 'pod-lidar'), "
+                "pathlib.Path(tempfile.mkdtemp()) / 'p.html')")
+        result = subprocess.run([sys.executable, "-X", "warn_default_encoding", "-c", code],
+                                cwd=Path(__file__).resolve().parent, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr[-400:])
 
     def test_trace_flows_map_to_cluster_elements(self):
         capture = self.captures["flood"]

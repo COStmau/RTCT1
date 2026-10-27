@@ -30,6 +30,8 @@ from statemachine import (FORGET_SECONDS, FrequencyScorer, WindowedFrequencyScor
 
 DEFAULT_VANTAGE = "pod-lidar"   # its 5 s replay loop is what FORGET_SECONDS was sized for
 HELD_OUT = "benign (held out)"
+WINDOW_STATUSES = ("alert", "flagged", "unseen", "released", "normal")   # strongest first
+RELEASE_SHOWN = 2           # windows after a release that still say "released"
 MAX_STEP_DETAIL = 400       # merge steps drawn one by one; the rest are counted
 MAX_STREAM = 2000           # training flows shown in the symbol stream
 STORY_HTML = "statemachine_story.html"
@@ -156,20 +158,41 @@ def _capture(scenario, flows, t0, n_windows, duration, model, element_of, forget
 
 
 def _windows(traces, n_windows, cutoffs):
-    """Per window: the windowed and likelihood flags, sustained alerts, and releases."""
+    """Per window: both detectors' flags, sustained alerts, releases, and one status.
+
+    `status` is the strongest verdict, in WINDOW_STATUSES order. "unseen" is the likelihood
+    detector alone: a trace that falls off the machine visits fewer states, which lowers the
+    frequency score, so novel behaviour shows there and not in the windowed score.
+    `forgetting_shown` marks windows where forgetting visibly matters: an alert came earlier,
+    the windowed score has let go, and the cumulative score is still above its own cutoff.
+    """
     peak = np.full(n_windows, np.nan)
+    cumulative = np.full(n_windows, np.nan)
     unlikely = np.zeros(n_windows, dtype=bool)
     for trace in traces:
         window = int(trace["t"] // WINDOW_SIZE)
         if 0 <= window < n_windows:
             peak[window] = np.nanmax([peak[window], trace["windowed"]])
+            cumulative[window] = np.nanmax([cumulative[window], trace["cumulative"]])
             unlikely[window] |= trace["likelihood"] < cutoffs["likelihood"]
     flagged = np.nan_to_num(peak, nan=-np.inf) > cutoffs["windowed"]
+    held = np.nan_to_num(cumulative, nan=-np.inf) > cutoffs["cumulative"]
     alert = persistent_mask(flagged).to_numpy()
-    return [{"index": w, "peak": peak[w], "flagged": bool(flagged[w]),
-             "likelihood_flag": bool(unlikely[w]), "alert": bool(alert[w]),
-             "released": bool(w > 0 and alert[w - 1] and not flagged[w])}
-            for w in range(n_windows)]
+    released = np.array([w > 0 and alert[w - 1] and not flagged[w] for w in range(n_windows)],
+                        dtype=bool)
+    windows, since_release, alerted = [], None, False
+    for w in range(n_windows):
+        since_release = 0 if released[w] else (
+            since_release + 1 if since_release is not None and not flagged[w] else None)
+        status = ("alert" if alert[w] else "flagged" if flagged[w] else "unseen" if unlikely[w]
+                  else "released" if since_release is not None and since_release <= RELEASE_SHOWN
+                  else "normal")
+        windows.append({"index": w, "peak": peak[w], "flagged": bool(flagged[w]),
+                        "likelihood_flag": bool(unlikely[w]), "alert": bool(alert[w]),
+                        "released": bool(released[w]), "status": status,
+                        "forgetting_shown": bool(alerted and not flagged[w] and held[w])})
+        alerted = alerted or bool(alert[w])
+    return windows
 
 
 def _clean(value):
@@ -194,12 +217,12 @@ def to_json(story):
 
 def write_html(story, path=None):
     """One self-contained page: template, styles, D3, renderer and bundle all inlined."""
-    page = (TEMPLATE_DIR / "index.html").read_text()
+    page = (TEMPLATE_DIR / "index.html").read_text(encoding="utf-8")
     # "</" inside an inline script would close it early; "<\/" is the same string to JSON
     bundle = "window.STORY = " + to_json(story).replace("</", "<\\/") + ";\n"
-    for marker, text in (("/*__CSS__*/", (TEMPLATE_DIR / "story.css").read_text()),
-                         ("/*__D3__*/", (TEMPLATE_DIR / D3_FILE).read_text()),
-                         ("/*__JS__*/", (TEMPLATE_DIR / "story.js").read_text()),
+    for marker, text in (("/*__CSS__*/", (TEMPLATE_DIR / "story.css").read_text(encoding="utf-8")),
+                         ("/*__D3__*/", (TEMPLATE_DIR / D3_FILE).read_text(encoding="utf-8")),
+                         ("/*__JS__*/", (TEMPLATE_DIR / "story.js").read_text(encoding="utf-8")),
                          ("/*__STORY__*/", bundle)):
         head, found, tail = page.partition(marker)
         if not found:
