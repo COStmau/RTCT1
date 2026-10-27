@@ -810,6 +810,29 @@ class WindowedScorerChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             statemachine.WindowedFrequencyScorer(self.pdfa, forget_seconds=0)
 
+    def test_score_terms_sum_to_score(self):
+        scored = statemachine.WindowedFrequencyScorer(self.pdfa, 3.0)
+        termed = statemachine.WindowedFrequencyScorer(self.pdfa, 3.0)
+        traces = [("a", "b", "c"), ("a", "b", "b"), ("c", "a"), ("b", "b")] * 6
+        for when, trace in enumerate(traces):
+            terms, _ = termed.score_terms(trace, when * 0.7)
+            self.assertEqual(sum(map(sum, terms)), scored.score(trace, when * 0.7))
+            self.assertEqual(len(terms), len(statemachine.trace_states(self.pdfa, trace)))
+
+    def test_score_terms_report_expiry(self):
+        scorer = statemachine.WindowedFrequencyScorer(self.pdfa, forget_seconds=2.0)
+        _, expired = scorer.score_terms(("a", "b", "b"), 0.0)
+        self.assertEqual(expired, [])
+        _, expired = scorer.score_terms(("c", "a"), 5.0)
+        self.assertEqual(len(expired), 3)
+        self.assertTrue(all(when == 0.0 for when, _ in expired))
+
+    def test_frequency_cutoff_flags_top_budget(self):
+        scores = np.arange(100.0)
+        self.assertEqual(statemachine.frequency_cutoff(scores), np.quantile(scores, 0.95))
+        with_nan = np.append(scores, np.nan)
+        self.assertEqual(statemachine.frequency_cutoff(with_nan), np.quantile(scores, 0.95))
+
     def test_default_window_is_the_module_constant(self):
         scorer = statemachine.WindowedFrequencyScorer(self.pdfa)
         self.assertEqual(scorer.forget_seconds, statemachine.FORGET_SECONDS)
@@ -918,6 +941,54 @@ class StateMachineChecks(unittest.TestCase):
             with self.subTest(chunk=chunk):
                 self.assertEqual(whole, per_chunk)
         self.assertLessEqual(len(stream.visits), 3 * (forget / 0.5 + 1))
+
+    LEARN_TRACES = ([("a", "b", "c")] * 12 + [("a", "b", "b")] * 12 + [("c", "a")] * 12
+                    + [("b", "a", "c")] * 5)
+
+    @staticmethod
+    def transitions(pdfa):
+        ids = {id(node): i for i, node in enumerate(statemachine.pdfa_states_in_order(pdfa))}
+        return sorted((ids[id(node)], symbol, prob) for node, out in pdfa.probs.values()
+                      for symbol, (_, prob) in out.items())
+
+    def test_learn_trace_does_not_change_the_machine(self):
+        plain = statemachine.learn_pdfa(self.LEARN_TRACES)
+        traced = statemachine.learn_pdfa(self.LEARN_TRACES, trace=[])
+        self.assertEqual(plain.n_states, traced.n_states)
+        self.assertEqual(self.transitions(plain), self.transitions(traced))
+
+    def test_learn_trace_records_pta_then_steps(self):
+        events = []
+        pdfa = statemachine.learn_pdfa(self.LEARN_TRACES, trace=events)
+        self.assertEqual(events[0][0], "pta")
+        self.assertIsInstance(events[0][1], statemachine._Node)
+        kinds = [step["kind"] for step in events[1:]]
+        self.assertTrue(set(kinds) <= {"merge", "promote"})
+        self.assertEqual(1 + kinds.count("promote"), pdfa.n_states)
+        self.assertIn("merge", kinds)
+
+    def test_learn_trace_bound_matches_hoeffding(self):
+        events = []
+        statemachine.learn_pdfa(self.LEARN_TRACES, trace=events)
+        for step in events[1:]:
+            self.assertEqual(step["bound"], statemachine._hoeffding(step["red_visits"],
+                                                                    step["blue_visits"]))
+            if step["kind"] == "merge":
+                self.assertTrue(all(abs(p_red - p_blue) < step["bound"]
+                                    for _, p_red, p_blue in step["tests"]))
+            self.assertIsInstance(step["path"], tuple)
+
+    def test_learn_trace_pta_is_unmerged(self):
+        """The recorded prefix tree keeps one node per distinct prefix, before any fold."""
+        events = []
+        statemachine.learn_pdfa(self.LEARN_TRACES, trace=events)
+        prefixes = {trace[:i] for trace in self.LEARN_TRACES for i in range(len(trace) + 1)}
+        count, stack = 0, [events[0][1]]
+        while stack:
+            node = stack.pop()
+            count += 1
+            stack.extend(node.children.values())
+        self.assertEqual(count, len(prefixes))
 
     def test_load_flow_packets_reads_flags_only_when_asked(self):
         import tempfile

@@ -185,21 +185,25 @@ def _hoeffding(n1, n2, alpha=ALERGIA_ALPHA):
     return np.sqrt(0.5 * np.log(2.0 / alpha)) * (1 / np.sqrt(n1) + 1 / np.sqrt(n2))
 
 
-def _compatible(node1, node2, alpha=ALERGIA_ALPHA):
-    """ALERGIA test: same next-symbol and termination probabilities."""
-    if node1.visits == 0 or node2.visits == 0:
-        return False
-    bound = _hoeffding(node1.visits, node2.visits, alpha)
-    symbols = set(node1.children) | set(node2.children) | {"#"}
-    for symbol in symbols:
+def _frequency_tests(node1, node2):
+    """(symbol, p1, p2) for every next symbol of either state, "#" for termination."""
+    tests = []
+    for symbol in sorted(set(node1.children) | set(node2.children)) + ["#"]:
         if symbol == "#":
             first, second = node1.final, node2.final
         else:
             first = node1.edge.get(symbol, 0)
             second = node2.edge.get(symbol, 0)
-        if abs(first / node1.visits - second / node2.visits) >= bound:
-            return False
-    return True
+        tests.append((symbol, first / node1.visits, second / node2.visits))
+    return tests
+
+
+def _compatible(node1, node2, alpha=ALERGIA_ALPHA):
+    """ALERGIA test: same next-symbol and termination probabilities."""
+    if node1.visits == 0 or node2.visits == 0:
+        return False
+    bound = _hoeffding(node1.visits, node2.visits, alpha)
+    return all(abs(p1 - p2) < bound for _, p1, p2 in _frequency_tests(node1, node2))
 
 
 def _fold_into(target, other):
@@ -241,31 +245,68 @@ class PDFA:
         return outgoing.get(symbol, (None, 0.0))
 
 
-def learn_pdfa(traces, alpha=ALERGIA_ALPHA):
-    """PTA from traces, then red-blue ALERGIA state merging."""
+def _copy_tree(root):
+    """An independent copy of a prefix tree; merging rewires the original in place."""
+    copy = _Node()
+    stack = [(root, copy)]
+    while stack:
+        source, target = stack.pop()
+        target.visits, target.final, target.edge = source.visits, source.final, dict(source.edge)
+        for symbol, child in source.children.items():
+            target.children[symbol] = _Node()
+            stack.append((child, target.children[symbol]))
+    return copy
+
+
+def _step(kind, red, blue, path, red_path, alpha):
+    """One red-blue step as plain data, read before the fold changes either state."""
+    tests = _frequency_tests(red, blue) if red.visits and blue.visits else []
+    bound = (_hoeffding(red.visits, blue.visits, alpha) if red.visits and blue.visits
+             else float("inf"))
+    return {"kind": kind, "path": path, "red_path": red_path, "red_visits": red.visits,
+            "blue_visits": blue.visits, "tests": tests, "bound": bound}
+
+
+def learn_pdfa(traces, alpha=ALERGIA_ALPHA, trace=None):
+    """PTA from traces, then red-blue ALERGIA state merging.
+
+    `trace`, when a list, receives ("pta", copy of the unmerged tree) and then one dict per
+    red-blue step, so a visualization can replay the learning. It never changes the result.
+    A state is named by its symbol path from the root in the unmerged tree.
+    """
     root = _Node()
-    for trace in traces:
+    for sequence in traces:
         node = root
         node.visits += 1
-        for symbol in trace:
+        for symbol in sequence:
             node.edge[symbol] = node.edge.get(symbol, 0) + 1
             node = node.children.setdefault(symbol, _Node())
             node.visits += 1
         node.final += 1
+    if trace is not None:
+        trace.append(("pta", _copy_tree(root)))
     red = [root]
+    paths = {id(root): ()}
     while True:
         fringe = [(parent, s, c) for parent in red
                   for s, c in sorted(parent.children.items()) if c not in red]
         if not fringe:
             break
         parent, symbol, blue = fringe[0]
+        path = paths[id(parent)] + (symbol,)
         for candidate in red:
             if _compatible(candidate, blue, alpha):
+                if trace is not None:
+                    trace.append(_step("merge", candidate, blue, path,
+                                       paths[id(candidate)], alpha))
                 parent.children[symbol] = candidate
                 _fold_into(candidate, blue)
                 break
         else:
+            if trace is not None:
+                trace.append(_step("promote", red[-1], blue, path, paths[id(red[-1])], alpha))
             red.append(blue)
+            paths[id(blue)] = path
     return PDFA(root)
 
 
@@ -472,29 +513,41 @@ class WindowedFrequencyScorer:
         self.last_when = float("-inf")
 
     def _expire(self, when):
-        """Drop visits older than the trailing window ending at `when`."""
+        """Drop visits older than the trailing window ending at `when`; return them."""
         oldest_allowed = when - self.forget_seconds
+        expired = []
         while self.visits and self.visits[0][0] < oldest_allowed:
-            _, key = self.visits.popleft()
+            expired.append(self.visits.popleft())
+            key = expired[-1][1]
             self.counts[key] -= 1
             if not self.counts[key]:
                 del self.counts[key]
+        return expired
 
-    def score(self, trace, when):
-        """Anomaly score of one trace observed at `when` seconds; higher is more anomalous."""
+    def score_terms(self, trace, when):
+        """Per visited state, the four terms of its score; and the visits expired first.
+
+        Terms are (log(test+1), -log(train+1), log(total_train+1), log(states_seen+1)), so
+        a state's contribution is their sum and the trace's score is the sum over states.
+        """
         when = float(when)
         if when < self.last_when:
             raise ValueError("Traces must arrive in time order.")
         self.last_when = when
-        self._expire(when)
-        total = 0.0
+        expired = self._expire(when)
+        terms = []
         for state in trace_states(self.pdfa, trace):
             key = id(state)
-            total += (np.log(self.counts[key] + 1) - np.log(self.train.get(key, 0) + 1)
-                      + np.log(self.total_train + 1) + np.log(len(self.counts) + 1))
+            terms.append((np.log(self.counts[key] + 1), -np.log(self.train.get(key, 0) + 1),
+                          np.log(self.total_train + 1), np.log(len(self.counts) + 1)))
             self.visits.append((when, key))
             self.counts[key] += 1
-        return float(total)
+        return terms, expired
+
+    def score(self, trace, when):
+        """Anomaly score of one trace observed at `when` seconds; higher is more anomalous."""
+        terms, _ = self.score_terms(trace, when)
+        return float(sum(map(sum, terms)))
 
 
 def frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds=None):
@@ -518,6 +571,17 @@ def frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds=None)
         if 0 <= window < n_windows:
             scores[window] = value if np.isnan(scores[window]) else max(scores[window], value)
     return scores
+
+def frequency_cutoff(holdout_scores, quantile=BENIGN_QUANTILE):
+    """Frequency-score cutoff flagging the top `quantile` of held-out benign; NaN ignored.
+
+    Frequency scores rise with anomaly, so the cut is the upper tail, unlike `score_cutoff`.
+    """
+    scores = np.asarray(holdout_scores, dtype=float)
+    if not np.isfinite(scores).any():
+        raise ValueError("No held-out benign frequency scores to calibrate the cutoff.")
+    return float(np.nanquantile(scores, 1 - quantile))
+
 
 def score_cutoff(holdout_scores, quantile=BENIGN_QUANTILE):
     """Trace-score cutoff that flags the worst `quantile` of held-out benign."""
