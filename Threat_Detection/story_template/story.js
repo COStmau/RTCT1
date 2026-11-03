@@ -4,7 +4,11 @@
 // Vendored D3: d3js.org v7.9.0, sha256 f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539
 (() => {
 "use strict";
-const S = window.STORY;
+// the page carries several vantages around one shared cluster; S is the selected one, laid
+// out as a single-vantage story (meta, learning, playback, cluster) so every act reads it alike
+const B = window.STORY;
+const VANTAGES = Object.keys(B.vantages);
+let S = null;
 const svg = d3.select("#svg");
 const panel = d3.select("#panel");
 const controls = d3.select("#controls");
@@ -20,7 +24,7 @@ const f1 = d3.format(".1f");
 const STATE_SLOTS = ["--s3", "--s4", "--s5", "--s6", "--s7", "--s2"];
 const stateColor = id => `var(${STATE_SLOTS[id] || "--other"})`;
 const PROTO_SLOTS = ["--s1", "--s2", "--s3"];
-const protocols = [...new Set(S.learning.symbols.map(s => s.proto))];
+let protocols = [];   // the selected vantage's, in its symbol order
 const protoColor = proto => {
   const i = protocols.indexOf(proto);
   return `var(${PROTO_SLOTS[i] || "--other"})`;
@@ -113,7 +117,7 @@ function defs() {
 
 // Lay the cluster out inside `box` and draw it into `g`. Returns element positions by id
 // so callers can draw on top (flows, taps). Everything is placed by rules over the bundle.
-function renderCluster(g, cluster, box, { focus = null, compact = false } = {}) {
+function renderCluster(g, cluster, box, { focus = null, compact = false, onTap = null } = {}) {
   const pos = new Map();
   const pad = compact ? 6 : 16;
   const rows = compact
@@ -274,12 +278,20 @@ function renderCluster(g, cluster, box, { focus = null, compact = false } = {}) 
     if (p.kind === "host") { tx = p.box.x + p.box.w - 14; ty = p.box.y + 14; }
     else if (p.kind === "pod") { tx = p.x + p.r * 0.72; ty = p.y - p.r * 0.72; }
     else if (p.kind === "network") { tx = box.x + box.w * (0.78 + 0.14 * networkTaps.indexOf(v) / Math.max(networkTaps.length, 1)); }
-    const isFocus = v.label === focus;
-    const tg = taps.append("g").attr("class", `tap ${isFocus ? "focus" : ""}`).attr("transform", `translate(${tx},${ty})`).datum(v);
+    const isFocus = v.label === focus, onPage = Boolean(B.vantages[v.label]);
+    const tg = taps.append("g")
+      .attr("class", `tap ${isFocus ? "focus" : ""} ${onPage ? "on-page" : "off-page"}`)
+      .attr("data-label", v.label).attr("transform", `translate(${tx},${ty})`).datum(v);
     if (isFocus) tg.append("circle").attr("class", "tap-halo").attr("r", compact ? 8 : 12);
     tg.append("circle").attr("class", "tap-dot").attr("r", compact ? 3.5 : 5);
+    // a wider invisible target, so a 5 px dot is easy to click
+    tg.append("circle").attr("class", "tap-hit").attr("r", compact ? 8 : 12);
     if (isFocus && !compact) tg.append("text").attr("class", "t-small halo").attr("x", 10).attr("y", -8).text(`listening: ${v.label}`);
-    hover(tg, d => `<div class="tt-title">capture tap: ${d.label}</div><div class="tt-row">${d.level}-level recording</div>`);
+    hover(tg, d => `<div class="tt-title">capture tap: ${d.label}</div><div class="tt-row">${d.level}-level recording</div>
+      <div class="tt-row">${d.label === focus ? "the tap this story replays"
+        : B.vantages[d.label] ? "click to replay the story from this tap"
+        : "not on this page: a bulk-transfer tap never sets a cutoff (rebuild with --allow-bulk)"}</div>`);
+    if (onTap && onPage && !isFocus) tg.on("click", (event, d) => { hideTip(); onTap(d.label); });
     if (isFocus) pos.set("__focus__", { x: tx, y: ty });
   }
   return { pos, edges, taps };
@@ -311,7 +323,8 @@ function actCluster() {
   const c = S.cluster;
   const focus = c.vantages.find(v => v.label === S.meta.vantage);
   const box = { x: 28, y: 20, w: w - 56, h: h - 40 };
-  renderCluster(svg.append("g"), c, box, { focus: S.meta.vantage });
+  renderCluster(svg.append("g"), c, box, { focus: S.meta.vantage, onTap: switchTo });
+  const absent = c.vantages.filter(v => !B.vantages[v.label]).map(v => v.label);
 
   const named = c.hosts.filter(h => h.name);
   const cp = c.hosts.find(h => h.name && h.roles.includes("control-plane"));
@@ -333,12 +346,18 @@ function actCluster() {
     ${cp ? `<p>The control plane is <b>${cp.name}</b> (${cp.ip}): it serves the API server${cp.roles.includes("nfs") ? " and the shared NFS storage" : ""}, so every node talks to it.</p>` : ""}
     <h2>Where this story listens</h2>
     <p><span class="mono">${S.meta.vantage}</span> is ${where}</p>
+    <p>This page carries <b>${VANTAGES.length} taps</b>. Click any other tap on the map, or pick one
+      at the top, and the learning and detection acts replay from there.${absent.length
+        ? ` Not on this page (drawn faint): ${absent.map(l => `<span class="mono">${l}</span>`).join(", ")}.
+            A bulk-transfer tap never sets a cutoff, so it is left out unless the page is built
+            with <span class="mono">--allow-bulk</span>.`
+        : ""}</p>
     <h2>Reading the map</h2>
     <div class="legend" style="flex-direction:column;align-items:flex-start">
       <span><i class="disc" style="background:color-mix(in srgb,var(--accent) 16%,var(--surface));border:1.5px solid var(--accent)"></i>pod named by its own capture</span>
       <span><i class="disc" style="background:color-mix(in srgb,var(--s7) 14%,var(--surface));border:1.5px solid var(--s7)"></i>host-network pod (no address of its own)</span>
       <span><i class="disc" style="background:var(--surface-2);border:1px solid var(--axis)"></i>pod seen only in traffic</span>
-      <span><i class="disc" style="background:var(--accent)"></i>the tap this story replays · other taps hollow</span>
+      <span><i class="disc" style="background:var(--accent)"></i>the tap this story replays · hollow taps switch to theirs</span>
       <span><i style="background:var(--muted);height:4px"></i>conversation, width by packets (log)</span>
     </div>
     <p style="margin-top:12px">Hover anything for its addresses, ports and packet counts.</p>`);
@@ -346,10 +365,8 @@ function actCluster() {
 
 // ---------------------------------------------------------------- act 2: learning
 
-const L = S.learning;
-const ptaById = new Map(L.pta.map(n => [n.id, n]));
-const stateOfPta = new Map();
-for (const s of L.pdfa.states) for (const id of s.pta_ids) stateOfPta.set(id, s.id);
+// the selected vantage's learning, and its prefix-tree indexes (set by selectVantage)
+let L = null, ptaById = null, stateOfPta = null;
 const learn = { step: 0, timer: null };   // step 0: tree built; k: after step k; N+1: machine
 
 function actLearning() {
@@ -678,8 +695,9 @@ const HEAT = ["--div-n3", "--div-n2", "--div-n1", "--div-0", "--div-p1", "--div-
 const HEAT_EDGES = [-2, -1, -0.4, 0.4, 1, 2];   // log2(visits in clock / visits expected)
 const heatColor = ratio => `var(${HEAT[d3.bisectRight(HEAT_EDGES, Math.log2(ratio))]})`;
 
+// view: "tap" replays one tap in full; "taps" lines the same scenario up across every tap
 const player = {
-  capture: 0, t: 0, playing: false, speed: 2, timer: null, last: null, listeners: [],
+  capture: 0, t: 0, view: "tap", playing: false, speed: 2, timer: null, last: null, listeners: [],
   on(name, fn) { this.listeners.push(fn); },
   emit() { for (const fn of this.listeners) fn(this.t); },
   play() {
@@ -713,12 +731,16 @@ function capture() {
     const c = S.playback.captures[i];
     const vt = [], vs = [];
     for (const tr of c.traces) for (const s of tr.states) { vt.push(tr.t); vs.push(s); }
-    // the held-out replay starts at its first held-out window; earlier seconds trained the model
-    const ws = S.meta.window_size;
-    const begin = i === 0 ? Math.floor(c.start_s / ws) * ws : 0;
-    prepared.set(i, { c, vt, vs, tt: c.traces.map(tr => tr.t), begin, end: c.duration_s });
+    const [begin, end] = replaySpan(c, i, S.meta.window_size);
+    prepared.set(i, { c, vt, vs, tt: c.traces.map(tr => tr.t), begin, end });
   }
   return prepared.get(i);
+}
+
+// [first, last] second a capture's replay shows, on its own clock. Capture 0 is the held-out
+// benign: it starts at its first held-out window, since the earlier seconds trained the model
+function replaySpan(c, i, ws) {
+  return [i === 0 ? Math.floor(c.start_s / ws) * ws : 0, c.duration_s];
 }
 
 function actDetection() {
@@ -726,6 +748,8 @@ function actDetection() {
   controls.html(`
     <select id="d-cap" aria-label="recording">${caps.map((c, i) =>
       `<option value="${i}" ${i === player.capture ? "selected" : ""}>${c.scenario}</option>`).join("")}</select>
+    <div class="seg" id="d-view" role="group" aria-label="view">${[["tap", "This tap"], ["taps", "Across taps"]].map(([v, text]) =>
+      `<button data-v="${v}" aria-pressed="${v === player.view}">${text}</button>`).join("")}</div>
     <button class="primary" id="d-play">▶ Play</button>
     <div class="seg" id="d-speed">${[1, 2, 4, 8].map(v =>
       `<button data-v="${v}" aria-pressed="${v === player.speed}">${v}×</button>`).join("")}</div>
@@ -733,6 +757,11 @@ function actDetection() {
     <span class="spacer"></span>
     <span class="readout">clock ${S.meta.forget_seconds} s · alert after ${S.meta.persistence} flagged windows in a row</span>`);
   d3.select("#d-cap").on("change", e => { player.pause(); player.capture = +e.target.value; player.t = capture().begin; rebuild(); });
+  d3.selectAll("#d-view button").on("click", function () {
+    player.view = this.dataset.v;
+    d3.selectAll("#d-view button").attr("aria-pressed", function () { return this.dataset.v === player.view; });
+    rebuild();
+  });
   d3.select("#d-play").on("click", () => player.playing ? player.pause() : player.play());
   d3.selectAll("#d-speed button").on("click", function () {
     player.speed = +this.dataset.v;
@@ -747,13 +776,17 @@ function rebuild() {
   defs();
   player.listeners = [];
   const { w, h } = size();
-  const top = { x: 24, y: 16, w: w * 0.62 - 24, h: h * 0.56 - 16 };
-  const inset = { x: w * 0.64, y: 34, w: w * 0.36 - 20, h: h * 0.56 - 40 };
-  const strip = { x: 70, y: h * 0.59, w: w - 100, h: h * 0.41 - 30 };
-  machineView(svg.append("g"), top);
-  clusterInset(svg.append("g"), inset);
-  scoreStrip(svg.append("g"), strip);
-  detectionPanel();
+  if (player.view === "taps") {
+    acrossTaps(svg.append("g"), { x: 20, y: 16, w: w - 40, h: h - 24 });
+  } else {
+    const top = { x: 24, y: 16, w: w * 0.62 - 24, h: h * 0.56 - 16 };
+    const inset = { x: w * 0.64, y: 34, w: w * 0.36 - 20, h: h * 0.56 - 40 };
+    const strip = { x: 70, y: h * 0.59, w: w - 100, h: h * 0.41 - 30 };
+    machineView(svg.append("g"), top);
+    clusterInset(svg.append("g"), inset);
+    scoreStrip(svg.append("g"), strip);
+    detectionPanel();
+  }
   window.onkeydown = e => {
     // keys belong to the playback only when nothing focusable has them
     const owner = e.target.closest && e.target.closest("button, input, select, textarea, a");
@@ -905,7 +938,7 @@ function clusterInset(g, box) {
   const extra = shownCapture.new_edges.length;
   g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", box.y - 14)
     .text(fit(`flows of the current trace${extra ? ` · ${extra} new (dashed)` : ""}`, box.w));
-  const { edges } = renderCluster(g, map, box, { focus: S.meta.vantage, compact: true });
+  const { edges } = renderCluster(g, map, box, { focus: S.meta.vantage, compact: true, onTap: switchTo });
   const halo = g.select(".tap.focus .tap-halo");
   // a host-network tap has no address of its own: its flows run on its node, so the pod
   // lights up whenever the node does
@@ -999,10 +1032,7 @@ function scoreStrip(g, box) {
   const shown = c.windows.filter(w => w.index * ws < end && (w.index + 1) * ws > begin);
   const wx = w => x(Math.max(begin, w.index * ws)) + 0.5;
   const ww = w => Math.max(x(Math.min(end, (w.index + 1) * ws)) - x(Math.max(begin, w.index * ws)) - 1, 1);
-  for (const [y, label, fill] of [
-      [band0, "SEQUENT", w => w.alert ? "var(--critical)" : w.flagged ? "var(--warning)"
-        : w.status === "nodata" ? "none" : w.status === "warmup" ? "var(--grid)" : "var(--surface-2)"],
-      [band1, "likelihood", w => w.likelihood_flag ? "var(--serious)" : w.status === "nodata" ? "none" : "var(--surface-2)"]]) {
+  for (const [y, label, fill] of [[band0, "SEQUENT", BAND_FILL.sequent], [band1, "likelihood", BAND_FILL.likelihood]]) {
     bands.append("text").attr("class", "t-small t-muted").attr("text-anchor", "end").attr("x", box.x - 6).attr("y", y + 7).text(label);
     bands.append("g").selectAll("rect").data(shown).join("rect")
       .attr("class", w => w.status === "nodata" ? "band-empty" : null)
@@ -1054,6 +1084,13 @@ function scoreStrip(g, box) {
     d3.select("#d-time").text(`${f1(t)} s / ${f1(end)} s`);
   });
 }
+
+// a window's fill in each detector's band, shared by the single-tap strip and the taps view
+const BAND_FILL = {
+  sequent: w => w.alert ? "var(--critical)" : w.flagged ? "var(--warning)"
+    : w.status === "nodata" ? "none" : w.status === "warmup" ? "var(--grid)" : "var(--surface-2)",
+  likelihood: w => w.likelihood_flag ? "var(--serious)" : w.status === "nodata" ? "none" : "var(--surface-2)",
+};
 
 const STATUS = {
   alert: { cls: "critical", text: "ALERT · sustained" },
@@ -1111,8 +1148,10 @@ function detectionPanel() {
       : `Its highest trace scores ${f1(peak)}, under the cutoff ${f1(c.cutoffs.windowed)}.`;
     const traceWindow = Math.floor(tr.t / ws);
     const stale = !w || traceWindow !== w.index;
-    const contributions = tr.visits.map(([clock, trained], i) => ({
-      state: tr.states[i], total: d3.sum(tr.terms[i]), clock, trained }));
+    // a page over its size limit drops per-state terms from the taps it did not open on
+    const detail = Array.isArray(tr.terms);
+    const contributions = detail ? tr.visits.map(([clock, trained], i) => ({
+      state: tr.states[i], total: d3.sum(tr.terms[i]), clock, trained })) : [];
     const maxC = d3.max(contributions, d => Math.abs(d.total)) || 1;
     const above = tr.windowed > c.cutoffs.windowed;
     const ref = c.cutoffs.cumulative_reference[traceWindow];
@@ -1129,11 +1168,13 @@ function detectionPanel() {
         ? `Walks ${tr.fell_off_at === 0 ? "no state" : "states " + tr.states.join(" → ")}, then <b>falls off</b>: benign traffic never took <span class="mono">${tr.symbols[tr.fell_off_at]}</span> from there. Likelihood takes the floor (${f2(tr.likelihood)}). A fall-off visits fewer states, so it <i>lowers</i> the frequency score: unseen behaviour is the likelihood detector's catch, not SEQUENT's.`
         : `Starts at 0, walks ${tr.states.join(" → ")}. Likelihood ${f2(tr.likelihood)} (cutoff ${f2(c.cutoffs.likelihood)}).`}</p>
       <h2>This trace scores ${f1(tr.windowed)} · ${above ? "over" : "under"} the cutoff</h2>
+      ${detail ? "" : "<p>This tap's per-state breakdown was dropped to keep the page under its size limit; its scores and verdicts are unchanged.</p>"}
       <div class="contrib">${contributions.map(d => `
         <span class="sid" style="background:${stateColor(d.state)}">${d.state}</span>
         <span class="bar" style="width:${Math.max(4, 100 * Math.abs(d.total) / maxC)}%"></span>
         <span class="num">${f1(d.total)}</span>
-        <span class="sub">${fmt(d.clock)} on its clock · ${fmt(d.trained)} in training${d.state === 0 ? ` (incl. ${fmt(starts)} trace starts)` : ""}</span>`).join("") || "<p>No state reached: nothing to count.</p>"}</div>
+        <span class="sub">${fmt(d.clock)} on its clock · ${fmt(d.trained)} in training${d.state === 0 ? ` (incl. ${fmt(starts)} trace starts)` : ""}</span>`).join("")
+        || (detail ? "<p>No state reached: nothing to count.</p>" : "")}</div>
       <p style="margin-top:8px">Each state walked into adds log(clock visits + 1) − log(training visits + 1),
         plus the training total and how many states are on the clock. A window is judged on its
         highest trace, so one trace over the line flags the whole second.</p>
@@ -1141,7 +1182,7 @@ function detectionPanel() {
       <dl class="kv">
         <dt>windowed</dt><dd>${f1(tr.windowed)} vs cutoff ${f1(c.cutoffs.windowed)} ${above ? "▲" : "✓"}</dd>
         <dt>cumulative</dt><dd>${f1(tr.cumulative)} vs benign ${ref === null || ref === undefined ? "— (older than the benign recording)" : `${f1(ref)} at this age ${tr.cumulative > ref ? "▲" : "✓"}`}</dd>
-        <dt>forgot now</dt><dd>${tr.expired.length} visit${tr.expired.length === 1 ? "" : "s"} left the clock</dd>
+        <dt>forgot now</dt><dd>${detail ? `${tr.expired.length} visit${tr.expired.length === 1 ? "" : "s"} left the clock` : "— (dropped with the breakdown)"}</dd>
       </dl>
       ${lostTime ? `<p style="margin-top:8px"><b>This is why it forgets.</b> An alert fired earlier and the
         windowed score has let it go, but the cumulative score is still above anything benign reached by
@@ -1150,6 +1191,154 @@ function detectionPanel() {
         compared with the whole benign recording at the same age. That reference includes the 70% the
         machine learned from. ${disclosure}</p>
       <h2>State fill · visits on the clock vs training rate</h2>${heatLegend}`);
+  });
+}
+
+// ---------------------------------------------------------------- act 3: across taps
+// The same scenario at every tap on the page, small multiples on one capture-time axis. The
+// taps recorded side by side, so each row is shifted by when its own first packet arrived;
+// each row's verdicts are that tap's, against that tap's own cutoffs.
+
+function tapRows(scenario) {
+  const rows = VANTAGES.map(label => {
+    const v = B.vantages[label];
+    const i = v.playback.captures.findIndex(c => c.scenario === scenario);
+    if (i < 0) return null;
+    const c = v.playback.captures[i], [begin, end] = replaySpan(c, i, v.meta.window_size);
+    return { label, v, i, c, begin, end };
+  }).filter(Boolean);
+  const origin = d3.min(rows, r => r.c.t0);
+  for (const r of rows) {
+    r.off = r.c.t0 - origin;
+    const ws = r.v.meta.window_size;
+    r.shown = r.c.windows.filter(w => (w.index + 1) * ws > r.begin && w.index * ws < r.end);
+    const alerts = r.shown.filter(w => w.alert);
+    r.alerts = alerts.length;
+    r.firstAlert = alerts.length ? r.off + alerts[0].index * ws : null;
+    r.unseen = r.shown.filter(w => w.likelihood_flag).length;
+    r.flagged = r.shown.filter(w => w.flagged).length;
+  }
+  return rows;
+}
+
+function acrossTaps(g, box) {
+  const { c: current } = capture();
+  const rows = tapRows(current.scenario);
+  const selected = rows.find(r => r.label === S.meta.vantage);
+  const left = box.x + 168, right = box.x + box.w - 118;
+  const x = d3.scaleLinear()
+    .domain([d3.min(rows, r => r.off + r.begin), d3.max(rows, r => r.off + r.end)])
+    .range([left, right]);
+  const top = box.y + 34, legendH = 40;
+  const rowH = Math.max(28, Math.min(64, (box.h - 34 - legendH - 28) / rows.length));
+  const bandA = Math.min(14, rowH * 0.32), bandB = Math.min(8, rowH * 0.18);
+
+  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", box.y + 4)
+    .text(fit(`${current.scenario} at ${rows.length} taps · one capture-time axis · each tap judged on its own cutoffs`, box.w));
+  g.append("text").attr("class", "t-small t-muted").attr("x", left).attr("y", top - 10).text("SEQUENT windows, likelihood below");
+  g.append("text").attr("class", "t-small t-muted").attr("text-anchor", "end").attr("x", box.x + box.w).attr("y", top - 10).text("alert windows");
+  g.append("g").attr("class", "grid").attr("transform", `translate(0,${top - 4})`)
+    .call(d3.axisBottom(x).ticks(10).tickSize(rows.length * rowH).tickFormat("")).call(s => s.select(".domain").remove());
+
+  rows.forEach((r, k) => {
+    const y = top + k * rowH, ws = r.v.meta.window_size, mine = r === selected;
+    const rg = g.append("g").attr("class", `tap-row ${mine ? "selected" : ""}`).attr("data-label", r.label);
+    rg.append("rect").attr("class", "tap-row-bg").attr("x", box.x).attr("y", y).attr("width", box.w)
+      .attr("height", rowH - 4).attr("rx", 6);
+    rg.append("text").attr("class", mine ? "t-title" : null).attr("x", box.x + 10).attr("y", y + rowH / 2 - 2).text(r.label);
+    rg.append("text").attr("class", "t-small t-muted").attr("x", box.x + 10).attr("y", y + rowH / 2 + 11)
+      .text(`${r.v.meta.level}${r.v.meta.calibration_warning ? " · inspection only" : ""}${mine ? " · replaying" : ""}`);
+    const yA = y + (rowH - 4 - bandA - bandB - 3) / 2, yB = yA + bandA + 3;
+    const wx = w => x(r.off + Math.max(r.begin, w.index * ws)) + 0.5;
+    const ww = w => Math.max(x(r.off + Math.min(r.end, (w.index + 1) * ws)) - x(r.off + Math.max(r.begin, w.index * ws)) - 1, 1);
+    for (const [yy, hh, fill] of [[yA, bandA, BAND_FILL.sequent], [yB, bandB, BAND_FILL.likelihood]]) {
+      rg.append("g").selectAll("rect").data(r.shown).join("rect")
+        .attr("class", w => w.status === "nodata" ? "band-empty" : null)
+        .attr("x", wx).attr("y", yy).attr("width", ww).attr("height", hh).attr("rx", 1.5).style("fill", fill);
+    }
+    rg.append("g").selectAll("text").data(r.shown.filter(w => w.released)).join("text")
+      .attr("text-anchor", "middle").attr("x", w => x(r.off + (w.index + 0.5) * ws)).attr("y", yA - 1)
+      .style("fill", "var(--good-ink)").style("font-size", "10px").style("font-weight", 700).text("✓");
+    rg.append("text").attr("class", r.alerts ? "t-title" : "t-small t-muted").attr("text-anchor", "end")
+      .attr("x", box.x + box.w - 10).attr("y", y + rowH / 2 + 3)
+      .style("fill", r.alerts ? "var(--critical)" : null)
+      .text(r.alerts ? `${r.alerts}` : "none");
+
+    // hover reads the window under the pointer; a click replays this tap from that moment
+    rg.append("rect").attr("x", left).attr("y", y).attr("width", right - left).attr("height", rowH - 4)
+      .attr("fill", "transparent").style("cursor", "pointer")
+      .on("pointermove", e => {
+        const at = x.invert(d3.pointer(e)[0]), own = at - r.off, w = r.c.windows[Math.floor(own / ws)];
+        showTip(e, `<div class="tt-title">${r.label} · ${f1(at)} s</div>
+          <div class="tt-row">its own clock ${f1(own)} s · window ${Math.floor(own / ws)}</div>
+          ${w && own >= r.begin && own <= r.end ? `<div class="tt-row">${STATUS[w.status].text.toLowerCase()}</div>
+            <div class="tt-row">peak ${w.peak === null ? "—" : f1(w.peak)} vs cutoff ${f1(r.c.cutoffs.windowed)}</div>`
+            : `<div class="tt-row">outside this tap's recording</div>`}
+          <div class="tt-row">click to replay this tap from here</div>`);
+      })
+      .on("pointerleave", hideTip)
+      .on("click", e => {
+        hideTip();
+        const own = x.invert(d3.pointer(e)[0]) - r.off;
+        player.view = "tap";
+        if (r !== selected) selectVantage(r.label);
+        player.capture = r.i;
+        prepared.clear();
+        player.t = Math.max(r.begin, Math.min(r.end, own));
+        show("detection");
+      });
+  });
+
+  const bottom = top + rows.length * rowH;
+  g.append("g").attr("class", "axis").attr("transform", `translate(0,${bottom})`)
+    .call(d3.axisBottom(x).ticks(10).tickFormat(v => `${v}s`).tickSize(3));
+  const swatch = (fill, cls = null) => item => item.append("rect").attr("class", cls).attr("x", 0).attr("y", -9)
+    .attr("width", 18).attr("height", 9).attr("rx", 2).style("fill", fill);
+  legendRow(g.append("g").attr("transform", `translate(${left},${bottom + 34})`), [
+    ["flagged", swatch("var(--warning)")],
+    [`alert: ${S.meta.persistence}+ in a row`, swatch("var(--critical)")],
+    ["unseen behaviour (likelihood)", swatch("var(--serious)")],
+    ["no trace ended", swatch("none", "band-empty")],
+    ["clock warming up", swatch("var(--grid)")],
+    ["released", item => item.append("text").attr("x", 4).attr("y", 0)
+      .style("fill", "var(--good-ink)").style("font-weight", 700).text("✓")],
+  ], right - left);
+
+  // the replaying tap's playhead, carried onto the shared axis
+  const head = g.append("line").attr("class", "playhead").attr("y1", top - 4).attr("y2", bottom);
+  player.on("tick", t => {
+    const at = selected ? selected.off + t : null;
+    head.attr("x1", at === null ? -10 : x(at)).attr("x2", at === null ? -10 : x(at));
+    d3.select("#d-time").text(selected ? `${f1(at)} s on the shared axis` : "");
+  });
+  tapsPanel(current.scenario, rows);
+}
+
+function tapsPanel(scenario, rows) {
+  const spread = d3.max(rows, r => r.off);
+  const order = rows.slice().sort((a, b) => (a.firstAlert ?? Infinity) - (b.firstAlert ?? Infinity) || d3.ascending(a.label, b.label));
+  const heard = rows.filter(r => r.alerts);
+  panel.html(`
+    <h2>${scenario} · every tap</h2>
+    <p class="big">${heard.length} of ${rows.length} taps raise a sustained alert${heard.length
+      ? `; the first at <b>${heard.length ? order[0].label : ""}</b>, ${f1(order[0].firstAlert)} s in` : ""}.</p>
+    <p>Each row is one tap's replay of the same recording. Time is shared: 0 s is the first packet
+      any of these taps saw, and the taps started up to ${f1(spread)} s apart. Each tap learned its own
+      machine and is judged on <b>its own</b> cutoffs, so a row says what that tap would have reported.</p>
+    <table class="taps">
+      <thead><tr><th>tap</th><th>first alert</th><th>alerts</th><th>unseen</th></tr></thead>
+      <tbody>${order.map(r => `<tr class="${r.label === S.meta.vantage ? "selected" : ""}" data-label="${r.label}">
+        <td class="mono">${r.label}${r.v.meta.calibration_warning ? " ⚠" : ""}</td>
+        <td>${r.firstAlert === null ? "—" : `${f1(r.firstAlert)} s`}</td>
+        <td>${r.alerts}</td><td>${r.unseen}</td></tr>`).join("")}</tbody>
+    </table>
+    <p style="margin-top:10px">Counts are windows of ${S.meta.window_size} s. <i>Unseen</i> windows hold a
+      trace benign never produced (the likelihood detector). Hover a row for a window's verdict; click it
+      to replay that tap from that moment.</p>
+    ${rows.some(r => r.v.meta.calibration_warning) ? `<p style="font-size:12.5px">⚠ a bulk-transfer tap: its cutoff is not trusted, so its row is for inspection only.</p>` : ""}`);
+  panel.selectAll("tr[data-label]").style("cursor", "pointer").on("click", function () {
+    const label = this.dataset.label;
+    if (label !== S.meta.vantage) { selectVantage(label); show("detection"); }
   });
 }
 
@@ -1171,6 +1360,40 @@ function show(act) {
   try { localStorage.setItem("story-act", act); } catch (e) { /* storage may be blocked */ }
 }
 
+// Point every act at one vantage. The replay keeps its scenario and, through the taps'
+// shared timebase, its moment in the recording, when the new tap has that scenario.
+function selectVantage(label) {
+  const before = S ? S.playback.captures[player.capture] : null;
+  const beforeT = player.t;
+  S = { ...B.vantages[label], cluster: B.cluster };
+  L = S.learning;
+  ptaById = new Map(L.pta.map(n => [n.id, n]));
+  stateOfPta = new Map();
+  for (const s of L.pdfa.states) for (const id of s.pta_ids) stateOfPta.set(id, s.id);
+  protocols = [...new Set(L.symbols.map(s => s.proto))];
+  learn.step = 0;
+  prepared.clear();
+  const same = before ? S.playback.captures.findIndex(c => c.scenario === before.scenario) : -1;
+  player.capture = Math.max(same, 0);
+  player.t = same >= 0 ? beforeT + before.t0 - S.playback.captures[same].t0 : capture().begin;
+  d3.select("#vantage").property("value", label);
+  d3.select("#subtitle").text(`${S.meta.vantage} · ${S.meta.trace_len}-flow traces · `
+    + `${S.meta.forget_seconds} s anomaly clock · built ${S.meta.generated.slice(0, 10)}`);
+  try { localStorage.setItem("story-vantage", label); } catch (e) { /* storage may be blocked */ }
+}
+
+function switchTo(label) {
+  if (!B.vantages[label] || label === S.meta.vantage) return;
+  stopLearn();
+  player.pause();
+  selectVantage(label);
+  show(currentAct);
+}
+window.STORY_SWITCH = switchTo;
+
+d3.select("#vantage").html(VANTAGES.map(label =>
+  `<option value="${label}">${label}${B.vantages[label].meta.calibration_warning ? " (inspection only)" : ""}</option>`).join(""))
+  .on("change", e => switchTo(e.target.value));
 d3.selectAll(".acts button").on("click", function () { show(this.dataset.act); });
 d3.select("#theme").on("click", () => {
   const root = document.documentElement;
@@ -1178,14 +1401,17 @@ d3.select("#theme").on("click", () => {
     : window.matchMedia("(prefers-color-scheme: dark)").matches;
   root.dataset.theme = dark ? "light" : "dark";
 });
-d3.select("#subtitle").text(`${S.meta.vantage} · ${S.meta.trace_len}-flow traces · `
-  + `${S.meta.forget_seconds} s anomaly clock · built ${S.meta.generated.slice(0, 10)}`);
 let resizeTimer = null;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => show(currentAct), 150);
 });
-let start = "cluster";
-try { start = new URLSearchParams(location.search).get("act") || localStorage.getItem("story-act") || start; } catch (e) { /* ignore */ }
+let start = "cluster", tap = B.selected;
+try {
+  const query = new URLSearchParams(location.search);
+  start = query.get("act") || localStorage.getItem("story-act") || start;
+  tap = query.get("vantage") || localStorage.getItem("story-vantage") || tap;
+} catch (e) { /* ignore */ }
+selectVantage(B.vantages[tap] ? tap : B.selected);
 show(ACTS[start] ? start : "cluster");
 })();

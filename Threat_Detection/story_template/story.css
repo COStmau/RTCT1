@@ -79,6 +79,11 @@ body {
 .acts button[aria-selected="true"] { background: var(--surface); color: var(--ink);
                                      box-shadow: var(--shadow); }
 .acts button[aria-selected="true"] b { background: var(--accent); color: #fff; }
+.pick { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--ink-2);
+        font-size: 12.5px; }
+.pick select { font: inherit; font-size: 14px; color: var(--ink); background: var(--surface-2);
+               border: 1px solid var(--ring); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+.pick + .acts { margin-left: 0; }
 .ghost { border: 1px solid var(--ring); background: transparent; color: var(--ink-2);
          border-radius: 8px; width: 34px; height: 34px; cursor: pointer; font-size: 16px; }
 
@@ -167,6 +172,10 @@ svg .axis text { fill: var(--muted); font-size: 10.5px; font-variant-numeric: ta
 .tap circle.tap-dot { fill: var(--surface); stroke: var(--ink-2); stroke-width: 1.5px; }
 .tap.focus circle.tap-dot { fill: var(--accent); stroke: var(--accent); }
 .tap .tap-halo { fill: none; stroke: var(--accent); stroke-width: 2px; opacity: .35; }
+.tap .tap-hit { fill: transparent; }
+.tap.on-page:not(.focus) { cursor: pointer; }
+.tap.on-page:not(.focus):hover circle.tap-dot { stroke: var(--accent); stroke-width: 2.5px; }
+.tap.off-page { opacity: .4; }
 
 .pta-rect { stroke: var(--surface); stroke-width: 0.5px; transition: fill .45s, fill-opacity .45s; }
 .state-circle { stroke: var(--surface); stroke-width: 2px; }
@@ -229,3 +238,15 @@ svg .axis text { fill: var(--muted); font-size: 10.5px; font-variant-numeric: ta
 .link.new { stroke: var(--critical); stroke-opacity: .45; stroke-dasharray: 4 3; }
 .link.new.hot { stroke-opacity: 1; }
 .pod.hot { stroke: var(--accent); stroke-width: 3px; }
+
+/* across taps */
+.tap-row-bg { fill: transparent; }
+.tap-row:hover .tap-row-bg { fill: var(--surface-2); }
+.tap-row.selected .tap-row-bg { fill: color-mix(in srgb, var(--accent) 8%, transparent);
+                                stroke: color-mix(in srgb, var(--accent) 40%, transparent); }
+table.taps { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+table.taps th { text-align: left; color: var(--ink-2); font-weight: 600; padding: 4px 6px;
+                border-bottom: 1px solid var(--ring); }
+table.taps td { padding: 4px 6px; border-bottom: 1px solid var(--grid); }
+table.taps tr.selected td { background: color-mix(in srgb, var(--accent) 8%, transparent); font-weight: 600; }
+table.taps tbody tr:hover td { background: var(--surface-2); }

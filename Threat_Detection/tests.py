@@ -1979,6 +1979,83 @@ class StoryBundleChecks(unittest.TestCase):
         merged = [i for state in learning["pdfa"]["states"] for i in state["pta_ids"]]
         self.assertEqual(sorted(merged), sorted(ids))
 
+    def two_vantages(self):
+        other = flow_capture(vary=True, start=1003.0)
+        inputs = {"pod-lidar": (self.benign, {"flood": self.attack}),
+                  "pod-nginx": (other, {"flood": flow_capture(burst=(30, 35), start=1002.0)})}
+        captures = {"pod-lidar": self.benign, "pod-nginx": other}
+        return story.build_stories(inputs, captures, selected="pod-nginx"), inputs, captures
+
+    def test_vantage_block_is_build_story_for_that_vantage(self):
+        bundle, inputs, captures = self.two_vantages()
+        self.assertEqual(list(bundle["vantages"]), ["pod-lidar", "pod-nginx"])
+        for vantage, (benign, targets) in inputs.items():
+            alone = story.build_story(benign, targets, captures, vantage)
+            block = bundle["vantages"][vantage]
+            self.assertEqual(set(block), set(story.VANTAGE_PARTS))
+            for part in story.VANTAGE_PARTS:
+                got, expected = json.loads(story.to_json(block[part])), json.loads(story.to_json(alone[part]))
+                if part == "meta":
+                    got.pop("generated"), expected.pop("generated")
+                self.assertEqual(got, expected, f"{vantage} {part}")
+
+    def test_cluster_is_shared_once(self):
+        bundle, _, captures = self.two_vantages()
+        self.assertEqual(json.loads(story.to_json(bundle["cluster"])),
+                         json.loads(story.to_json(cluster.infer_cluster(captures))))
+        self.assertTrue(all("cluster" not in block for block in bundle["vantages"].values()))
+        self.assertEqual(bundle["selected"], "pod-nginx")
+        self.assertEqual(bundle["trimmed"], [])
+
+    def test_captures_carry_their_first_packet_time(self):
+        """Taps record side by side; the page lines one scenario up across them on t0."""
+        bundle, inputs, _ = self.two_vantages()
+        for vantage, (benign, targets) in inputs.items():
+            held, flood = bundle["vantages"][vantage]["playback"]["captures"]
+            self.assertAlmostEqual(held["t0"], benign["ts"].min())
+            self.assertAlmostEqual(flood["t0"], targets["flood"]["ts"].min())
+
+    def test_trim_drops_detail_only_from_other_vantages(self):
+        bundle, _, _ = self.two_vantages()
+        trimmed = story.trim(bundle, "pod-nginx")
+        self.assertEqual(trimmed["trimmed"], ["pod-lidar"])
+        for vantage, block in trimmed["vantages"].items():
+            for capture, original in zip(block["playback"]["captures"],
+                                         bundle["vantages"][vantage]["playback"]["captures"]):
+                for trace, full in zip(capture["traces"], original["traces"]):
+                    dropped = vantage != "pod-nginx"
+                    self.assertEqual("terms" in trace, not dropped)
+                    self.assertEqual("expired" in trace, not dropped)
+                    # scores, states and visits stay, so every verdict still reads the same
+                    self.assertEqual({k: v for k, v in full.items() if k not in story.TRIMMED_KEYS},
+                                     {k: v for k, v in trace.items() if k not in story.TRIMMED_KEYS})
+                self.assertEqual(capture["windows"], original["windows"])
+        self.assertIn("terms", bundle["vantages"]["pod-lidar"]["playback"]["captures"][0]["traces"][0])
+
+    def test_page_over_the_limit_is_trimmed_then_refused(self):
+        import tempfile
+        bundle, _, _ = self.two_vantages()
+        full = len(story.page_html(bundle).encode("utf-8"))
+        out = story.write_html(bundle, Path(tempfile.mkdtemp()) / "page.html", limit=full - 1)
+        self.assertLess(out.stat().st_size, full)
+        self.assertEqual(page_bundle(out)["trimmed"], ["pod-lidar"])
+        with self.assertRaisesRegex(ValueError, "fewer --vantages"):
+            story.write_html(bundle, Path(tempfile.mkdtemp()) / "page.html", limit=1000)
+
+    def test_one_vantage_story_is_drawn_as_a_one_tap_page(self):
+        import tempfile
+        out = story.write_html(self.story, Path(tempfile.mkdtemp()) / "page.html")
+        parsed = page_bundle(out)
+        self.assertEqual(list(parsed["vantages"]), ["pod-lidar"])
+        self.assertEqual(parsed["selected"], "pod-lidar")
+
+
+def page_bundle(path):
+    """The bundle a written page carries, parsed back from its inline script."""
+    import re
+    page = Path(path).read_text(encoding="utf-8")
+    return json.loads(re.search(r"window\.STORY = (.*?);\n", page, re.S).group(1))
+
 
 class StoryEntryChecks(unittest.TestCase):
     """The page is reachable from the menu and the CLI, from the manifest alone."""
@@ -2046,6 +2123,48 @@ class StoryEntryChecks(unittest.TestCase):
         written = story.main(["--vantage", "pod-lidar", "--out", str(out)], manifest=self.manifest())
         self.assertEqual(written, out)
         self.assertIn("window.STORY = ", out.read_text())
+
+    def test_main_draws_every_steady_vantage_by_default(self):
+        import tempfile
+        out = story.main(["--out", str(Path(tempfile.mkdtemp()) / "story.html")],
+                         manifest=self.manifest())
+        bundle = page_bundle(out)
+        self.assertEqual(list(bundle["vantages"]), ["pod-lidar", "pod-nginx"])   # camera unusable
+        self.assertEqual(bundle["selected"], story.DEFAULT_VANTAGE)
+        scenarios = lambda v: [c["scenario"] for c in bundle["vantages"][v]["playback"]["captures"]]
+        self.assertEqual(scenarios("pod-nginx"), [story.HELD_OUT, "lidar attack"])
+        self.assertLess(out.stat().st_size, story.PAGE_LIMIT)
+
+    def test_bulk_vantages_are_left_out_by_default(self):
+        import tempfile
+        bulk = sorted(evaluation.BULK_LABELS)[0]
+        manifest = self.manifest()
+        manifest.loc[manifest["label"].eq("pod-nginx"), "label"] = bulk
+        captures = story.benign_captures(manifest)
+        self.assertEqual(story.steady_vantages(captures), ["pod-lidar"])
+        self.assertEqual(story.steady_vantages(captures, allow_bulk=True), sorted(["pod-lidar", bulk]))
+        out = Path(tempfile.mkdtemp()) / "story.html"
+        self.assertEqual(list(page_bundle(story.main(["--out", str(out)], manifest=manifest))["vantages"]),
+                         ["pod-lidar"])
+        with_bulk = page_bundle(story.main(["--out", str(out), "--allow-bulk"], manifest=manifest))
+        self.assertIn("bulk", with_bulk["vantages"][bulk]["meta"]["calibration_warning"])
+        with self.assertRaisesRegex(ValueError, "bulk"):
+            story.main(["--out", str(out), "--vantages", "pod-lidar", bulk], manifest=manifest)
+
+    def test_opening_vantage_joins_an_explicit_list(self):
+        import tempfile
+        out = story.main(["--out", str(Path(tempfile.mkdtemp()) / "story.html"),
+                          "--vantages", "pod-lidar", "--vantage", "pod-nginx"],
+                         manifest=self.manifest())
+        bundle = page_bundle(out)
+        self.assertEqual(list(bundle["vantages"]), ["pod-lidar", "pod-nginx"])
+        self.assertEqual(bundle["selected"], "pod-nginx")
+
+    def test_cluster_captures_are_loaded_once_for_every_vantage(self):
+        captures = story.benign_captures(self.manifest())
+        benign, _, shared = story.story_inputs(self.manifest(), "pod-nginx", cluster_captures=captures)
+        self.assertIs(shared, captures)
+        self.assertIs(benign, captures["pod-nginx"])
 
 
 if __name__ == "__main__":

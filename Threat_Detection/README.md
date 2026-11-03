@@ -46,7 +46,7 @@ these as documented; they also run on their own.
 | `feature_value.py` | Per-feature value: threshold-free separation (auc) and detection at a 5% benign budget. |
 | `statemachine.py` | PDFA anomaly detection after Cao et al. (ARES 2022): packet flows to symbols, ALERGIA state merging, trace likelihood flags. A second detection method; `demo.py` item 3 is its presentation. `--flags` adds TCP SYN/RST presence to the symbol; default is the old alphabet. |
 | `flag_scores.py` | Per-window anomaly scores under the plain and flag alphabets, plus AUROC and matched-rate detection per stratum. Prints the pre-registered verdict. |
-| `story.py` | The state machine as one interactive page, `outputs/statemachine_story.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). Self-contained; opens offline. `demo.py` item 10. The renderer is `story_template/`. Bulk-transfer vantages (`evaluation.BULK_LABELS`) never set a cutoff, so they are refused unless `--allow-bulk`, and the page then marks its verdicts as inspection only. |
+| `story.py` | The state machine as one interactive page, `outputs/statemachine_story.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). One page carries every steady capture tap (`--vantages` to choose; `--vantage` picks the one it opens on): click a tap on the map or use the header picker to switch the learning and detection acts, and Act 3's *Across taps* view lines one scenario up at every tap on a shared capture-time axis. Self-contained (about 3 MB for the 8 steady taps; past 15 MB the other taps' per-trace breakdown is dropped); opens offline. `demo.py` item 10. The renderer is `story_template/`. Bulk-transfer vantages (`evaluation.BULK_LABELS`) never set a cutoff, so they are left out unless `--allow-bulk`, and the page then marks their verdicts as inspection only. |
 
 **Supporting files**
 
@@ -99,7 +99,7 @@ Underneath the menu, the same commands run directly:
 .venv/bin/python statemachine.py                      # PDFA sweep, 42 rows, about 13 seconds
 .venv/bin/python statemachine.py --method ptcp --out statemachine_sweep_ptcp.csv
 .venv/bin/python flag_scores.py                       # both alphabets' window scores, AUROC, verdict chart
-.venv/bin/python story.py                             # interactive page; --vantage pod-nginx for another tap
+.venv/bin/python story.py                             # interactive page, every steady tap; --vantage pod-nginx opens on it
 ```
 
 `sweep.py` writes `outputs/sweep_summary.png` and `outputs/detection_gap.png`; `flag_scores.py`
