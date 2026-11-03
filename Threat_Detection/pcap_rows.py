@@ -8,6 +8,7 @@ SPONSOR_QUIRKS (each one copied deliberately, each pinned by a test):
   - SLL2 frames (the tcp captures) leave eth_src, eth_dst and eth_type blank.
   - A raw IP packet stored under an Ethernet interface is read as Ethernet: its eth_type is
     two bytes of the source address (0xc0a8 for 192.168.x.x) and its IP columns stay blank.
+  - An 802.3 frame (type field <= 1500, a length) keeps its MACs but leaves eth_type blank.
   - icmp_type and icmp_code are blank when their value is 0 (echo reply prints no type).
   - An ICMP error message takes its ports, TCP flags and udp_length from the packet it
     quotes, so a port-unreachable for :8080 counts as HTTP. tcp_payload_len stays blank.
@@ -39,6 +40,7 @@ APP_PORTS = {"is_dns": 53, "is_http": 8080, "is_https": 443}
 ICMP_ERRORS = {1: {3, 4, 5, 11, 12}, 58: {1, 2, 3, 4}}   # message types that quote a packet
 LINK_HEADER = {1: 14, 276: 20}
 IPV4, IPV6, ARP = 0x0800, 0x86DD, 0x0806
+MAX_8023_LENGTH = 1500             # a type field at or below this is an 802.3 frame length
 
 
 class _Short(Exception):
@@ -81,7 +83,9 @@ def dissect(frame):
     try:
         if frame.linktype == 1:
             dst, src, ethertype = _take(data, 0, ">6s6sH")
-            row.update(eth_src=_mac(src), eth_dst=_mac(dst), eth_type=f"0x{ethertype:04x}")
+            row.update(eth_src=_mac(src), eth_dst=_mac(dst))
+            if ethertype > MAX_8023_LENGTH:
+                row["eth_type"] = f"0x{ethertype:04x}"
         else:
             ethertype = _take(data, 0, ">H")[0]
         offset = LINK_HEADER[frame.linktype]

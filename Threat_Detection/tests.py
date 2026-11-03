@@ -1579,6 +1579,12 @@ class PcapRowChecks(unittest.TestCase):
         self.assertEqual((row["ip_version"], row["src_ip"], row["proto"], row["eth_type"]),
                          (None, None, None, "0x0806"))
 
+    def test_ieee_802_3_length_field_is_not_an_ethertype(self):
+        # benign node-child1-ptcp.csv frame 3587: an LLC frame whose type field is a length
+        row = self.row(_ether(bytes(38), 0x0026, src="d2:8a:f5:39:9d:83", dst="ff:ff:ff:ff:ff:ff"))
+        self.assertEqual((row["eth_src"], row["eth_dst"], row["eth_type"]),
+                         ("d2:8a:f5:39:9d:83", "ff:ff:ff:ff:ff:ff", None))
+
     def test_raw_ip_under_ethernet_blanks_ip_columns(self):
         packet = _ipv4(_udp(1, 2, bytes(360)), 17, "192.168.50.22", "192.168.50.140")
         row = self.row(packet)
@@ -1644,6 +1650,61 @@ class PcapRowChecks(unittest.TestCase):
         target = Path(tempfile.mkdtemp()) / "x.csv"
         result = pcap_rows.write_capture_rows(_capture_file(blob[:-10]), target)
         self.assertEqual(result, {"rows": 1, "warnings": ["truncated after frame 1"]})
+
+
+# --- The converter against the sponsor's own CSVs, on the four smallest captures ---------
+
+def _kubedata():
+    """The dataset root from local_paths, or None when this machine has no copy."""
+    try:
+        import local_paths
+    except ImportError:
+        return None
+    root = Path(getattr(local_paths, "KUBEDATA_ROOT", "") or "/nonexistent")
+    return root if root.is_dir() else None
+
+
+SMALL_CAPTURES = [("injection attack", "pod-nginx-tcp"), ("injection attack", "pod-nginx-ptcp"),
+                  ("benign", "pod-nginx-tcp"), ("benign", "pod-nginx-ptcp")]
+
+
+def _sponsor_pair(scenario, name):
+    root = _kubedata() / scenario
+    (pcap,) = (root / "pcapng files").rglob(f"{name}.pcapng")
+    (csv_path,) = (root / "csv files").rglob(f"{name}.csv")
+    return pcap, csv_path
+
+
+@unittest.skipUnless(_kubedata(), "KUBEDATA_ROOT not set")
+class PcapCorpusChecks(unittest.TestCase):
+    def test_small_capture_matches_sponsor_csv(self):
+        import csv
+        import pcap_rows
+        for scenario, name in SMALL_CAPTURES:
+            with self.subTest(capture=f"{scenario}/{name}"):
+                pcap, csv_path = _sponsor_pair(scenario, name)
+                with open(csv_path, newline="") as handle:
+                    theirs = list(csv.reader(handle))
+                warnings = []
+                ours = [[pcap_rows.format_cell(v) for v in row]
+                        for row in pcap_rows.capture_rows(pcap, warnings)]
+                self.assertEqual(theirs[0], pcap_rows.COLUMNS)
+                self.assertEqual((len(ours), warnings), (len(theirs) - 1, []))
+                mismatches = [(mine[0], column, a, b)
+                              for mine, sponsor in zip(ours, theirs[1:])
+                              for column, a, b in zip(pcap_rows.COLUMNS, mine, sponsor) if a != b]
+                self.assertEqual(mismatches[:5], [], f"{len(mismatches)} cells differ")
+
+    def test_small_capture_windows_match(self):
+        import tempfile
+        import pcap_rows
+        for scenario, name in SMALL_CAPTURES:
+            with self.subTest(capture=f"{scenario}/{name}"):
+                pcap, csv_path = _sponsor_pair(scenario, name)
+                regenerated = Path(tempfile.mkdtemp()) / f"{name}.csv"
+                pcap_rows.write_capture_rows(pcap, regenerated)
+                pd.testing.assert_frame_equal(make_windows(data_io.load_capture(str(regenerated))),
+                                              make_windows(data_io.load_capture(str(csv_path))))
 
 
 if __name__ == "__main__":
