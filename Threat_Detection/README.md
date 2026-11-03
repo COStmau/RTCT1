@@ -46,6 +46,8 @@ these as documented; they also run on their own.
 | `feature_value.py` | Per-feature value: threshold-free separation (auc) and detection at a 5% benign budget. |
 | `statemachine.py` | PDFA anomaly detection after Cao et al. (ARES 2022): packet flows to symbols, ALERGIA state merging, trace likelihood flags. A second detection method; `demo.py` item 3 is its presentation. `--flags` adds TCP SYN/RST presence to the symbol; default is the old alphabet. |
 | `flag_scores.py` | Per-window anomaly scores under the plain and flag alphabets, plus AUROC and matched-rate detection per stratum. Prints the pre-registered verdict. |
+| `windowed_scores.py` | The story page's detector, the windowed SEQUENT score, on every stratum, calibrated exactly as the page is. Quotes the windows each cutoff rests on and the realised benign rate beside every number. Prints the root-count verdict. |
+| `cv_calibration.py` | Cross-validated calibration of the windowed score (every benign window scored out of fold) against the split. Prints the pre-registered verdict: drop, so the split stays. |
 | `story.py` | The state machine as one interactive page, `outputs/statemachine_story.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). One page carries every steady capture tap (`--vantages` to choose; `--vantage` picks the one it opens on): click a tap on the map or use the header picker to switch the learning and detection acts, and Act 3's *Across taps* view lines one scenario up at every tap on a shared capture-time axis. Self-contained (about 3 MB for the 8 steady taps; past 15 MB the other taps' per-trace breakdown is dropped); opens offline. `demo.py` item 10. The renderer is `story_template/`. Bulk-transfer vantages (`evaluation.BULK_LABELS`) never set a cutoff, so they are left out unless `--allow-bulk`, and the page then marks their verdicts as inspection only. Each cutoff shows how many held-out windows it rests on and how often it actually flags them; capture text is HTML-escaped in the bundle. |
 
 **Supporting files**
@@ -55,6 +57,7 @@ these as documented; they also run on their own.
 | `tests.py` | All unit tests. |
 | `evaluation.py` | How a result is judged, in one place: the 70/30 split, the six bulk-transfer files that never calibrate, and the warm-up window. |
 | `flag_verdict.py` | The keep-or-drop rule for the flag alphabet, committed before the measurement, with `decide()` applying it. |
+| `root_verdict.py`, `cv_verdict.py` | The same kind of rule for the start-state training count (kept: entries) and for cross-validated calibration (dropped). |
 | `local_paths.py` | Your local dataset paths. Not committed; copy `local_paths.example.py` and fill it in. Only the entry points read it. |
 | `requirements.txt` | The pinned runtime: Python 3.11 with numpy, pandas, matplotlib and scikit-learn at the versions the numbers were measured under. |
 | `PROGRESS.md` | Why the design is what it is: decisions, retractions, what is not claimed, what is next. |
@@ -91,7 +94,7 @@ The menu, in order:
 Underneath the menu, the same commands run directly:
 
 ```bash
-.venv/bin/python -m unittest tests                    # 177 tests
+.venv/bin/python -m unittest tests                    # 203 tests
 .venv/bin/python sweep.py                             # all 88 captures, about 8 seconds
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv
 .venv/bin/python compare.py
@@ -99,6 +102,8 @@ Underneath the menu, the same commands run directly:
 .venv/bin/python statemachine.py                      # PDFA sweep, 42 rows, about 13 seconds
 .venv/bin/python statemachine.py --method ptcp --out statemachine_sweep_ptcp.csv
 .venv/bin/python flag_scores.py                       # both alphabets' window scores, AUROC, verdict chart
+.venv/bin/python windowed_scores.py                   # the windowed SEQUENT score on every stratum
+.venv/bin/python cv_calibration.py                    # cross-validated calibration and its verdict
 .venv/bin/python story.py                             # interactive page, every steady tap; --vantage pod-nginx opens on it
 ```
 
