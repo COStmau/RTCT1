@@ -52,9 +52,11 @@ function symbolParts(symbol) {
 function binText(kind, bin) {
   const edges = S.learning.bins[kind];
   const index = +String(bin).slice(1);
-  if (!edges || !(index >= 0) || index + 1 >= edges.length) return bin;
   const unit = kind === "bytes" ? " B" : " s";
-  const show = v => kind === "bytes" ? fmt(Math.round(v)) : (v < 0.01 ? v.toExponential(1) : f2(v));
+  const show = v => kind === "bytes" ? fmt(Math.round(v)) : (v < 0.01 && v > 0 ? v.toExponential(1) : f2(v));
+  // every training flow tied on one value, so there is one edge and no range
+  if (edges && edges.length === 1) return `${show(edges[0])}${unit} (every training flow)`;
+  if (!edges || !(index >= 0) || index + 1 >= edges.length) return bin;
   return `${show(edges[index])}–${show(edges[index + 1])}${unit}`;
 }
 
@@ -64,6 +66,31 @@ function symbolTip(symbol) {
     <div class="tt-row">protocol ${p.proto}</div>
     <div class="tt-row">bytes bin ${p.bytes}: ${binText("bytes", p.bytes)}</div>
     <div class="tt-row">duration bin ${p.duration}: ${binText("duration", p.duration)}</div>`;
+}
+
+// machine transitions at or above this probability carry a label, here and in the copy
+const LABEL_MIN = 0.25;
+
+// a row of legend items laid out by their measured text width, wrapping inside maxWidth;
+// items are [text, draw(g)] where draw puts a 18x10 swatch at the origin. Returns height.
+function legendRow(g, items, maxWidth, { align = "start" } = {}) {
+  const rows = [[]];
+  let x = 0;
+  for (const [text, draw] of items) {
+    const item = g.append("g");
+    draw(item);
+    const label = item.append("text").attr("class", "t-small t-2").attr("x", 24).attr("y", 0).text(text);
+    const width = 24 + label.node().getComputedTextLength() + 16;
+    if (x > 0 && x + width > maxWidth) { rows.push([]); x = 0; }
+    rows[rows.length - 1].push([item, x, width]);
+    x += width;
+  }
+  rows.forEach((row, r) => {
+    const used = row.length ? row[row.length - 1][1] + row[row.length - 1][2] - 16 : 0;
+    const shift = align === "end" ? maxWidth - used : 0;
+    for (const [item, ix] of row) item.attr("transform", `translate(${shift + ix},${r * 16})`);
+  });
+  return rows.length * 16;
 }
 
 function chip(symbol, extra = "") {
@@ -160,10 +187,11 @@ function renderCluster(g, cluster, box, { focus = null, compact = false } = {}) 
         const p = leaf.data, cx = inner.x + leaf.x, cy = inner.y + leaf.y, rr = Math.max(leaf.r, 2.5);
         pos.set(p.id, { x: cx, y: cy, r: rr, kind: "pod" });
         const circle = hostG.append("circle")
-          .attr("class", `pod ${p.host_network ? "hostnet" : p.name ? "named" : ""}`)
-          .attr("cx", cx).attr("cy", cy).attr("r", rr).datum(p);
+          .attr("class", `pod ${p.host_network ? "hostnet" : p.name ? "named" : ""} ${p.new ? "new" : ""}`)
+          .attr("data-id", p.id).attr("cx", cx).attr("cy", cy).attr("r", rr).datum(p);
         hover(circle, d => `<div class="tt-title">${d.name || "pod " + d.ip}</div>
-          <div class="tt-row">${d.host_network ? "host network: shares the node's address " + d.ip : "pod address " + d.ip}</div>`);
+          <div class="tt-row">${d.host_network ? "host network: shares the node's address " + d.ip + ", so its traffic is drawn on the node" : "pod address " + d.ip}</div>
+          ${d.new ? `<div class="tt-row">never seen in benign traffic</div>` : ""}`);
         if (p.name && !compact && rr > 16) {
           const label = p.name.replace(/^pod-/, "");
           hostG.append("text").attr("class", "t-small").attr("text-anchor", "middle")
@@ -192,10 +220,12 @@ function renderCluster(g, cluster, box, { focus = null, compact = false } = {}) 
   outside.forEach((e, i) => {
     const ex = box.x + box.w * (0.16 + 0.8 * (i + 0.5) / outside.length), ey = top.y + top.h * 0.24;
     pos.set(e.id, { x: ex, y: ey, r: compact ? 5 : 9, kind: "external" });
-    hover(g.append("circle").attr("class", `ext ${e.kind}`).attr("cx", ex).attr("cy", ey).attr("r", compact ? 5 : 9).datum(e),
-      d => d.kind === "host"
-        ? `<div class="tt-title">host ${d.ip}</div><div class="tt-row">${d.roles.join(", ")} · seen in traffic only, no capture of its own</div>`
-        : `<div class="tt-title">${d.kind === "internet" ? "the internet" : "LAN device " + d.ip}</div>`);
+    hover(g.append("circle").attr("class", `ext ${e.kind} ${e.new ? "new" : ""}`).attr("cx", ex).attr("cy", ey).attr("r", compact ? 5 : 9).datum(e),
+      d => (d.kind === "host"
+        ? `<div class="tt-title">host ${d.ip}</div><div class="tt-row">${d.roles.join(", ")} · serves a cluster port; no capture of its own</div>`
+        : `<div class="tt-title">${d.kind === "internet" ? "the internet" : "LAN device " + d.ip}</div>
+           ${d.note ? `<div class="tt-row">${d.note}; not proven to be a node</div>` : ""}`)
+        + (d.new ? `<div class="tt-row">never seen in benign traffic</div>` : ""));
     if (!compact) g.append("text").attr("class", "t-small t-2").attr("text-anchor", "middle")
       .attr("x", ex).attr("y", ey + 23).text(e.kind === "internet" ? "internet" : e.ip);
   });
@@ -213,7 +243,7 @@ function renderCluster(g, cluster, box, { focus = null, compact = false } = {}) 
     const sx = box.x + box.w * (i + 0.5) / Math.max(cluster.services.length, 1), sy = services.y + services.h * 0.5;
     const w = compact ? 46 : 150, h = compact ? 14 : 30;
     pos.set(s.id, { x: sx, y: sy - h / 2, kind: "service" });
-    hover(g.append("rect").attr("class", "svc").attr("x", sx - w / 2).attr("y", sy - h / 2)
+    hover(g.append("rect").attr("class", `svc ${s.new ? "new" : ""}`).attr("x", sx - w / 2).attr("y", sy - h / 2)
       .attr("width", w).attr("height", h).attr("rx", h / 2).datum(s),
       d => `<div class="tt-title">service ${d.ip}</div><div class="tt-row">${d.port_names.join(", ") || "no well-known port"}</div>`);
     if (!compact) g.append("text").attr("text-anchor", "middle").attr("x", sx).attr("y", sy + 4)
@@ -226,12 +256,13 @@ function renderCluster(g, cluster, box, { focus = null, compact = false } = {}) 
   const width = d3.scaleLog().domain(d3.extent(cluster.edges, e => Math.max(e.packets, 1))).range(compact ? [0.6, 2.5] : [1, 7]).clamp(true);
   const edgeG = g.insert("g", ":first-child");
   const edges = edgeG.selectAll("path").data(cluster.edges.filter(e => pos.has(e.src) && pos.has(e.dst)))
-    .join("path").attr("class", "link")
+    .join("path").attr("class", e => `link ${e.new ? "new" : ""}`)
     .attr("d", e => curve(pos.get(e.src), pos.get(e.dst)))
     .attr("stroke-width", e => width(Math.max(e.packets, 1)));
   hover(edges, e => `<div class="tt-title">${label(e.src)} ↔ ${label(e.dst)}</div>
-    <div class="tt-row">${fmt(e.packets)} packets at the best vantage</div>
-    <div class="tt-row">${e.ports.join(", ") || "ephemeral ports"}</div>`);
+    ${e.new ? `<div class="tt-row">never seen in benign traffic · ${fmt(e.packets)} flow${e.packets === 1 ? "" : "s"} in this recording</div>`
+            : `<div class="tt-row">${fmt(e.packets)} packets at the best vantage</div>
+               <div class="tt-row">${e.ports.join(", ") || "ephemeral ports"}</div>`}`);
 
   // capture taps: where each recording listened
   const taps = g.append("g");
@@ -317,22 +348,8 @@ function actCluster() {
 
 const L = S.learning;
 const ptaById = new Map(L.pta.map(n => [n.id, n]));
-const ptaChildren = d3.group(L.pta.filter(n => n.parent !== null), n => n.parent);
 const stateOfPta = new Map();
 for (const s of L.pdfa.states) for (const id of s.pta_ids) stateOfPta.set(id, s.id);
-// red (kept) PTA nodes in promotion order: the root, then every promoted blue
-const promoted = [0, ...L.steps.filter(s => s.kind === "promote").map(s => s.blue)];
-
-function subtree(id) {
-  const out = [], stack = [id];
-  while (stack.length) {
-    const n = stack.pop();
-    out.push(n);
-    for (const c of ptaChildren.get(n) || []) stack.push(c.id);
-  }
-  return out;
-}
-
 const learn = { step: 0, timer: null };   // step 0: tree built; k: after step k; N+1: machine
 
 function actLearning() {
@@ -379,7 +396,8 @@ function buildLearning() {
   const stream = L.stream.slice(0, Math.floor((w - 80) / 6));
   const sx = d3.scaleBand().domain(d3.range(stream.length)).range([40, 40 + stream.length * 6]).paddingInner(0.2);
   g.append("text").attr("class", "t-section").attr("x", 40).attr("y", 18)
-    .text(`training flows → symbols (${fmt(S.meta.train_flows)} flows, first ${stream.length} shown)`);
+    .text(`training flows → symbols (${fmt(S.meta.train_flows)} flows, first ${stream.length} shown`
+      + `${S.meta.dropped_flows ? ` · ${fmt(S.meta.dropped_flows)} crossed a window boundary and were dropped` : ""})`);
   hover(g.append("g").selectAll("rect").data(stream).join("rect")
     .attr("x", (d, i) => sx(i)).attr("y", 26).attr("width", sx.bandwidth()).attr("height", 22).attr("rx", 1.5)
     .attr("fill", d => protoColor(symbolParts(d.symbol).proto)), d => symbolTip(d.symbol)
@@ -426,17 +444,15 @@ function drawLearning() {
   const current = k >= 1 && k <= total ? L.steps[k - 1] : null;
   const final = k > total;
 
-  // which PTA nodes are settled: kept states, and every node folded by a finished merge
-  const settled = new Set();
+  // a bar takes its state's colour once it belongs to a kept state at this step. story.py
+  // replays the folds: a merged candidate's children fold into the kept state's children,
+  // which may still be candidates, so they settle later, never before their state exists
   const kept = new Set([0, ...done.filter(s => s.kind === "promote").map(s => s.blue)]);
-  for (const s of done) if (s.kind === "merge") for (const id of subtree(s.blue)) settled.add(id);
-  for (const id of kept) settled.add(id);
-  if (final) for (const n of L.pta) settled.add(n.id);
-  // unsettled bars show the raw tree by protocol; settled ones take their state's color
+  const settled = n => final || n.settled_step <= k;
   LG.rects
-    .style("fill", n => settled.has(n.id) ? stateColor(stateOfPta.get(n.id))
+    .style("fill", n => settled(n) ? stateColor(stateOfPta.get(n.id))
                      : n.symbol ? protoColor(symbolParts(n.symbol).proto) : "var(--muted)")
-    .style("fill-opacity", n => kept.has(n.id) ? 1 : settled.has(n.id) ? 0.72 : 0.22);
+    .style("fill-opacity", n => kept.has(n.id) ? 1 : settled(n) ? 0.72 : 0.22);
 
   // the step's two states, ringed in the ALERGIA colors
   LG.marks.selectAll("*").remove();
@@ -501,7 +517,7 @@ function drawMachineEdges(g, pdfa, at, radius, { labels = false } = {}) {
     ${l.symbols.slice(0, 8).map(e => `<div class="tt-row mono">${e.symbol} · ${f2(e.prob)}</div>`).join("")}
     ${l.symbols.length > 8 ? `<div class="tt-row">+${l.symbols.length - 8} more</div>` : ""}`);
   if (labels) {
-    g.selectAll("text.edge-label").data(links.filter(l => l.prob >= 0.2), l => l.key).join("text")
+    g.selectAll("text.edge-label").data(links.filter(l => l.prob >= LABEL_MIN), l => l.key).join("text")
       .attr("class", "edge-label halo").attr("text-anchor", "middle")
       .attr("x", l => labelAt(l)[0]).attr("y", l => labelAt(l)[1])
       .text(l => l.symbols.length === 1 ? `${l.symbols[0].symbol} ${f2(l.prob)}`
@@ -540,10 +556,11 @@ function toward(x, y, tx, ty, distance) {
 }
 
 function learningPanel(step, final, k) {
-  const total = L.steps.length;
+  const total = L.steps.length, all = L.steps_total;
   const promotes = L.steps.filter(s => s.kind === "promote").length;
+  const capped = all > total ? ` (first ${fmt(total)} of ${fmt(all)} shown; the rest land at the end)` : "";
   const readout = final ? `Learned: ${L.pdfa.states.length} states, ${L.pdfa.edges.length} transitions`
-    : step ? `Step ${k} of ${total} · ${step.kind}` : "Prefix tree built";
+    : step ? `Step ${k} of ${total}${all > total ? ` (of ${all})` : ""} · ${step.kind}` : "Prefix tree built";
   d3.select("#l-readout").text(readout);
   if (final) {
     panel.html(`
@@ -551,7 +568,7 @@ function learningPanel(step, final, k) {
       <p class="big">${fmt(L.pta.length)} prefix-tree nodes folded into <b>${L.pdfa.states.length} states</b>
         and ${L.pdfa.edges.length} transitions.</p>
       <p>Each circle is a state, sized by training visits; each arrow is a transition, wider when more
-        likely. Labels show transitions taken at least a quarter of the time.</p>
+        likely. Labels show transitions taken at least ${Math.round(LABEL_MIN * 100)}% of the time.</p>
       <p>A trace that needs an arrow the machine lacks has done something benign traffic never did:
         that is what the detection act watches for, alongside how <i>often</i> each state is visited.</p>
       <h2>Symbols the machine knows</h2>
@@ -572,24 +589,43 @@ function learningPanel(step, final, k) {
         <b style="color:var(--red)">red</b> state already kept. If, for every next symbol, the two
         next-step probabilities differ by less than the <b>Hoeffding bound</b>, the candidate is folded
         into the red state; otherwise it is promoted to a new red state.</p>
-      <p>${total} steps here: ${promotes} promotions, ${total - promotes} merges. Press <b>Play</b>.</p>
+      <p>${total} steps here${capped}: ${promotes} promotions, ${total - promotes} merges. Press <b>Play</b>.</p>
       ${protocolLegend()}`);
     return;
   }
-  const passing = step.tests.filter(t => Math.abs(t.p_red - t.p_blue) < step.bound).length;
+  // every kept state the candidate was tested against, in order; the last one decided it
+  const failing = a => a.tests.filter(t => Math.abs(t.p_red - t.p_blue) >= a.bound)
+    .sort((x, y) => d3.descending(Math.abs(x.p_red - x.p_blue), Math.abs(y.p_red - y.p_blue)));
+  const tried = step.attempts.map((a, i) => {
+    const worst = failing(a)[0];
+    return `<button class="attempt" data-i="${i}" aria-pressed="${i === step.attempts.length - 1}">
+      <span class="sid" style="background:${stateColor(stateOfPta.get(a.red))}">${stateOfPta.get(a.red)}</span>
+      ${worst ? `✗ <span class="mono">${worst.symbol === "#" ? "(ends)" : worst.symbol}</span> differs by ${f2(Math.abs(worst.p_red - worst.p_blue))} &gt; ±${f2(a.bound)}`
+              : `✓ every symbol within ±${f2(a.bound)}`}</button>`;
+  }).join("");
+  const earlier = step.attempts.length - 1;
   const verdict = step.kind === "merge"
-    ? `<b>Merged.</b> Every symbol's probabilities sit within ±${f2(step.bound)}, so the candidate (${fmt(step.blue_visits)} traces) folds into state ${stateOfPta.get(step.red)} (${fmt(step.red_visits)} traces).`
-    : `<b>Promoted.</b> ${step.tests.length - passing} of ${step.tests.length} symbols differ by more than ±${f2(step.bound)} from the last red state tried, so the candidate becomes <b>state ${stateOfPta.get(step.blue)}</b>.`;
+    ? `<b>Merged</b> into state ${stateOfPta.get(step.red)}${earlier ? ` after failing against ${earlier} earlier kept state${earlier === 1 ? "" : "s"}` : ""}: the candidate (${fmt(step.blue_visits)} traces) behaves like it.`
+    : `<b>Promoted.</b> The candidate failed against every kept state (${step.attempts.length}), so it becomes <b>state ${stateOfPta.get(step.blue)}</b>.`;
   panel.html(`
-    <h2>Step ${k} of ${total}</h2>
+    <h2>Step ${k} of ${total}${all > total ? ` (of ${fmt(all)})` : ""}</h2>
     <p class="big">${verdict}</p>
     <p>Candidate path: ${(pathOf(step.blue).map(s => chip(s)).join(" ") || "<i>start</i>")}</p>
-    <h2>The Hoeffding test</h2>
+    <h2>Tested against</h2>
+    <div class="attempts">${tried}</div>
+    <h2>The Hoeffding test · against state <span id="h-state"></span></h2>
     <p>Next-symbol probability in the <b style="color:var(--red)">red</b> state and the
       <b style="color:var(--blue)">blue</b> candidate. The shaded band is red ± bound; blue must land
-      inside it for every symbol.</p>
+      inside it for every symbol. Pick another state above to see its test.</p>
     <svg id="hoeffding" width="300"></svg>`);
-  drawHoeffding(step);
+  const pick = i => {
+    d3.selectAll(".attempt").attr("aria-pressed", function () { return +this.dataset.i === i; });
+    d3.select("#h-state").text(stateOfPta.get(step.attempts[i].red));
+    d3.select("#hoeffding").selectAll("*").remove();
+    drawHoeffding(step.attempts[i]);
+  };
+  d3.selectAll(".attempt").on("click", function () { pick(+this.dataset.i); });
+  pick(step.attempts.length - 1);
 }
 
 function pathOf(id) {
@@ -677,7 +713,9 @@ function capture() {
     const c = S.playback.captures[i];
     const vt = [], vs = [];
     for (const tr of c.traces) for (const s of tr.states) { vt.push(tr.t); vs.push(s); }
-    const begin = c.scenario === S.playback.captures[0].scenario ? Math.max(0, c.start_s - 2) : 0;
+    // the held-out replay starts at its first held-out window; earlier seconds trained the model
+    const ws = S.meta.window_size;
+    const begin = i === 0 ? Math.floor(c.start_s / ws) * ws : 0;
     prepared.set(i, { c, vt, vs, tt: c.traces.map(tr => tr.t), begin, end: c.duration_s });
   }
   return prepared.get(i);
@@ -717,7 +755,9 @@ function rebuild() {
   scoreStrip(svg.append("g"), strip);
   detectionPanel();
   window.onkeydown = e => {
-    if (currentAct !== "detection" || e.target.tagName === "SELECT") return;
+    // keys belong to the playback only when nothing focusable has them
+    const owner = e.target.closest && e.target.closest("button, input, select, textarea, a");
+    if (currentAct !== "detection" || owner) return;
     if (e.code === "Space") { e.preventDefault(); player.playing ? player.pause() : player.play(); }
     if (e.code === "ArrowRight") player.seek(player.t + 1);
     if (e.code === "ArrowLeft") player.seek(player.t - 1);
@@ -740,8 +780,11 @@ function machineView(g, box) {
   g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", box.y + 4)
     .text("the machine · each dot circles its state's clock once, then is forgotten");
   const links = drawMachineEdges(g.append("g"), L.pdfa, at, radius);
+  // a test trace counts the states it walks into, so the training rate is the same thing:
+  // entries, not visits (the start state's visits also count every trace that began there)
   const forget = S.meta.forget_seconds, span = Math.max(S.meta.train_span_s, 1e-9);
-  const expected = s => Math.max(s.visits * forget / span, 1e-3);
+  const expected = s => Math.max(s.entries * forget / span, 1e-3);
+  const MAX_DOTS = 40;   // per state; past it the ring shows a sample and the count says how many
 
   const sg = g.append("g").selectAll("g").data(states).join("g")
     .attr("transform", s => `translate(${at(s)})`);
@@ -751,11 +794,15 @@ function machineView(g, box) {
   const heat = sg.append("circle").attr("class", "state-heat").attr("r", radius)
     .style("stroke", s => stateColor(s.id)).style("fill", "var(--div-0)");
   sg.append("text").attr("class", "t-title halo").attr("text-anchor", "middle").attr("y", 5).text(s => s.id);
+  const countLabel = sg.append("text").attr("class", "t-small t-2 halo").attr("text-anchor", "middle")
+    .attr("y", s => radius(s) + 34);
   hover(sg, s => {
     const n = clockCounts().get(s.id) || 0;
     return `<div class="tt-title">state ${s.id}</div>
       <div class="tt-row">${n} visit${n === 1 ? "" : "s"} on the clock now</div>
-      <div class="tt-row">${f1(expected(s))} expected in ${forget} s at the training rate</div>`;
+      <div class="tt-row">${f1(expected(s))} expected in ${forget} s at the training rate</div>
+      ${s.id === 0 ? `<div class="tt-row">every trace starts here; only walks back in are counted.
+        The scorer's training count for this state (${fmt(s.visits)}) also includes ${fmt(s.visits - s.entries)} trace starts.</div>` : ""}`;
   });
 
   const dots = g.append("g");
@@ -773,15 +820,33 @@ function machineView(g, box) {
     const counts = new Map();
     for (let i = lo; i < hi; i++) counts.set(vs[i], (counts.get(vs[i]) || 0) + 1);
     heat.style("fill", s => (counts.get(s.id) || 0) === 0 ? "var(--surface-2)" : heatColor(counts.get(s.id) / expected(s)));
+    countLabel.text(s => `${counts.get(s.id) || 0} on clock`);
 
-    // visits orbit their state: angle is age, a full turn is the forgetting window
-    const visits = d3.range(lo, hi);
-    dots.selectAll("circle").data(visits, i => i).join("circle").attr("class", "visit").attr("r", 2.6)
-      .attr("cx", i => { const s = byId.get(vs[i]); const a = (t - vt[i]) / forget * 2 * Math.PI;
-        return at(s)[0] + Math.sin(a) * (radius(s) + 10 + (i % 3) * 5); })
-      .attr("cy", i => { const s = byId.get(vs[i]); const a = (t - vt[i]) / forget * 2 * Math.PI;
-        return at(s)[1] - Math.cos(a) * (radius(s) + 10 + (i % 3) * 5); })
-      .attr("opacity", i => 1 - 0.7 * (t - vt[i]) / forget);
+    // visits orbit their state: angle is age, a full turn is the forgetting window. Visits of
+    // one trace share a timestamp, so each takes its own lane and a small angular offset; a
+    // busy state shows an even sample of its visits rather than thousands of dots
+    const perState = new Map();
+    for (let i = lo; i < hi; i++) {
+      if (!perState.has(vs[i])) perState.set(vs[i], []);
+      perState.get(vs[i]).push(i);
+    }
+    const placed = [];
+    for (const [state, list] of perState) {
+      const step = Math.max(1, list.length / MAX_DOTS);
+      for (let j = 0; j < list.length && placed.length < 4000; j += step) {
+        const i = list[Math.floor(j)];
+        placed.push({ i, state, lane: Math.floor(j / step) % 4,
+                      nudge: (i - d3.bisectLeft(vt, vt[i])) * 0.07 });
+      }
+    }
+    const position = (d, axis) => {
+      const s = byId.get(d.state), a = (t - vt[d.i]) / forget * 2 * Math.PI + d.nudge;
+      const r = radius(s) + 9 + d.lane * 4;
+      return axis === "x" ? at(s)[0] + Math.sin(a) * r : at(s)[1] - Math.cos(a) * r;
+    };
+    dots.selectAll("circle").data(placed, d => d.i).join("circle").attr("class", "visit").attr("r", 2.4)
+      .attr("cx", d => position(d, "x")).attr("cy", d => position(d, "y"))
+      .attr("opacity", d => 1 - 0.7 * (t - vt[d.i]) / forget);
 
     // the current trace walks the machine; a missing transition drops it off with a cross
     const k = traceAt(t);
@@ -796,7 +861,17 @@ function machineView(g, box) {
     const points = path.map(s => at(byId.get(s)));
     token.interrupt().attr("opacity", 1).attr("cx", points[0][0]).attr("cy", points[0][1]);
     let tr = token.transition().duration(0);
-    for (const p of points.slice(1)) tr = tr.transition().duration(Math.max(40, 220 / player.speed)).attr("cx", p[0]).attr("cy", p[1]);
+    const hop = Math.max(40, 220 / player.speed);
+    points.slice(1).forEach((p, i) => {
+      if (path[i + 1] === path[i]) {
+        // a self-loop: hop up over the state's loop and land back, so the step is visible
+        const r = radius(byId.get(path[i]));
+        tr = tr.transition().duration(hop / 2).attr("cy", p[1] - r - 22)
+               .transition().duration(hop / 2).attr("cy", p[1]);
+      } else {
+        tr = tr.transition().duration(hop).attr("cx", p[0]).attr("cy", p[1]);
+      }
+    });
     if (trace.fell_off_at !== null) {
       const last = points[points.length - 1];
       fall.attr("opacity", 1).attr("transform", `translate(${last[0] + 26},${last[1] + 30})`);
@@ -815,9 +890,28 @@ function machineView(g, box) {
 }
 
 function clusterInset(g, box) {
-  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", box.y - 14).text("where the current trace's flows run");
-  const { edges } = renderCluster(g, S.cluster, box, { focus: S.meta.vantage, compact: true });
+  // the map is drawn from benign traffic; an attack's new addresses and new conversations
+  // are added for this recording, dashed, so the most telling flows have somewhere to show
+  const { c: shownCapture } = capture();
+  const fresh = kind => shownCapture.new_elements.filter(e => e.kind === kind);
+  const map = {
+    ...S.cluster,
+    pods: [...S.cluster.pods, ...fresh("pod")],
+    services: [...S.cluster.services, ...fresh("service")],
+    external: [...S.cluster.external, ...fresh("lan"), ...fresh("internet")],
+    edges: [...S.cluster.edges, ...shownCapture.new_edges.map(e =>
+      ({ src: e.src, dst: e.dst, packets: e.flows, ports: [], new: true }))],
+  };
+  const extra = shownCapture.new_edges.length;
+  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", box.y - 14)
+    .text(fit(`flows of the current trace${extra ? ` · ${extra} new (dashed)` : ""}`, box.w));
+  const { edges } = renderCluster(g, map, box, { focus: S.meta.vantage, compact: true });
   const halo = g.select(".tap.focus .tap-halo");
+  // a host-network tap has no address of its own: its flows run on its node, so the pod
+  // lights up whenever the node does
+  const tap = S.cluster.vantages.find(v => v.label === S.meta.vantage);
+  const tapPod = tap && S.cluster.pods.find(p => p.id === tap.element && p.host_network);
+  const tapCircle = tapPod ? g.select(`circle[data-id="${tapPod.id}"]`) : null;
   let shown = null;
   player.on("tick", t => {
     const { c } = capture();
@@ -833,6 +927,7 @@ function clusterInset(g, box) {
       for (const [a, b] of c.flow_edges.slice(tr.i, tr.i + S.meta.trace_len)) if (a && b) hot.add([a, b].sort().join("|"));
     }
     edges.classed("hot", e => hot.has([e.src, e.dst].sort().join("|")));
+    if (tapCircle) tapCircle.classed("hot", [...hot].some(pair => pair.split("|").includes(tapPod.host)));
   });
 }
 
@@ -842,7 +937,12 @@ function scoreStrip(g, box) {
   const x = d3.scaleLinear().domain([begin, end]).range([box.x, box.x + box.w]);
   const hA = box.h * 0.48, hB = box.h * 0.24, gap = 14, bandH = 8;
   const yA0 = box.y, yB0 = yA0 + hA + gap, band0 = yB0 + hB + 8, band1 = band0 + bandH + 3;
-  const freq = traces.flatMap(t => [t.windowed, t.cumulative]).concat([c.cutoffs.windowed, c.cutoffs.cumulative]);
+  // the cumulative score is judged against benign at the same age (window index): it grows
+  // with capture length alone, so no single line would be fair
+  const ws = S.meta.window_size;
+  const reference = c.cutoffs.cumulative_reference
+    .map((v, w) => ({ w, v })).filter(d => d.v !== null && (d.w + 1) * ws > begin && d.w * ws < end);
+  const freq = traces.flatMap(t => [t.windowed, t.cumulative]).concat([c.cutoffs.windowed], reference.map(d => d.v));
   const yA = d3.scaleLinear().domain(d3.extent(freq.length ? freq : [0, 1])).nice().range([yA0 + hA, yA0 + 14]);
   const lik = traces.map(t => t.likelihood).concat([c.cutoffs.likelihood, 0]);
   const yB = d3.scaleLinear().domain(d3.extent(lik)).nice().range([yB0 + hB, yB0 + 12]);
@@ -867,9 +967,13 @@ function scoreStrip(g, box) {
       .attr("x", end ? box.x + box.w - 2 : box.x + 4).attr("y", y(value) - 4).text(text).style("fill", "var(--ink-2)");
   };
   cut(yA, c.cutoffs.windowed, "var(--s1)", `windowed cutoff ${f1(c.cutoffs.windowed)}`, false);
-  cut(yA, c.cutoffs.cumulative, "var(--s2)", `cumulative cutoff ${f1(c.cutoffs.cumulative)}`, true);
   cut(yB, c.cutoffs.likelihood, "var(--muted)", `cutoff ${f2(c.cutoffs.likelihood)}`, true);
 
+  if (reference.length) {
+    const steps = reference.flatMap(d => [[Math.max(begin, d.w * ws), d.v], [Math.min(end, (d.w + 1) * ws), d.v]]);
+    g.append("path").attr("class", "series").attr("d", d3.line().x(p => x(p[0])).y(p => yA(p[1]))(steps))
+      .style("stroke", "var(--s2)").attr("stroke-width", 1).attr("stroke-opacity", 0.55);
+  }
   const line = (y, key) => d3.line().x(d => x(d.t)).y(d => y(d[key]))(traces);
   if (traces.length) {
     g.append("path").attr("class", "series").attr("d", line(yA, "cumulative"))
@@ -879,28 +983,29 @@ function scoreStrip(g, box) {
     g.append("g").selectAll("circle").data(traces.filter(t => t.likelihood < c.cutoffs.likelihood)).join("circle")
       .attr("cx", t => x(t.t)).attr("cy", t => yB(t.likelihood)).attr("r", 2.5).style("fill", "var(--warning)");
   }
-  // legend for the two series sharing chart A
-  const legend = g.append("g").attr("transform", `translate(${box.x + box.w - 420},${yA0 - 4})`);
-  [["windowed (forgets after " + S.meta.forget_seconds + " s)", "var(--s1)", null],
-   ["cumulative (never forgets)", "var(--s2)", "5 3"]].forEach(([text, color, dash], i) => {
-    const lg = legend.append("g").attr("transform", `translate(${i * 220},0)`);
-    lg.append("line").attr("x1", 0).attr("x2", 18).attr("y1", -4).attr("y2", -4).style("stroke", color)
-      .attr("stroke-width", 2).attr("stroke-dasharray", dash);
-    lg.append("text").attr("class", "t-small t-2").attr("x", 24).attr("y", 0).text(text);
-  });
+  // legend for the series sharing chart A, right-aligned and wrapping to the space it has
+  const swatchLine = (color, dash, opacity = 1) => item => item.append("line").attr("x1", 0).attr("x2", 18)
+    .attr("y1", -4).attr("y2", -4).style("stroke", color).attr("stroke-width", 2)
+    .attr("stroke-dasharray", dash).attr("stroke-opacity", opacity);
+  legendRow(g.append("g").attr("transform", `translate(${box.x + box.w * 0.42},${yA0 - 4})`), [
+    [`windowed (forgets after ${S.meta.forget_seconds} s)`, swatchLine("var(--s1)", null)],
+    ["cumulative (never forgets)", swatchLine("var(--s2)", "5 3")],
+    ["benign cumulative, same age", swatchLine("var(--s2)", null, 0.55)],
+  ], box.w * 0.58, { align: "end" });
 
-  // window verdicts: flagged, alert (sustained), released
-  const ws = S.meta.window_size;
+  // window verdicts: flagged, alert (sustained), released; empty and warming windows say so
   const bands = g.append("g");
   // one row per detector: SEQUENT windows (flagged, alert) and likelihood windows (unseen)
   const shown = c.windows.filter(w => w.index * ws < end && (w.index + 1) * ws > begin);
   const wx = w => x(Math.max(begin, w.index * ws)) + 0.5;
   const ww = w => Math.max(x(Math.min(end, (w.index + 1) * ws)) - x(Math.max(begin, w.index * ws)) - 1, 1);
   for (const [y, label, fill] of [
-      [band0, "SEQUENT", w => w.alert ? "var(--critical)" : w.flagged ? "var(--warning)" : "var(--surface-2)"],
-      [band1, "likelihood", w => w.likelihood_flag ? "var(--serious)" : "var(--surface-2)"]]) {
+      [band0, "SEQUENT", w => w.alert ? "var(--critical)" : w.flagged ? "var(--warning)"
+        : w.status === "nodata" ? "none" : w.status === "warmup" ? "var(--grid)" : "var(--surface-2)"],
+      [band1, "likelihood", w => w.likelihood_flag ? "var(--serious)" : w.status === "nodata" ? "none" : "var(--surface-2)"]]) {
     bands.append("text").attr("class", "t-small t-muted").attr("text-anchor", "end").attr("x", box.x - 6).attr("y", y + 7).text(label);
     bands.append("g").selectAll("rect").data(shown).join("rect")
+      .attr("class", w => w.status === "nodata" ? "band-empty" : null)
       .attr("x", wx).attr("y", y).attr("width", ww).attr("height", bandH).attr("rx", 2).style("fill", fill);
   }
   bands.selectAll("text.rel").data(c.windows.filter(w => w.released && w.index * ws >= begin)).join("text")
@@ -908,17 +1013,18 @@ function scoreStrip(g, box) {
     .style("fill", "var(--good-ink)").style("font-size", "12px").style("font-weight", 700).text("✓");
   g.append("g").attr("class", "axis").attr("transform", `translate(0,${band1 + bandH + 4})`)
     .call(d3.axisBottom(x).ticks(10).tickFormat(v => `${v}s`).tickSize(3));
-  const key = g.append("g").attr("transform", `translate(${box.x},${band1 + bandH + 30})`);
-  [["flagged", "var(--warning)"], [`alert: ${S.meta.persistence}+ in a row`, "var(--critical)"],
-   ["unseen behaviour (likelihood)", "var(--serious)"]].forEach(([text, color], i) => {
-    const kx = [0, 80, 220][i];
-    key.append("rect").attr("x", kx).attr("y", -9).attr("width", 12).attr("height", 9).attr("rx", 2).style("fill", color);
-    key.append("text").attr("class", "t-small t-2").attr("x", kx + 18).attr("y", 0).text(text);
-  });
-  key.append("text").attr("x", 420).attr("y", 0).style("fill", "var(--good-ink)").style("font-weight", 700).text("✓");
-  key.append("text").attr("class", "t-small t-2").attr("x", 434).attr("y", 0).text("released");
-  key.append("rect").attr("class", "clock-window").attr("x", 500).attr("y", -9).attr("width", 18).attr("height", 9).attr("rx", 2);
-  key.append("text").attr("class", "t-small t-2").attr("x", 524).attr("y", 0).text(`anomaly clock: the last ${S.meta.forget_seconds} s`);
+  const swatch = (fill, cls = null) => item => item.append("rect").attr("class", cls).attr("x", 0).attr("y", -9)
+    .attr("width", 18).attr("height", 9).attr("rx", 2).style("fill", fill);
+  legendRow(g.append("g").attr("transform", `translate(${box.x},${band1 + bandH + 30})`), [
+    ["flagged", swatch("var(--warning)")],
+    [`alert: ${S.meta.persistence}+ in a row`, swatch("var(--critical)")],
+    ["unseen behaviour (likelihood)", swatch("var(--serious)")],
+    [`released: ${S.meta.clear_windows} clean scored windows`, item => item.append("text").attr("x", 4).attr("y", 0)
+      .style("fill", "var(--good-ink)").style("font-weight", 700).text("✓")],
+    ["no trace ended (no verdict)", swatch("none", "band-empty")],
+    ["clock warming up", swatch("var(--grid)")],
+    [`anomaly clock: the last ${S.meta.forget_seconds} s`, swatch(null, "clock-window")],
+  ], box.w);
 
   // playhead, crosshair tooltip, click or drag to seek
   const head = g.append("line").attr("class", "playhead").attr("y1", yA0).attr("y2", band1 + bandH);
@@ -953,6 +1059,8 @@ const STATUS = {
   alert: { cls: "critical", text: "ALERT · sustained" },
   flagged: { cls: "warning", text: "FLAGGED window" },
   unseen: { cls: "warning", text: "UNSEEN BEHAVIOUR · likelihood" },
+  nodata: { cls: "idle", text: "NO TRACE · no verdict" },
+  warmup: { cls: "idle", text: "WARMING UP · clock not full" },
   released: { cls: "good", text: "RELEASED · forgotten" },
   normal: { cls: "good", text: "NORMAL" },
 };
@@ -961,63 +1069,86 @@ const statusOf = t => { const w = windowAt(t); return w ? STATUS[w.status] : { c
 
 function detectionPanel() {
   let shownKey = null;
+  const ws = S.meta.window_size, forget = S.meta.forget_seconds;
+  const heatLegend = `<div class="heatbar">${HEAT.map(v => `<span style="background:var(${v})"></span>`).join("")}</div>
+    <div class="heatlabels"><span>quieter</span><span>as in training</span><span>busier</span></div>`;
+  const warning = S.meta.calibration_warning
+    ? `<div class="banner"><b>Calibration not trusted.</b> ${S.meta.calibration_warning}</div>` : "";
   player.on("tick", t => {
     const { c } = capture();
-    const k = traceAt(t), status = statusOf(t);
-    const key = `${player.capture}:${k}:${status.text}`;
+    const k = traceAt(t), w = windowAt(t), status = statusOf(t);
+    const key = `${player.capture}:${k}:${w ? w.index : -1}:${status.text}`;
     if (key === shownKey) return;
     shownKey = key;
+    const held = player.capture === 0;
+    const span = held ? S.meta.holdout_span_s : c.duration_s;
+    const totalAlerts = c.windows.filter(x => x.alert).length;
+    const disclosure = `${c.dropped_flows ? `${fmt(c.dropped_flows)} flows crossed a ${ws} s window boundary and were dropped before symbolizing. ` : ""}`
+      + `${c.warmup_s ? `The clock starts empty, so the first ${c.warmup_s} s are a warm-up.` : held ? "The clock was already warm: the training part ran first." : ""}`;
     const tr = k >= 0 ? c.traces[k] : null;
-    const totalAlerts = c.windows.filter(w => w.alert).length;
-    const heatLegend = `<div class="heatbar">${HEAT.map(v => `<span style="background:var(${v})"></span>`).join("")}</div>
-      <div class="heatlabels"><span>quieter</span><span>as in training</span><span>busier</span></div>`;
     if (!tr) {
-      panel.html(`<div class="status ${status.cls}"><span class="dot"></span>${status.text}</div>
+      panel.html(`<div class="status ${status.cls}"><span class="dot"></span>${status.text}</div>${warning}
         <h2>${c.scenario}</h2>
-        <p class="big">${c.traces.length} traces over ${f1(c.duration_s)} s. ${totalAlerts} window${totalAlerts === 1 ? "" : "s"} in sustained alert.</p>
+        <p class="big">${c.traces.length} traces over ${f1(span)} s${held ? " (the held-out last 30%)" : ""}.
+          ${totalAlerts} window${totalAlerts === 1 ? "" : "s"} in sustained alert.</p>
         <p>Press <b>Play</b> (or space). Each trace of ${S.meta.trace_len} flows walks the machine;
-          every state it visits drops a dot on that state's clock. A dot takes
-          ${S.meta.forget_seconds} s to go round once, then it is <b>forgotten</b>.</p>
-        <p>The score asks: are states being visited more often, in the last ${S.meta.forget_seconds} s,
-          than training said they would be?</p>
+          every state it walks into drops a dot on that state's clock. A dot takes ${forget} s to go
+          round once, then it is <b>forgotten</b>.</p>
+        <p>The score asks: are states being visited more often, in the last ${forget} s, than
+          training said they would be?</p>
+        <p style="font-size:12.5px">${disclosure}</p>
         <h2>State fill · visits on the clock vs training rate</h2>${heatLegend}`);
       return;
     }
-    const contributions = tr.terms.map((terms, i) => ({
-      state: tr.states[i], total: d3.sum(terms),
-      seen: Math.round(Math.exp(terms[0]) - 1), trained: Math.round(Math.exp(-terms[1]) - 1),
-    }));
+    const peak = w && w.peak !== null ? w.peak : null;
+    const sentence = !w ? "Outside the recording."
+      : w.status === "nodata" ? "No trace ended in this second, so there is nothing to judge. The clocks keep running; dots still expire."
+      : w.status === "warmup" ? `The clock has run for under ${forget} s, so scores are low by construction: quiet here is not evidence of normal.`
+      : w.alert ? `Its highest trace scores <b>${f1(peak)}</b>, over the cutoff ${f1(c.cutoffs.windowed)}, and ${S.meta.persistence}+ windows in a row have: <b>sustained alert</b>.`
+      : w.flagged ? `Its highest trace scores <b>${f1(peak)}</b>, over the cutoff ${f1(c.cutoffs.windowed)}: flagged.`
+      : w.status === "unseen" ? `Highest frequency score ${f1(peak)} is under the cutoff, but a trace fell below the likelihood cutoff: something benign never did.`
+      : w.status === "released" ? `Back under the cutoff for ${S.meta.clear_windows} scored windows since the alert: <b>released</b>.`
+      : `Its highest trace scores ${f1(peak)}, under the cutoff ${f1(c.cutoffs.windowed)}.`;
+    const traceWindow = Math.floor(tr.t / ws);
+    const stale = !w || traceWindow !== w.index;
+    const contributions = tr.visits.map(([clock, trained], i) => ({
+      state: tr.states[i], total: d3.sum(tr.terms[i]), clock, trained }));
     const maxC = d3.max(contributions, d => Math.abs(d.total)) || 1;
-    const above = tr.windowed > c.cutoffs.windowed, cumAbove = tr.cumulative > c.cutoffs.cumulative;
+    const above = tr.windowed > c.cutoffs.windowed;
+    const ref = c.cutoffs.cumulative_reference[traceWindow];
     const falloff = tr.fell_off_at !== null;
-    const w = windowAt(t);
     const lostTime = Boolean(w && w.forgetting_shown);
+    const starts = L.pdfa.states[0].visits - L.pdfa.states[0].entries;
     panel.html(`
-      <div class="status ${status.cls}"><span class="dot"></span>${status.text}</div>
-      <h2>Trace at ${f1(tr.t)} s</h2>
+      <div class="status ${status.cls}"><span class="dot"></span>${status.text}</div>${warning}
+      <h2>Window ${f1(w ? w.index * ws : t)}–${f1(w ? (w.index + 1) * ws : t)} s</h2>
+      <p class="big">${sentence}</p>
+      <h2>Latest trace · ended ${f1(tr.t)} s${stale ? " · in an earlier window" : ""}</h2>
       <div class="chips">${tr.symbols.map((s, i) => chip(s, falloff && i >= tr.fell_off_at ? "off" : "")).join("")}</div>
       <p style="margin-top:8px">${falloff
         ? `Walks ${tr.fell_off_at === 0 ? "no state" : "states " + tr.states.join(" → ")}, then <b>falls off</b>: benign traffic never took <span class="mono">${tr.symbols[tr.fell_off_at]}</span> from there. Likelihood takes the floor (${f2(tr.likelihood)}). A fall-off visits fewer states, so it <i>lowers</i> the frequency score: unseen behaviour is the likelihood detector's catch, not SEQUENT's.`
-        : `Walks states 0 → ${tr.states.join(" → ")}. Likelihood ${f2(tr.likelihood)} (cutoff ${f2(c.cutoffs.likelihood)}).`}</p>
-      <h2>Why it scores ${f1(tr.windowed)} ${above ? "· above" : "· under"} the cutoff ${f1(c.cutoffs.windowed)}</h2>
+        : `Starts at 0, walks ${tr.states.join(" → ")}. Likelihood ${f2(tr.likelihood)} (cutoff ${f2(c.cutoffs.likelihood)}).`}</p>
+      <h2>This trace scores ${f1(tr.windowed)} · ${above ? "over" : "under"} the cutoff</h2>
       <div class="contrib">${contributions.map(d => `
         <span class="sid" style="background:${stateColor(d.state)}">${d.state}</span>
         <span class="bar" style="width:${Math.max(4, 100 * Math.abs(d.total) / maxC)}%"></span>
         <span class="num">${f1(d.total)}</span>
-        <span class="sub">${d.seen} visit${d.seen === 1 ? "" : "s"} on its clock · ${fmt(d.trained)} in training</span>`).join("") || "<p>No state reached: nothing to count.</p>"}</div>
-      <p style="margin-top:8px">Each visited state adds log(clock visits + 1) − log(training visits + 1),
-        plus the training total and how many states are on the clock.</p>
+        <span class="sub">${fmt(d.clock)} on its clock · ${fmt(d.trained)} in training${d.state === 0 ? ` (incl. ${fmt(starts)} trace starts)` : ""}</span>`).join("") || "<p>No state reached: nothing to count.</p>"}</div>
+      <p style="margin-top:8px">Each state walked into adds log(clock visits + 1) − log(training visits + 1),
+        plus the training total and how many states are on the clock. A window is judged on its
+        highest trace, so one trace over the line flags the whole second.</p>
       <h2>Forgetting</h2>
       <dl class="kv">
-        <dt>windowed</dt><dd>${f1(tr.windowed)} vs ${f1(c.cutoffs.windowed)} ${above ? "▲" : "✓"}</dd>
-        <dt>cumulative</dt><dd>${f1(tr.cumulative)} vs ${f1(c.cutoffs.cumulative)} ${cumAbove ? "▲" : "✓"}</dd>
+        <dt>windowed</dt><dd>${f1(tr.windowed)} vs cutoff ${f1(c.cutoffs.windowed)} ${above ? "▲" : "✓"}</dd>
+        <dt>cumulative</dt><dd>${f1(tr.cumulative)} vs benign ${ref === null || ref === undefined ? "— (older than the benign recording)" : `${f1(ref)} at this age ${tr.cumulative > ref ? "▲" : "✓"}`}</dd>
         <dt>forgot now</dt><dd>${tr.expired.length} visit${tr.expired.length === 1 ? "" : "s"} left the clock</dd>
       </dl>
       ${lostTime ? `<p style="margin-top:8px"><b>This is why it forgets.</b> An alert fired earlier and the
-        windowed score has let it go, but the cumulative score is still above its line: without the
-        ${S.meta.forget_seconds} s clock this alert would not clear.</p>` : ""}
-      <p style="margin-top:8px;font-size:12.5px">The cumulative score also creeps up with capture length alone,
-        since every visit ever made still counts; part of its height is age, not attack.</p>
+        windowed score has let it go, but the cumulative score is still above anything benign reached by
+        this age: without the ${forget} s clock it would hold on to the burst.</p>` : ""}
+      <p style="margin-top:8px;font-size:12.5px">The cumulative score grows with recording length alone, so it is
+        compared with the whole benign recording at the same age. That reference includes the 70% the
+        machine learned from. ${disclosure}</p>
       <h2>State fill · visits on the clock vs training rate</h2>${heatLegend}`);
   });
 }
