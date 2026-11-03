@@ -1409,6 +1409,38 @@ class PcapReadChecks(unittest.TestCase):
         self.assertEqual(len(frames), 1)
         self.assertEqual(reader.warnings, ["truncated after frame 1"])
 
+    def test_pcap_zero_filled_tail_is_truncation_not_frames(self):
+        # A classic pcap cut and zero-padded: zero record headers must not become ts=0 frames.
+        blob = _pcap_bytes([(1, 0, b"a" * 100, 100), (2, 0, b"b" * 100, 100)])
+        frames, reader = self.frames(blob + bytes(4096 - len(blob)))
+        self.assertEqual([f.ts_sec for f in frames], [1, 2])
+        self.assertEqual(reader.warnings, ["truncated after frame 2"])
+
+    def test_pcap_record_longer_than_snaplen_is_truncation(self):
+        import struct
+        blob = _pcap_bytes([(1, 0, b"a" * 100, 100)], snaplen=1000)
+        blob += struct.pack("<IIII", 2, 0, 5000, 5000) + bytes(5000)
+        frames, reader = self.frames(blob)
+        self.assertEqual((len(frames), reader.warnings), (1, ["truncated after frame 1"]))
+
+    def test_malformed_pcapng_blocks_raise_naming_the_file(self):
+        import struct
+        import pcap_read
+        short_epb = _pcapng_block(6, b"")
+        bad_idb = _pcapng_block(1, b"")
+        overlong = _pcapng_epb(0, 1, b"a" * 16)
+        overlong = overlong[:20] + struct.pack("<I", 500) + overlong[24:]   # incl_len past the block
+        empty_tsresol = _pcapng_block(1, struct.pack("<HHI", 1, 0, 65535) + _pcapng_option(9, b""))
+        for name, blocks in (("short packet block", (_pcapng_idb(), short_epb)),
+                             ("empty interface block", (bad_idb,)),
+                             ("captured length past its block", (_pcapng_idb(), overlong)),
+                             ("empty if_tsresol", (empty_tsresol,))):
+            with self.subTest(name):
+                path = _capture_file(_pcapng_bytes(*blocks))
+                with self.assertRaisesRegex(ValueError, "malformed") as caught:
+                    list(pcap_read.CaptureReader(path).frames())
+                self.assertIn(str(path), str(caught.exception))
+
     def test_unsupported_linktype_raises_with_path(self):
         path = _capture_file(_pcap_bytes([(1, 0, b"x" * 20, 20)], linktype=101))
         import pcap_read
@@ -1772,6 +1804,26 @@ class PcapDiffChecks(unittest.TestCase):
         result = pcap_diff.compare_capture(pcap, csv_path)
         self.assertEqual((result["rows_sponsor"], result["rows_regen"], result["tier_a_exact"]),
                          (3, 2, False))
+
+    def test_one_bad_capture_is_recorded_and_the_run_continues(self):
+        import tempfile
+        import pcap_diff
+        root = Path(tempfile.mkdtemp())
+        good_pcap, good_csv = self.pair()
+        rows = []
+        for label, pcap in (("pod-good", good_pcap), ("pod-bad", None)):
+            target = root / "benign" / "pcapng files" / f"{label}-ptcp.pcapng"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(pcap.read_bytes() if pcap else b"not a capture")
+            rows.append({"scenario": "benign", "label": label, "method": "ptcp",
+                         "path": str(good_csv)})
+        out = root / "pcap_diff.csv"
+        results = pcap_diff.run(pd.DataFrame(rows), root, out_file=out)
+        bad = results.set_index("label").loc["pod-bad"]
+        self.assertRegex(bad["note"], "^error: .*unknown capture magic")
+        self.assertTrue(bool(results.set_index("label").loc["pod-good", "tier_a_exact"]))
+        self.assertEqual(len(pd.read_csv(out)), 2)
+        self.assertIn("1 failed", pcap_diff.summarize(results))
 
     def test_summary_names_captures_cut_short_at_the_source(self):
         import pcap_diff

@@ -246,10 +246,18 @@ CSV the pipeline reads without the sponsor's conversion step. Judged by a diff f
 the run: Tier A is `frame_number` plus every column the pipeline reads, which must be
 identical, with equal window tables; Tier B is the other 22 columns, counted.
 
-Result over all 88 captures (6,198,760 rows): zero differing cells in any column, Tier A or
-B; row counts equal on all 88; window tables equal on 87, the 88th being the quarantined
-zero-timestamp capture, unusable on both sides. 74 are called exact and 14 "identical but cut
-short at the source".
+Result over all 88 captures: every regenerated row identical, cell for cell, to the
+sponsor's row at the same position, in every column; row counts equal on 87; window tables
+equal on 87. 74 are called exact and 13 "identical but cut short at the source". The run
+takes 461 seconds.
+
+The 88th changes a standing conclusion. `nginx attack / pod-robot-controller / tcp` was
+quarantined for 64,853 zero timestamps. They are not packets: the recording ends at frame
+155,603, 3.56 GB into a 3.75 GB file, the rest is zeros, and the sponsor's conversion read
+64,853 of those zero records as packets. The converter stops at the first one, so this
+capture is recoverable: 155,603 real frames that window normally. The quarantine stays in
+the sweep until the sweep reads converted captures; that is a decision for later, not made
+here.
 
 Found on the way, each now a rule with a test built from the real frame:
 
@@ -259,17 +267,11 @@ Found on the way, each now a rule with a test built from the real frame:
   packet's ports; ICMPv4 prints zero type/code blank, ICMPv6 prints them; IPv6 extension
   headers are looked behind for the transport while `proto` keeps the first next-header; an
   802.3 length field leaves `eth_type` blank, a zero type field prints `0x0000`.
-- 14 capture files are cut mid-record, at least one with 6.2 GB of zeros after the real
-  data. The reader checks each pcapng block's closing length so a half-written last frame is
-  dropped, as the sponsor's conversion dropped it. Worth raising with the sponsor: those
-  files lost data.
-- The quarantined `nginx attack / pod-robot-controller / tcp` carries its zero timestamps in
-  the capture file, so the quarantine stays.
+- 14 capture files are cut mid-record with zero-filled tails, `injection attack /
+  node-child4-ptcp` with 6.2 GB of zeros after 4.58 GB of data. The reader ends a capture at
+  the first record that cannot be real: a pcapng block whose closing length does not match,
+  or a pcap record that is empty, longer than its wire frame, or past the snaplen. Worth
+  raising with the sponsor: those files lost data.
 - `data_io.at_snaplen` counts 64 KB frames (65535 plus the link header), which are offloaded
   super-frames, not snaplen truncation: the tcp captures have a 262144-byte snaplen. The name
   is misleading; the measurement itself is unchanged here.
-
-The `seconds` column in `outputs/pcap_diff.csv` comes from a run slowed by other load on the
-machine (total 9,860 s); an earlier run of the same 88 took 451 s, and the reader alone takes
-11 s on `lidar attack / router-any / ptcp`, which that run logged at 3,868 s.
-

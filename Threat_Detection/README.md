@@ -116,7 +116,7 @@ writes `outputs/alphabet_verdict.png` alongside `flag_auc.csv`.
 The two sweeps do not have the same row count, and the gap is not missing captures.
 `sweep_results.csv` covers both capture methods and holds 88 rows. `statemachine_sweep.csv`
 runs one method per invocation, so 44 strata, and excludes two: the quarantined zero-timestamp
-capture (`nginx attack / pod-robot-controller`) and `injection attack / router-flannel`, which
+capture (`nginx attack / pod-robot-controller`; see "Capture to packet rows" for its cause) and `injection attack / router-flannel`, which
 has too few flows left after boundary-crossing segments are dropped. That leaves 42. Run it
 twice, once per method, to compare against the 88-row file.
 
@@ -138,22 +138,27 @@ What the corpus actually is, read from the files rather than their names:
   capture v2, microsecond timestamps). The reader goes by the magic number.
 - `benign/` and `injection attack/` keep their captures flat under `pcapng files/`; the
   other two nest them under `{tcp,ptcp}/<level> level/`.
-- 14 capture files end mid-record. In at least one (`injection attack/node-child4-ptcp`) the
-  real data stops at 4.58 GB of a 10.8 GB file and the rest is zeros. The sponsor's CSVs
-  were made from these same cut files.
+- 14 capture files end mid-record, their tails filled with zeros. In
+  `injection attack/node-child4-ptcp` the real data stops at 4.58 GB of a 10.8 GB file. The
+  sponsor's CSVs were made from these same cut files.
 
 The converter copies the sponsor's conversion where it is surprising rather than correcting
 it, so the rows match; `SPONSOR_QUIRKS` in `pcap_rows.py` lists each rule with its evidence.
+The one deliberate exception is a zero-filled tail, which the reader stops at instead of
+reading zeros as packets.
 The ones that change a counted feature: `is_http` matches port 80 or 8080 on either side, and
 an ICMP error message takes its ports from the packet it quotes.
 
-Measured 2026-11-03 over all 88 captures, 6,198,760 rows: every cell of every row identical to
-the sponsor's CSV, and the window tables equal on 87. The 88th is the quarantined
-`nginx attack / pod-robot-controller / tcp`, unusable on both sides: its 64,853 zero
-timestamps are in the capture file itself, frames too short to carry a header, so the
-quarantine reflects the recording, not the sponsor's conversion. `pcap_diff.py` counts 74
-captures Tier-A exact and the other 14 "identical but cut short at the source", because a
-file cut mid-record is never called complete.
+Measured 2026-11-03 over all 88 captures, 461 seconds: every regenerated row identical, cell
+for cell, to the sponsor's row at the same position, and the window tables equal on 87.
+`pcap_diff.py` counts 74 captures Tier-A exact and 13 "identical but cut short at the source",
+because a file cut mid-record is never called complete.
+
+The 88th is the quarantined `nginx attack / pod-robot-controller / tcp`, and the converter
+explains it. Its recording ends at frame 155,603, 3.56 GB into a 3.75 GB file; the rest is
+zeros. The sponsor's conversion read 64,853 of those zero records as packets with timestamp
+0, which is what made the capture unusable. The converter stops at the first zero record, so
+its version of this capture is 155,603 real frames and can be windowed.
 
 ## Adding a detector
 

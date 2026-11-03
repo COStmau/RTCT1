@@ -20,10 +20,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from data_io import MANIFEST_NAME, PACKET_COLUMNS, load_capture, load_manifest, resolve_output
+from data_io import (MANIFEST_NAME, PACKET_COLUMNS, load_capture, load_manifest, resolve_output,
+                     timebase_issues)
 from features import make_windows
 from pcap_rows import COLUMNS, capture_rows, format_cell
-from data_io import timebase_issues
 
 TIER_A = {"frame_number", *PACKET_COLUMNS}
 MIN_FREE_BYTES = 20e9              # --regen-out stops before the disk drops below this
@@ -109,7 +109,9 @@ def summarize(results):
             column, count = part.rsplit(":", 1)
             totals[column] = totals.get(column, 0) + int(count)
     columns = ", ".join(f"{c}:{n}" for c, n in sorted(totals.items())) or "none"
-    skipped = len(results) - len(scored)
+    notes = results["note"].fillna("")
+    failed = int(notes.str.startswith("error").sum())
+    skipped = len(results) - len(scored) - failed
     # A capture file cut off mid-record is never called exact, but when the sponsor's CSV was
     # made from the same cut file every row can still agree. Say so rather than hide it.
     cut_short = int((~scored["tier_a_exact"].astype(bool) & (scored["mismatch_cells"] == 0)
@@ -119,6 +121,7 @@ def summarize(results):
             + (f"; {cut_short} more identical but cut short at the source" if cut_short else "")
             + f"; windows equal on {equal}"
             + (f"; {skipped} skipped" if skipped else "")
+            + (f"; {failed} failed (see note)" if failed else "")
             + f"\nColumns that differ anywhere: {columns}")
 
 
@@ -128,7 +131,14 @@ def _check_free_space(directory, pcap_size):
         raise OSError(f"less than {MIN_FREE_BYTES / 1e9:.0f} GB would remain free in {directory}")
 
 
-def run(manifest, root, only=None, labels=None, limit=None, max_gb=None, regen_out=None):
+def run(manifest, root, only=None, labels=None, limit=None, max_gb=None, regen_out=None,
+        out_file=None):
+    """Compare every selected capture, smallest first.
+
+    A capture that cannot be read is recorded with its error and the run moves on, and the
+    results so far are rewritten to out_file after every capture: a full run takes hours,
+    and one bad file must not cost the rest.
+    """
     captures = manifest.copy()
     if only:
         captures = captures[captures["method"] == only]
@@ -150,8 +160,13 @@ def run(manifest, root, only=None, labels=None, limit=None, max_gb=None, regen_o
                 Path(regen_out).mkdir(parents=True, exist_ok=True)
                 _check_free_space(regen_out, capture["pcap"].stat().st_size)
                 regen_path = Path(regen_out) / f"{capture['scenario']}--{Path(capture['path']).name}"
-            row.update(compare_capture(capture["pcap"], capture["path"], regen_path))
+            try:
+                row.update(compare_capture(capture["pcap"], capture["path"], regen_path))
+            except ValueError as error:
+                row["note"] = f"error: {error}"
         rows.append(row)
+        if out_file is not None:
+            pd.DataFrame(rows).to_csv(out_file, index=False)
         print(f"[{number}/{len(captures)}] {row['scenario']} {row['label']} {row['method']}"
               f" rows={row.get('rows_regen', '-')} tierA={row.get('tier_a_exact', '-')}"
               f" windows={row.get('windows', '-')} {row.get('seconds', '-')}s {row['note']}",
@@ -179,8 +194,7 @@ def main(argv=None):
     manifest = load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest)
     results = run(manifest, local_paths.KUBEDATA_ROOT, args.only,
                   args.labels.split(",") if args.labels else None, args.limit, args.max_gb,
-                  args.regen_out)
-    results.to_csv(out_file, index=False)
+                  args.regen_out, out_file)
     print(f"\nWrote {out_file}")
     print(summarize(results))
 

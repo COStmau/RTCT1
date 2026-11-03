@@ -59,12 +59,18 @@ class CaptureReader:
         size = os.path.getsize(self.path)
         with open(self.path, "rb") as handle:
             walk = self._pcap if self.format == "pcap" else self._pcapng
-            yield from walk(handle, size)
+            try:
+                yield from walk(handle, size)
+            except struct.error as error:     # a field that runs past what its block holds
+                raise ValueError(f"{self.path}: malformed capture ({error})") from None
 
     def _linktype(self, linktype):
         if linktype not in LINKTYPES:
             raise ValueError(f"{self.path}: unsupported linktype {linktype}")
         return linktype
+
+    def _malformed(self, what):
+        return ValueError(f"{self.path}: malformed {what}")
 
     def _truncated(self, number):
         self.warnings.append(f"truncated after frame {number}")
@@ -75,6 +81,7 @@ class CaptureReader:
         if len(header) < 20:
             raise ValueError(f"{self.path}: truncated pcap global header")
         # The top bits of the linktype field can carry FCS information; the type is the low 16.
+        snaplen = struct.unpack(order + "I", header[12:16])[0]
         linktype = self._linktype(struct.unpack(order + "I", header[16:])[0] & 0xFFFF)
         number = 0
         while True:
@@ -83,7 +90,11 @@ class CaptureReader:
                 return
             sec, frac, incl_len, orig_len = (struct.unpack(order + "IIII", record)
                                               if len(record) == 16 else (0, 0, 0, 0))
-            if len(record) < 16 or handle.tell() + incl_len > size:
+            # pcap has no end marker, so a zero-filled tail reads as records of zeros. A record
+            # that is empty, longer than the wire frame, or past the snaplen is not a record.
+            if (len(record) < 16 or handle.tell() + incl_len > size
+                    or (incl_len == 0 and orig_len == 0) or incl_len > orig_len
+                    or (snaplen and incl_len > snaplen)):
                 self._truncated(number)
                 return
             data = handle.read(min(incl_len, HEAD_BYTES))
@@ -119,10 +130,16 @@ class CaptureReader:
                 return
             handle.seek(start + 8)
             if block_type == IDB:
+                if length < 20:
+                    raise self._malformed(f"interface block at {start}")
                 interfaces.append(self._interface(handle.read(length - 12), order))
             elif block_type == EPB:
+                if length < 32:
+                    raise self._malformed(f"packet block at {start}")
                 interface, high, low, incl_len, orig_len = struct.unpack(order + "IIIII",
                                                                          handle.read(20))
+                if incl_len > length - 32:
+                    raise self._malformed(f"packet block at {start}: captured length past its block")
                 if interface >= len(interfaces):
                     raise ValueError(f"{self.path}: packet on undeclared interface {interface}")
                 linktype, digits = interfaces[interface]
@@ -144,6 +161,8 @@ class CaptureReader:
             if code == 0:
                 break
             if code == TSRESOL:
+                if not value:
+                    raise self._malformed("if_tsresol option")
                 if value[0] & 0x80:
                     raise ValueError(f"{self.path}: base-2 if_tsresol is not supported")
                 digits = value[0]
