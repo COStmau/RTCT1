@@ -1271,5 +1271,153 @@ class FlagScoreChecks(unittest.TestCase):
             self.assertEqual(flag_scores.verdict_rows(summary)[0]["label"], "pod-lidar")
 
 
+# --- Capture files built byte by byte, so the reader is tested without the Drive -------
+
+def _capture_file(blob, name="capture.pcapng"):
+    import tempfile
+    path = Path(tempfile.mkdtemp()) / name
+    path.write_bytes(blob)
+    return path
+
+
+def _pcap_bytes(frames, linktype=276, nano=False, big_endian=False, snaplen=262144):
+    """A classic pcap. frames: (sec, frac, data, orig_len) tuples."""
+    import struct
+    order = ">" if big_endian else "<"
+    magic = 0xA1B23C4D if nano else 0xA1B2C3D4
+    blob = struct.pack(order + "IHHiIII", magic, 2, 4, 0, 0, snaplen, linktype)
+    for sec, frac, data, orig_len in frames:
+        blob += struct.pack(order + "IIII", sec, frac, len(data), orig_len) + data
+    return blob
+
+
+def _pcapng_block(block_type, body):
+    import struct
+    body += b"\0" * (-len(body) % 4)
+    total = len(body) + 12
+    return struct.pack("<II", block_type, total) + body + struct.pack("<I", total)
+
+
+def _pcapng_option(code, value):
+    import struct
+    return struct.pack("<HH", code, len(value)) + value + b"\0" * (-len(value) % 4)
+
+
+def _pcapng_shb():
+    import struct
+    return _pcapng_block(0x0A0D0D0A, struct.pack("<IHHq", 0x1A2B3C4D, 1, 0, -1))
+
+
+def _pcapng_idb(linktype=1, tsresol=None, snaplen=65535):
+    import struct
+    body = struct.pack("<HHI", linktype, 0, snaplen)
+    if tsresol is not None:
+        body += _pcapng_option(9, bytes([tsresol])) + _pcapng_option(0, b"")
+    return _pcapng_block(1, body)
+
+
+def _pcapng_epb(interface, ts_units, data, orig_len=None):
+    import struct
+    head = struct.pack("<IIIII", interface, ts_units >> 32, ts_units & 0xFFFFFFFF,
+                       len(data), orig_len or len(data))
+    return _pcapng_block(6, head + data)
+
+
+def _pcapng_bytes(*blocks):
+    """A pcapng: one section header, then the given blocks in order."""
+    return _pcapng_shb() + b"".join(blocks)
+
+
+class PcapReadChecks(unittest.TestCase):
+    def frames(self, blob, name="capture.pcapng"):
+        import pcap_read
+        reader = pcap_read.CaptureReader(_capture_file(blob, name))
+        return list(reader.frames()), reader
+
+    def test_detect_format_by_magic_not_extension(self):
+        import pcap_read
+        path = _capture_file(_pcap_bytes([(1, 0, b"x" * 20, 20)]), "pod-nginx-tcp.pcapng")
+        self.assertEqual(pcap_read.detect_format(path), "pcap")
+        self.assertEqual(pcap_read.detect_format(_capture_file(_pcapng_bytes(_pcapng_idb()))),
+                         "pcapng")
+        with self.assertRaisesRegex(ValueError, "unknown capture magic"):
+            pcap_read.detect_format(_capture_file(b"garbage!"))
+
+    def test_pcap_little_endian_micro(self):
+        data = bytes(range(77))
+        (frame,), _ = self.frames(_pcap_bytes([(1771545908, 877129, data, 77)]))
+        self.assertEqual((frame.number, frame.ts_sec, frame.ts_frac, frame.ts_digits),
+                         (1, 1771545908, 877129, 6))
+        self.assertEqual((frame.orig_len, frame.data, frame.linktype), (77, data, 276))
+
+    def test_pcap_nano_and_big_endian(self):
+        data = bytes(range(60))
+        (frame,), _ = self.frames(_pcap_bytes([(1771545908, 877129001, data, 60)],
+                                              linktype=1, nano=True, big_endian=True))
+        self.assertEqual((frame.ts_sec, frame.ts_frac, frame.ts_digits), (1771545908, 877129001, 9))
+        self.assertEqual((frame.data, frame.linktype), (data, 1))
+
+    def test_pcapng_nanosecond_resolution(self):
+        blob = _pcapng_bytes(_pcapng_idb(tsresol=9),
+                             _pcapng_epb(0, 1771545910906831300, b"y" * 71))
+        (frame,), _ = self.frames(blob)
+        self.assertEqual((frame.ts_sec, frame.ts_frac, frame.ts_digits),
+                         (1771545910, 906831300, 9))
+        self.assertEqual((frame.orig_len, frame.linktype), (71, 1))
+
+    def test_pcapng_resolution_defaults_to_microseconds(self):
+        (frame,), _ = self.frames(_pcapng_bytes(_pcapng_idb(), _pcapng_epb(0, 1771545910906831, b"z" * 60)))
+        self.assertEqual((frame.ts_sec, frame.ts_frac, frame.ts_digits), (1771545910, 906831, 6))
+
+    def test_second_idb_mid_file_sets_resolution(self):
+        blob = _pcapng_bytes(_pcapng_idb(linktype=276, tsresol=6),
+                             _pcapng_epb(0, 1771545910000001, b"a" * 40),
+                             _pcapng_idb(linktype=1, tsresol=9),
+                             _pcapng_epb(1, 1771545910000000002, b"b" * 40))
+        first, second = self.frames(blob)[0]
+        self.assertEqual((first.ts_digits, first.linktype), (6, 276))
+        self.assertEqual((second.number, second.ts_digits, second.ts_frac, second.linktype),
+                         (2, 9, 2, 1))
+
+    def test_long_frame_is_cut_to_head_bytes(self):
+        import pcap_read
+        big = bytes(65535)
+        frames, _ = self.frames(_pcap_bytes([(1, 0, big, 65549), (2, 0, b"next" * 10, 40)]))
+        self.assertEqual(len(frames[0].data), pcap_read.HEAD_BYTES)
+        self.assertEqual(frames[0].orig_len, 65549)
+        self.assertEqual((frames[1].ts_sec, frames[1].data), (2, b"next" * 10))
+
+    def test_truncated_tail_warns_and_keeps_complete_frames(self):
+        blob = _pcap_bytes([(1, 0, b"a" * 100, 100), (2, 0, b"b" * 100, 100),
+                            (3, 0, b"c" * 100, 100)])
+        frames, reader = self.frames(blob[:-58])
+        self.assertEqual([f.ts_sec for f in frames], [1, 2])
+        self.assertEqual(reader.warnings, ["truncated after frame 2"])
+
+    def test_truncated_pcapng_block_warns(self):
+        blob = _pcapng_bytes(_pcapng_idb(), _pcapng_epb(0, 1, b"a" * 64), _pcapng_epb(0, 2, b"b" * 64))
+        frames, reader = self.frames(blob[:-30])
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(reader.warnings, ["truncated after frame 1"])
+
+    def test_unsupported_linktype_raises_with_path(self):
+        path = _capture_file(_pcap_bytes([(1, 0, b"x" * 20, 20)], linktype=101))
+        import pcap_read
+        with self.assertRaisesRegex(ValueError, "unsupported linktype 101") as caught:
+            list(pcap_read.CaptureReader(path).frames())
+        self.assertIn(str(path), str(caught.exception))
+
+    def test_simple_packet_block_is_refused(self):
+        import pcap_read
+        path = _capture_file(_pcapng_bytes(_pcapng_idb(), _pcapng_block(3, b"\0" * 8)))
+        with self.assertRaisesRegex(ValueError, "unsupported pcapng block type 3"):
+            list(pcap_read.CaptureReader(path).frames())
+
+    def test_reader_imports_without_local_paths(self):
+        script = "import sys; sys.path.insert(0, '.'); import pcap_read; print(pcap_read.HEAD_BYTES)"
+        out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
