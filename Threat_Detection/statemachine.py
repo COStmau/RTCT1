@@ -37,6 +37,12 @@ SWEEP_CSV = "statemachine_sweep.csv"
 # a 5 s LiDAR replay loop and leaves room for a few clean windows of runway after it.
 FORGET_SECONDS = 8.0
 
+# Where a frequency scorer's training count per state comes from. "visits" counts the start
+# state once per training trace start, which a test trace never adds; "entries" counts only
+# transitions into a state, the same thing a test trace's visits count. Entries won under the
+# rule root_verdict.py fixed before measuring (windowed_scores.py, PROGRESS.md 2026-11-03).
+TRAIN_COUNTS = "entries"
+
 
 def load_flow_packets(path, flags=False):
     """Read only the packet columns flows are built from; flag columns when asked."""
@@ -470,6 +476,24 @@ def trace_states(pdfa, trace):
     return states
 
 
+def state_train_counts(pdfa, source=TRAIN_COUNTS):
+    """{state key: training count}, from `node.visits` or from entries into the state.
+
+    The two differ only where training traces started: every state but the start state is
+    entered exactly as often as it is visited, and the start state's visits add one per
+    training trace.
+    """
+    if source == "visits":
+        return {id(node): node.visits for node, _ in pdfa.probs.values()}
+    if source != "entries":
+        raise ValueError(f"Unknown training count source: {source!r}")
+    counts = {id(node): 0 for node, _ in pdfa.probs.values()}
+    for node, outgoing in pdfa.probs.values():
+        for symbol, (child, _) in outgoing.items():
+            counts[id(child)] += node.edge[symbol]
+    return counts
+
+
 class FrequencyScorer:
     """SEQUENT's rolling score: test-time state frequency against a fixed training count.
 
@@ -480,9 +504,9 @@ class FrequencyScorer:
     counting. `WindowedFrequencyScorer` is the bounded version.
     """
 
-    def __init__(self, pdfa):
+    def __init__(self, pdfa, train_counts=TRAIN_COUNTS):
         self.pdfa = pdfa
-        self.train = {id(node): node.visits for node, _ in pdfa.probs.values()}
+        self.train = state_train_counts(pdfa, train_counts)
         self.total_train = sum(self.train.values())
         self.test = Counter()
         self.states_seen = 0
@@ -513,12 +537,12 @@ class WindowedFrequencyScorer:
     window the two scorers return bit-identical scores; the tests hold that.
     """
 
-    def __init__(self, pdfa, forget_seconds=FORGET_SECONDS):
+    def __init__(self, pdfa, forget_seconds=FORGET_SECONDS, train_counts=TRAIN_COUNTS):
         if not forget_seconds > 0:
             raise ValueError("forget_seconds must be positive.")
         self.pdfa = pdfa
         self.forget_seconds = float(forget_seconds)
-        self.train = {id(node): node.visits for node, _ in pdfa.probs.values()}
+        self.train = state_train_counts(pdfa, train_counts)
         self.total_train = sum(self.train.values())
         self.visits = deque()          # (when, state key), oldest first
         self.counts = Counter()
@@ -562,17 +586,18 @@ class WindowedFrequencyScorer:
         return float(sum(map(sum, terms)))
 
 
-def frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds=None):
+def frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds=None,
+                               train_counts=TRAIN_COUNTS):
     """Most anomalous state-frequency score per window; NaN where no trace ended.
 
     `forget_seconds=None` is cumulative SEQUENT; a number is the windowed scorer. Each trace
     is timed by the start of its last flow, the same convention `flags_for_windows` uses.
     """
     if forget_seconds is None:
-        scorer = FrequencyScorer(model["pdfa"])
+        scorer = FrequencyScorer(model["pdfa"], train_counts)
         score = lambda trace, when: scorer.score(trace)
     else:
-        score = WindowedFrequencyScorer(model["pdfa"], forget_seconds).score
+        score = WindowedFrequencyScorer(model["pdfa"], forget_seconds, train_counts).score
     symbols = list(encode(flows, model["enc"]))
     trace_len = model["trace_len"]
     scores = np.full(n_windows, np.nan)

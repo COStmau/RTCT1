@@ -30,7 +30,7 @@ from detectors import BENIGN_QUANTILE, PERSISTENCE_WINDOW, persistent_mask
 from evaluation import BULK_LABELS
 from reporting import CLEAR_WINDOWS
 from features import WINDOW_SIZE
-from statemachine import (FORGET_SECONDS, FrequencyScorer, WindowedFrequencyScorer, encode,
+from statemachine import (FORGET_SECONDS, TRAIN_COUNTS, FrequencyScorer, WindowedFrequencyScorer, encode,
                           fit_model, frequency_cutoff, frequency_scores_by_window, make_flows,
                           n_windows_for, pdfa_states_in_order, score_cutoff, score_flows,
                           load_flow_packets, segment_flows, split_flows, trace_score,
@@ -111,6 +111,7 @@ def build_story(benign, targets, cluster_captures, vantage, forget_seconds=FORGE
     return {
         "meta": {"vantage": vantage, "level": level_from_label(vantage),
                  "forget_seconds": float(forget_seconds), "trace_len": model["trace_len"],
+                 "train_counts": TRAIN_COUNTS,
                  "window_size": float(WINDOW_SIZE), "persistence": PERSISTENCE_WINDOW,
                  "clear_windows": CLEAR_WINDOWS,
                  "train_flows": len(train), "holdout_flows": len(holdout),
@@ -260,8 +261,9 @@ def _capture(scenario, flows, t0, n_windows, duration, model, found, forget, cut
             "windowed": float(sum(map(sum, terms))),
             "cumulative": total,
             "terms": [[float(term) for term in state_terms] for state_terms in terms],
-            # exact integers: the page would otherwise invert rounded logarithms
-            "visits": [[int(np.rint(np.expm1(state_terms[0]))), int(state.visits)]
+            # exact integers: the page would otherwise invert rounded logarithms; the training
+            # count is the scorer's own (statemachine.TRAIN_COUNTS), not always node.visits
+            "visits": [[int(np.rint(np.expm1(state_terms[0]))), int(windowed.train[id(state)])]
                        for state_terms, state in zip(terms, reached)],
             "expired": [[float(seen), ids[key]] for seen, key in expired],
         })

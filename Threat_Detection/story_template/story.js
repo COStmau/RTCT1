@@ -846,7 +846,9 @@ function machineView(g, box) {
       <div class="tt-row">${n} visit${n === 1 ? "" : "s"} on the clock now</div>
       <div class="tt-row">${f1(expected(s))} expected in ${forget} s at the training rate</div>
       ${s.id === 0 ? `<div class="tt-row">every trace starts here; only walks back in are counted.
-        The scorer's training count for this state (${fmt(s.visits)}) also includes ${fmt(s.visits - s.entries)} trace starts.</div>` : ""}`;
+        ${S.meta.train_counts === "visits"
+          ? `The scorer's training count for this state (${fmt(s.visits)}) also includes ${fmt(s.visits - s.entries)} trace starts.`
+          : `The scorer's training count for this state is its ${fmt(s.entries)} entries; its ${fmt(s.visits - s.entries)} trace starts are not counted.`}</div>` : ""}`;
   });
 
   const dots = g.append("g");
@@ -1202,9 +1204,9 @@ function detectionPanel() {
         <span class="sid" style="background:${stateColor(d.state)}">${d.state}</span>
         <span class="bar" style="width:${Math.max(4, 100 * Math.abs(d.total) / maxC)}%"></span>
         <span class="num">${f1(d.total)}</span>
-        <span class="sub">${fmt(d.clock)} on its clock · ${fmt(d.trained)} in training${d.state === 0 ? ` (incl. ${fmt(starts)} trace starts)` : ""}</span>`).join("")
+        <span class="sub">${fmt(d.clock)} on its clock · ${fmt(d.trained)} in training${d.state === 0 && S.meta.train_counts === "visits" ? ` (incl. ${fmt(starts)} trace starts)` : ""}</span>`).join("")
         || (detail ? "<p>No state reached: nothing to count.</p>" : "")}</div>
-      <p style="margin-top:8px">Each state walked into adds log(clock visits + 1) − log(training visits + 1),
+      <p style="margin-top:8px">Each state walked into adds log(clock visits + 1) − log(training entries + 1),
         plus the training total and how many states are on the clock. A window is judged on its
         highest trace, so one trace over the line flags the whole second.</p>
       <h2>Forgetting</h2>
