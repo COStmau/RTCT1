@@ -28,11 +28,19 @@ testable on their own.
 | `detectors.py` | Every detection method behind one interface: `fit` → `calibrate` → `score` → `flag`, with optional `explain`. The z-score baseline is median + MAD. Add one by writing a class and adding it to `REGISTRY`. |
 | `reporting.py` | Console reports, charts, the `SHOWCASE.md` handover file, and the event log the response side reads. Takes results, renders them; computes no detection logic. Pins matplotlib to `Agg`, so nothing here opens a window. |
 
+**Capture conversion** — capture files to the packet CSVs `data_io` reads. Upstream of
+the layers above and independent of them; see "Capture to packet rows" below.
+
+| File | What it does |
+|---|---|
+| `pcap_read.py` | The two capture containers (pcap, pcapng) to raw frames. Format from the magic number, never the extension. Reads at most 256 bytes of each frame. |
+| `pcap_rows.py` | Frames to the sponsor's 34-column packet rows, written as their CSV. Copies the sponsor's own quirks on purpose; `SPONSOR_QUIRKS` in its docstring lists them. |
+
 **The one entry point** — everything a person looks at goes through it.
 
 | File | What it does |
 |---|---|
-| `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 are the experiments below; 8 regenerates every artifact; 9 runs the tests. |
+| `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 are the experiments below; 8 regenerates every artifact; 9 runs the tests; 10 summarizes the last capture-conversion diff. |
 
 **The experiments** — each runs one measurement and writes its own CSV. `demo.py` runs
 these as documented; they also run on their own.
@@ -44,6 +52,7 @@ these as documented; they also run on their own.
 | `feature_value.py` | Per-feature value: threshold-free separation (auc) and detection at a 5% benign budget. |
 | `statemachine.py` | PDFA anomaly detection after Cao et al. (ARES 2022): packet flows to symbols, ALERGIA state merging, trace likelihood flags. A second detection method; `demo.py` item 3 is its presentation. `--flags` adds TCP SYN/RST presence to the symbol; default is the old alphabet. |
 | `flag_scores.py` | Per-window anomaly scores under the plain and flag alphabets, plus AUROC and matched-rate detection per stratum. Prints the pre-registered verdict. |
+| `pcap_diff.py` | Regenerates every sponsor packet CSV from its capture file and diffs the two row for row, plus the window tables. Writes `outputs/pcap_diff.csv`. Reads every capture, so `demo.py` only summarizes the last run. |
 
 **Supporting files**
 
@@ -82,12 +91,13 @@ The menu, in order:
  7  Feature value   what each measurement is worth on its own
  8  Everything      all of the above, in the order the report needs it
  9  Tests           the unit suite
+10  Pcap diff       regenerated packet rows against the sponsor CSVs (last run's summary)
 ```
 
 Underneath the menu, the same commands run directly:
 
 ```bash
-.venv/bin/python -m unittest tests                    # 92 tests
+.venv/bin/python -m unittest tests                    # 144 tests
 .venv/bin/python sweep.py                             # all 88 captures, about 8 seconds
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv
 .venv/bin/python compare.py
@@ -95,6 +105,9 @@ Underneath the menu, the same commands run directly:
 .venv/bin/python statemachine.py                      # PDFA sweep, 42 rows, about 13 seconds
 .venv/bin/python statemachine.py --method ptcp --out statemachine_sweep_ptcp.csv
 .venv/bin/python flag_scores.py                       # both alphabets' window scores, AUROC, verdict chart
+.venv/bin/python pcap_diff.py                         # all 88 captures regenerated and diffed
+.venv/bin/python pcap_diff.py --max-gb 0.2            # only the 64 captures under 0.2 GB, for quick checks
+.venv/bin/python pcap_diff.py --report                # summary of the last run, no Drive needed
 ```
 
 `sweep.py` writes `outputs/sweep_summary.png` and `outputs/detection_gap.png`; `flag_scores.py`
@@ -110,6 +123,37 @@ twice, once per method, to compare against the 88-row file.
 Generated files always land in `Threat_Detection/outputs/`, whichever directory you run
 from. Delete `outputs/capture_manifest.csv` after any dataset change, or the sweep scores
 the previous inventory.
+
+## Capture to packet rows
+
+`pcap_read.py` and `pcap_rows.py` turn a capture file into the same 34-column packet CSV
+the sponsor supplied, so a capture taken today can be windowed and scored with no dataset in
+between. `pcap_diff.py` is the proof: it regenerates every sponsor CSV from its capture and
+diffs the two.
+
+What the corpus actually is, read from the files rather than their names:
+
+- Every capture is named `.pcapng`, but only the 44 ptcp ones are pcapng (ptcpdump v0.37.0,
+  Ethernet link layer, nanosecond timestamps). The 44 tcp ones are classic pcap (Linux cooked
+  capture v2, microsecond timestamps). The reader goes by the magic number.
+- `benign/` and `injection attack/` keep their captures flat under `pcapng files/`; the
+  other two nest them under `{tcp,ptcp}/<level> level/`.
+- 14 capture files end mid-record. In at least one (`injection attack/node-child4-ptcp`) the
+  real data stops at 4.58 GB of a 10.8 GB file and the rest is zeros. The sponsor's CSVs
+  were made from these same cut files.
+
+The converter copies the sponsor's conversion where it is surprising rather than correcting
+it, so the rows match; `SPONSOR_QUIRKS` in `pcap_rows.py` lists each rule with its evidence.
+The ones that change a counted feature: `is_http` matches port 80 or 8080 on either side, and
+an ICMP error message takes its ports from the packet it quotes.
+
+Measured 2026-11-03 over all 88 captures, 6,198,760 rows: every cell of every row identical to
+the sponsor's CSV, and the window tables equal on 87. The 88th is the quarantined
+`nginx attack / pod-robot-controller / tcp`, unusable on both sides: its 64,853 zero
+timestamps are in the capture file itself, frames too short to carry a header, so the
+quarantine reflects the recording, not the sponsor's conversion. `pcap_diff.py` counts 74
+captures Tier-A exact and the other 14 "identical but cut short at the source", because a
+file cut mid-record is never called complete.
 
 ## Adding a detector
 

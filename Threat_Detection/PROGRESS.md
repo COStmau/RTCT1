@@ -238,3 +238,38 @@ Separate measurement, worth keeping: the nominal 5% cutoff is applied to trace s
 window flags when its most anomalous trace clears the cutoff, so the median realised benign
 window rate across strata is 0.217, not 0.05. Quote the realised rate beside any detection
 number.
+
+## Pcap converter verdict (2026-11-03)
+
+Built `pcap_read.py`, `pcap_rows.py` and `pcap_diff.py` so a capture file becomes the packet
+CSV the pipeline reads without the sponsor's conversion step. Judged by a diff fixed before
+the run: Tier A is `frame_number` plus every column the pipeline reads, which must be
+identical, with equal window tables; Tier B is the other 22 columns, counted.
+
+Result over all 88 captures (6,198,760 rows): zero differing cells in any column, Tier A or
+B; row counts equal on all 88; window tables equal on 87, the 88th being the quarantined
+zero-timestamp capture, unusable on both sides. 74 are called exact and 14 "identical but cut
+short at the source".
+
+Found on the way, each now a rule with a test built from the real frame:
+
+- The tcp captures are classic pcap with Linux cooked headers, not pcapng; the extension is
+  wrong for half the corpus.
+- Sponsor rules the converter copies: HTTP is port 80 or 8080; ICMP errors take the quoted
+  packet's ports; ICMPv4 prints zero type/code blank, ICMPv6 prints them; IPv6 extension
+  headers are looked behind for the transport while `proto` keeps the first next-header; an
+  802.3 length field leaves `eth_type` blank, a zero type field prints `0x0000`.
+- 14 capture files are cut mid-record, at least one with 6.2 GB of zeros after the real
+  data. The reader checks each pcapng block's closing length so a half-written last frame is
+  dropped, as the sponsor's conversion dropped it. Worth raising with the sponsor: those
+  files lost data.
+- The quarantined `nginx attack / pod-robot-controller / tcp` carries its zero timestamps in
+  the capture file, so the quarantine stays.
+- `data_io.at_snaplen` counts 64 KB frames (65535 plus the link header), which are offloaded
+  super-frames, not snaplen truncation: the tcp captures have a 262144-byte snaplen. The name
+  is misleading; the measurement itself is unchanged here.
+
+The `seconds` column in `outputs/pcap_diff.csv` comes from a run slowed by other load on the
+machine (total 9,860 s); an earlier run of the same 88 took 451 s, and the reader alone takes
+11 s on `lidar attack / router-any / ptcp`, which that run logged at 3,868 s.
+
