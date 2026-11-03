@@ -16,9 +16,10 @@ Each source keeps its own Prometheus label:
 
 All sources are exposed through one /metrics endpoint.
 
-When available, the exporter also loads the frozen baseline associated with each source.
-It accepts either the compact manifest (source,path,window_seconds) or the
-older extended manifest (source,processed_file,baseline_file,status).
+When available, load per-source frozen robust baselines from data/baseline/robust.
+The baseline center is always the median; scale is 1.4826*MAD unless MAD == 0,
+when it falls back to sample standard deviation. A constant feature (both zero)
+remains unscorable. Accepts compact and extended batch manifest schemas.
 """
 
 import argparse
@@ -101,32 +102,19 @@ replay_active = Gauge(
 
 
 # =========================================================
-# Frozen baseline metrics
+# Frozen robust baseline metrics (median/MAD, std fallback)
 # =========================================================
 
-baseline_mean = Gauge(
-    "benign_baseline_mean",
-    "Frozen benign baseline mean",
-    ["source", "metric"]
-)
-
-baseline_stddev = Gauge(
-    "benign_baseline_stddev",
-    "Frozen benign baseline standard deviation",
-    ["source", "metric"]
-)
-
-baseline_lower = Gauge(
-    "benign_baseline_lower_3sigma",
-    "Frozen benign baseline lower 3-sigma boundary",
-    ["source", "metric"]
-)
-
-baseline_upper = Gauge(
-    "benign_baseline_upper_3sigma",
-    "Frozen benign baseline upper 3-sigma boundary",
-    ["source", "metric"]
-)
+baseline_median = Gauge("benign_baseline_median", "Frozen benign training median", ["source", "metric"])
+baseline_mad = Gauge("benign_baseline_mad", "Unscaled median absolute deviation", ["source", "metric"])
+baseline_scale = Gauge("benign_baseline_scale", "1.4826 * MAD, or sample std dev when MAD is zero", ["source", "metric"])
+baseline_sample_stddev = Gauge("benign_baseline_sample_stddev", "Training sample standard deviation (fallback diagnostic)", ["source", "metric"])
+baseline_lower = Gauge("benign_baseline_lower_3scale", "Median minus 3 times selected scale", ["source", "metric"])
+baseline_upper = Gauge("benign_baseline_upper_3scale", "Median plus 3 times selected scale", ["source", "metric"])
+baseline_std_fallback = Gauge("benign_baseline_std_fallback_used", "1 if MAD was zero and sample std dev was used", ["source", "metric"])
+baseline_scale_available = Gauge("benign_baseline_scale_available", "1 if the fitted scale is valid and positive", ["source", "metric"])
+replay_robust_score = Gauge("benign_replay_robust_score", "(current - training median) / selected scale", ["source", "metric"])
+replay_outside_baseline = Gauge("benign_replay_outside_baseline", "1 if abs(robust score) exceeds 3; candidate only", ["source", "metric"])
 
 
 # These columns must exist in every processed replay CSV.
@@ -162,64 +150,53 @@ def set_gauge(gauge, source, value):
 
 
 def load_baseline_stats(baseline_file, source):
+    """Publish a frozen robust baseline and return scales for replay scoring.
+
+    The old mean/standard-deviation file format is rejected deliberately;
+    robust baselines must be trained with build_robust_baselines.py.
     """
-    Load one source's frozen baseline into Prometheus.
+    import math
 
-    These values remain constant throughout replay.
-    """
-
-    baseline_df = pd.read_csv(baseline_file)
-
-    required_baseline_columns = [
-        "feature",
-        "mean",
-        "std_dev",
-        "lower_3sigma",
-        "upper_3sigma",
-    ]
-
-    missing = [
-        column
-        for column in required_baseline_columns
-        if column not in baseline_df.columns
-    ]
-
+    df = pd.read_csv(baseline_file)
+    required = ["feature", "median", "mad", "std_dev", "scale", "scale_method",
+                "lower_3scale", "upper_3scale"]
+    missing = [col for col in required if col not in df.columns]
     if missing:
-        raise ValueError(
-            f"{baseline_file} is missing baseline columns: {missing}"
-        )
+        raise ValueError(f"{baseline_file} is not a robust baseline; missing {missing}")
 
-    for _, row in baseline_df.iterrows():
+    if df["feature"].isna().any() or df["feature"].duplicated().any():
+        raise ValueError(f"Invalid or duplicate feature names in {baseline_file}")
 
-        metric = row["feature"]
+    # Prevalidate everything before writing any gauges, avoiding partial baselines.
+    stats = {}
+    for _, row in df.iterrows():
+        feature = str(row["feature"])
+        if feature not in REQUIRED_COLUMNS:
+            continue
+        median = float(row["median"])
+        scale = float(row["scale"])
+        method = str(row["scale_method"])
+        if method not in {"scaled_mad", "std_fallback", "zero_variance", "insufficient_data"}:
+            raise ValueError(f"Unknown scale method {method!r} for {feature}")
+        available = math.isfinite(median) and math.isfinite(scale) and scale > 0
+        if method in ("scaled_mad", "std_fallback") and not available:
+            raise ValueError(f"Invalid scale for {feature} in {baseline_file}")
+        stats[feature] = {"median": median, "scale": scale, "method": method,
+                          "mad": float(row["mad"]), "std_dev": float(row["std_dev"]),
+                          "lower": float(row["lower_3scale"]), "upper": float(row["upper_3scale"]),
+                          "available": available}
 
-        baseline_mean.labels(
-            source=source,
-            metric=metric
-        ).set(
-            float(row["mean"])
-        )
-
-        baseline_stddev.labels(
-            source=source,
-            metric=metric
-        ).set(
-            float(row["std_dev"])
-        )
-
-        baseline_lower.labels(
-            source=source,
-            metric=metric
-        ).set(
-            float(row["lower_3sigma"])
-        )
-
-        baseline_upper.labels(
-            source=source,
-            metric=metric
-        ).set(
-            float(row["upper_3sigma"])
-        )
+    for feature, item in stats.items():
+        labels = {"source": source, "metric": feature}
+        baseline_median.labels(**labels).set(item["median"])
+        baseline_mad.labels(**labels).set(item["mad"])
+        baseline_scale.labels(**labels).set(item["scale"])
+        baseline_sample_stddev.labels(**labels).set(item["std_dev"])
+        baseline_lower.labels(**labels).set(item["lower"])
+        baseline_upper.labels(**labels).set(item["upper"])
+        baseline_std_fallback.labels(**labels).set(int(item["method"] == "std_fallback"))
+        baseline_scale_available.labels(**labels).set(int(item["available"]))
+    return stats
 
 
 def load_source(source, processed_file, baseline_file=None):
@@ -237,9 +214,10 @@ def load_source(source, processed_file, baseline_file=None):
 
     # Replaying the observations does not require a trained baseline.
     # Baseline series are emitted only if actual frozen statistics exist.
+    baseline_stats = {}
     if baseline_file is not None and baseline_file.is_file():
         try:
-            load_baseline_stats(baseline_file, source)
+            baseline_stats = load_baseline_stats(baseline_file, source)
             print(f"Frozen baseline loaded: {baseline_file}")
         except (ValueError, KeyError, OSError) as error:
             print(f"WARNING: frozen baseline for {source} could not be loaded: {error}")
@@ -253,10 +231,11 @@ def load_source(source, processed_file, baseline_file=None):
         "data": df,
         "position": 0,
         "finished": False,
+        "baseline_stats": baseline_stats,
     }
 
 
-def load_manifest(manifest_file):
+def load_manifest(manifest_file, baseline_dir):
     """Load all processed sources from either supported manifest format.
 
     Compact manifest generated by process_all_benign.py:
@@ -264,8 +243,9 @@ def load_manifest(manifest_file):
     Extended manifest:
         source,processed_file,baseline_file,status
 
-    Missing baselines are permitted during the exporter validation phase.
-    When present, frozen statistics must come from actual trained files.
+    Missing robust baselines are permitted during exporter validation.
+    Extended-manifest baseline_file is deliberately ignored; robust baselines
+    are read only from baseline_dir to avoid mixing old mean/std statistics.
     """
     manifest = pd.read_csv(manifest_file)
 
@@ -306,12 +286,9 @@ def load_manifest(manifest_file):
             print(f"WARNING: missing processed CSV for {source}: {processed_file}")
             continue
 
-        # The compact manifest has no baseline path. Discover the standard
-        # frozen-baseline filename in data/baseline, without generating one.
-        if "baseline_file" in manifest.columns and pd.notna(row["baseline_file"]):
-            baseline_file = Path(str(row["baseline_file"]))
-        else:
-            baseline_file = Path("data/baseline") / f"{source}_baseline_stats.csv"
+        # Always use the dedicated robust-baseline directory by default.
+        # This prevents accidentally loading legacy mean/std files.
+        baseline_file = baseline_dir / f"{source}_baseline_stats.csv"
 
         try:
             sources.append(load_source(source, processed_file, baseline_file))
@@ -388,6 +365,20 @@ def publish_row(source_state):
             source,
             row["window_start"]
         )
+
+    # Publish robust scores for trained metrics. These are *candidate* signals,
+    # not persistent anomaly alerts. Missing / constant features are unscorable.
+    import math
+    for feature, trained in source_state["baseline_stats"].items():
+        labels = {"source": source, "metric": feature}
+        observed = pd.to_numeric(row[feature], errors="coerce")
+        if trained["available"] and pd.notna(observed) and math.isfinite(float(observed)):
+            score = (float(observed) - trained["median"]) / trained["scale"]
+            replay_robust_score.labels(**labels).set(score)
+            replay_outside_baseline.labels(**labels).set(float(abs(score) > 3.0))
+        else:
+            replay_robust_score.labels(**labels).set(float("nan"))
+            replay_outside_baseline.labels(**labels).set(float("nan"))
 
     replay_row.labels(
         source=source
@@ -506,6 +497,11 @@ def main():
     )
 
     parser.add_argument(
+        "--baseline-dir", type=Path, default=Path("data/baseline/robust"),
+        help="Directory containing frozen median/MAD baseline files"
+    )
+
+    parser.add_argument(
         "--interval",
         type=float,
         default=5,
@@ -540,7 +536,7 @@ def main():
         )
 
     # Validate the manifest and CSV data before binding an HTTP port.
-    sources = load_manifest(manifest_file)
+    sources = load_manifest(manifest_file, args.baseline_dir)
 
     # One HTTP endpoint serves all loaded sources.
     print(f"Starting multi-source exporter on port {args.port}")

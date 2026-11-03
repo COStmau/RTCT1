@@ -1,0 +1,6 @@
+"source","multiplier","train_windows","heldout_windows","scorable_windows","any_feature_flagged","any_feature_fraction","longest_consecutive_flagged","candidate_3window_episodes"
+"pod-camera","3.0","9","4","4","0","0.0","0","0"
+"pod-lidar","3.0","9","4","4","2","0.5","1","0"
+"pod-nginx","3.0","9","4","4","3","0.75","2","0"
+"pod-robot-controller","3.0","9","5","5","5","1.0","5","1"
+"pod-robot-hardware","3.0","9","4","4","3","0.75","2","0"
