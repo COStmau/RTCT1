@@ -6,14 +6,18 @@ one /24 per node; services in 10.43/16) and the names of well-known ports.
 
   infer_cluster(captures)  {label: packet frame} -> hosts, pods, services, edges, vantages
   element_index(cluster)   ip -> the element id that address belongs to, or None
+  locate(cluster, ip)      an element for an address only an attack capture shows
 
 The rules, each pinned by a test in tests.ClusterChecks:
   - Each node capture claims one distinct host: the private address in the largest share of
     its packets, assigned greedily so the control plane, which every node talks to, goes to
-    the capture it dominates most. The pod /24 it sees most is that host's pod subnet.
+    the capture it dominates most. Only an address serving a cluster port, claimed by a
+    capture, or carrying a host-network pod is a node; API clients are LAN devices.
+  - A node's pod /24 is the one whose pods it sees talking to anything but the node itself
+    (its own bridge traffic); claims are one-to-one.
   - A pod capture names a pod when one pod address is in at least half of its non-local
-    packets. Otherwise the pod runs on the host network and sits on the host whose pod
-    subnet it sees most.
+    packets and in more than any host address. Otherwise the pod runs on the host network
+    and sits on the node address that dominates it.
   - A host serving the apiserver, etcd or k3s supervisor port is the control plane, one
     serving NFS is the storage server, and every other host is a worker.
   - Edges count packets per pair of elements at the vantage that saw the most of them: one
@@ -97,6 +101,17 @@ def _top_subnet(conversations, kinds):
     return max(sorted(subnets), key=subnets.get) if subnets else None
 
 
+def _local_subnets(conversations, kinds, own):
+    """Packets per pod /24 in which a pod of it talks to something other than `own`."""
+    subnets = {}
+    for row in conversations.itertuples(index=False):
+        for address, other in ((row.src_ip, row.dst_ip), (row.dst_ip, row.src_ip)):
+            if kinds.get(address) == "pod" and other != own:
+                subnets[pod_subnet(address)] = subnets.get(pod_subnet(address), 0) + row.packets
+                break
+    return subnets
+
+
 def _served(conversations, ports):
     """Addresses seen as the destination of any of `ports`."""
     hit = conversations["dst_port"].isin(ports)
@@ -115,18 +130,20 @@ def infer_cluster(captures):
         addresses |= set(table["src_ip"]) | set(table["dst_ip"])
     kinds = {address: classify(address) for address in addresses}
 
-    # Hosts: cluster-port servers and their clients, node-capture owners, host-net pods' hosts
-    host_ips = set()
-    cluster_servers, nfs_servers, control_servers = set(), set(), set()
-    for label, table in conversations.items():
-        private = {a for a in addresses if kinds[a] == "private"}
+    # Hosts: an address that serves a cluster port is a node; so is one a node capture claims
+    # or a host-network pod sits on. A client of the API server is not: a kubectl laptop or a
+    # probe talks to 6443 too, so clients are drawn as LAN devices that say what they reach.
+    private = {a for a in addresses if kinds[a] == "private"}
+    cluster_servers, nfs_servers, control_servers, clients = set(), set(), set(), {}
+    for table in conversations.values():
         cluster_servers |= _served(table, CLUSTER_PORTS) & private
         control_servers |= _served(table, CONTROL_PLANE_PORTS) & private
         nfs_servers |= _served(table, {NFS_PORT}) & private
-    host_ips |= cluster_servers
-    for table in conversations.values():
-        talks = table["dst_port"].isin(CLUSTER_PORTS) & table["dst_ip"].isin(cluster_servers)
-        host_ips |= {a for a in table.loc[talks, "src_ip"] if kinds.get(a) == "private"}
+        talks = table[table["dst_port"].isin(CLUSTER_PORTS)]
+        for src, port in zip(talks["src_ip"], talks["dst_port"]):
+            if src in private:
+                clients.setdefault(src, set()).add(WELL_KNOWN_PORTS[int(port)])
+    host_ips = set(cluster_servers)
 
     # Node captures: each claims a distinct host, greedily by the share of its packets that
     # address is in. Every node talks to the control plane, so a raw "most frequent" would
@@ -138,33 +155,49 @@ def infer_cluster(captures):
         local = _local_packets(table, kinds) or 1
         shares += [(count / local, label, address)
                    for address, count in _address_counts(table, kinds, {"private"})]
-    host_names, host_subnets, claimed = {}, {}, set()
+    host_names, owner_of, claimed = {}, {}, set()
     for _, label, address in sorted(shares, key=lambda item: (-item[0], item[1], str(item[2]))):
         if label in claimed or address in host_names:
             continue
         claimed.add(label)
         host_ips.add(address)
         host_names[address] = label.removeprefix("node-")
-        subnet = _top_subnet(conversations[label], kinds)
-        if subnet:
-            host_subnets[address] = subnet
+        owner_of[label] = address
+
+    # Pod subnets: a node's own pods talk to services, the internet and each other on its
+    # bridge, so its capture holds pod traffic that does not involve the node's address. A
+    # remote node only sees pods talking to itself. Claims are one-to-one, strongest first.
+    evidence = []
+    for label, address in owner_of.items():
+        for subnet, count in _local_subnets(conversations[label], kinds, address).items():
+            evidence.append((count, label, subnet, address))
+    host_subnets, taken = {}, set()
+    for _, label, subnet, address in sorted(evidence, key=lambda e: (-e[0], e[1], e[2])):
+        if address in host_subnets or subnet in taken:
+            continue
+        host_subnets[address] = subnet
+        taken.add(subnet)
     subnet_owner = {subnet: host for host, subnet in host_subnets.items()}
 
-    # Pod captures: a dominant pod address names that pod. Otherwise the pod shares its
-    # node's network namespace, and the node is the one whose pod subnet it sees most.
+    # Pod captures: a pod address in at least half the packets, and in more of them than any
+    # host address, names that pod. A host-network pod carries its node's address in nearly
+    # every packet, so it is placed on the node address in the largest share of them; the
+    # pod subnet it sees most only decides when no node address reaches half.
     pod_names, host_network_pods = {}, {}
     for label, table in conversations.items():
         if level_from_label(label) != "pod":
             continue
         ranked = _address_counts(table, kinds, {"pod"})
+        hosts_seen = _address_counts(table, kinds, {"private"})
         local = _local_packets(table, kinds)
-        if ranked and local and ranked[0][1] >= POD_FRACTION * local:
+        top_host = hosts_seen[0][1] if hosts_seen else 0
+        if ranked and local and ranked[0][1] >= POD_FRACTION * local and ranked[0][1] > top_host:
             pod_names[ranked[0][0]] = label
             continue
-        owner = subnet_owner.get(_top_subnet(table, kinds))
-        if owner is None:
-            hosts_seen = _address_counts(table, kinds, {"private"})
-            owner = hosts_seen[0][0] if hosts_seen else None
+        nodes = [a for a, count in hosts_seen
+                 if a in host_names and local and count >= POD_FRACTION * local]
+        owner = (nodes[0] if nodes else subnet_owner.get(_top_subnet(table, kinds))
+                 or (hosts_seen[0][0] if hosts_seen else None))
         host_network_pods[label] = owner
         if owner:
             host_ips.add(owner)
@@ -188,7 +221,8 @@ def infer_cluster(captures):
     found = {"hosts": hosts, "pods": pods, "networks": NETWORKS}
     found["services"] = _services(conversations, kinds)
     found["external"] = (
-        [{"id": f"lan:{a}", "ip": a, "kind": "lan"}
+        [{"id": f"lan:{a}", "ip": a, "kind": "lan",
+          "note": f"reaches {', '.join(sorted(clients[a]))}" if a in clients else ""}
          for a in sorted((a for a in addresses if kinds[a] == "private" and a not in host_ips),
                          key=ipaddress.ip_address)]
         + ([{"id": "internet", "ip": None, "kind": "internet"}]
@@ -268,3 +302,24 @@ def element_index(found):
             return by_ip[address]
         return "internet" if classify(address) == "internet" else None
     return element_of
+
+
+def locate(found, address):
+    """An element for an address the benign captures never showed, marked new; or None.
+
+    A pod address lands on the node that owns its /24, the same rule benign pods follow.
+    """
+    kind = classify(address)
+    if kind is None:
+        return None
+    if kind == "internet":
+        return {"id": "internet", "ip": None, "kind": "internet", "new": True}
+    if kind == "service":
+        return {"id": f"svc:{address}", "ip": address, "kind": "service", "port_names": [],
+                "new": True}
+    if kind == "pod":
+        owner = next((h["id"] for h in found["hosts"] if h["pod_cidr"] == pod_subnet(address)),
+                     None)
+        return {"id": f"pod:{address}", "ip": address, "kind": "pod", "host": owner,
+                "name": None, "host_network": False, "new": True}
+    return {"id": f"lan:{address}", "ip": address, "kind": "lan", "note": "", "new": True}

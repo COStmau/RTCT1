@@ -996,6 +996,29 @@ class StateMachineChecks(unittest.TestCase):
             self.assertTrue(step["path"] in prefixes, step["path"])
             self.assertTrue(step["red_path"] in prefixes, step["red_path"])
 
+    def test_learn_trace_records_every_red_tried(self):
+        """A promotion failed against every kept state; a merge failed against the earlier ones."""
+        rng = np.random.default_rng(0)
+        weights = np.array([0.5 ** i for i in range(8)])
+        stream = list(rng.choice(list("abcdefgh"), size=150, p=weights / weights.sum()))
+        events = []
+        statemachine.learn_pdfa(statemachine.make_traces(stream), trace=events)
+        reds = 1
+        for step in events[1:]:
+            attempts = step["attempts"]
+            passed = [all(abs(a - b) < attempt["bound"] for _, a, b in attempt["tests"])
+                      for attempt in attempts]
+            self.assertEqual(step["red_path"], attempts[-1]["red_path"])
+            if step["kind"] == "promote":
+                self.assertEqual(len(attempts), reds)
+                self.assertFalse(any(passed))
+                reds += 1
+            else:
+                self.assertTrue(passed[-1])
+                self.assertFalse(any(passed[:-1]))
+        self.assertGreaterEqual(reds, 2)
+        self.assertTrue(any(len(step["attempts"]) > 1 for step in events[1:]))
+
     def test_learn_trace_pta_is_unmerged(self):
         """The recorded prefix tree keeps one node per distinct prefix, before any fold."""
         events = []
@@ -1473,6 +1496,50 @@ class ClusterChecks(unittest.TestCase):
         self.assertEqual([v["label"] for v in found["vantages"]], ["router-any"])
         self.assertTrue(found["hosts"])
 
+    def test_api_client_is_not_promoted_to_host(self):
+        captures = self.captures()
+        captures["router-any"] = pd.concat([captures["router-any"], packets(
+            [("192.168.50.77", self.CONTROL, 50000, 6443)] * 4)])
+        found = cluster.infer_cluster(captures)
+        self.assertNotIn("host:192.168.50.77", {h["id"] for h in found["hosts"]})
+        lan = {e["id"]: e for e in found["external"]}
+        self.assertIn("lan:192.168.50.77", lan)
+        self.assertIn("kube-apiserver", lan["lan:192.168.50.77"]["note"])
+
+    def test_host_network_pod_ignores_a_few_remote_pod_packets(self):
+        captures = self.captures()
+        captures["pod-lidar"] = packets([(self.WORKER, self.CONTROL, 40000, 6443)] * 40
+                                        + [(self.WORKER, "10.42.0.56", 40001, 80)] * 3)
+        pods = {p["id"]: p for p in cluster.infer_cluster(captures)["pods"]}
+        self.assertEqual(pods["pod:pod-lidar"]["host"], f"host:{self.WORKER}")
+
+    def test_host_network_pod_is_not_named_after_its_peer(self):
+        captures = self.captures()
+        captures["pod-lidar"] = packets([(self.WORKER, "10.42.3.4", 40000, 53)] * 30)
+        found = cluster.infer_cluster(captures)
+        pods = {p["id"]: p for p in found["pods"]}
+        self.assertIsNone(pods["pod:10.42.3.4"]["name"])
+        self.assertTrue(pods["pod:pod-lidar"]["host_network"])
+
+    def test_pod_subnet_claims_are_one_to_one(self):
+        captures = self.captures()
+        captures["node-child2"] = packets([("192.168.50.22", self.CONTROL, 40000, 6443)] * 30
+                                          + [("192.168.50.22", "10.42.0.56", 40001, 80)] * 25)
+        hosts = {h["id"]: h for h in cluster.infer_cluster(captures)["hosts"]}
+        self.assertEqual(hosts[f"host:{self.CONTROL}"]["pod_cidr"], "10.42.0.0/24")
+        self.assertIsNone(hosts["host:192.168.50.22"]["pod_cidr"])
+
+    def test_locate_places_addresses_benign_never_showed(self):
+        found = cluster.infer_cluster(self.captures())
+        self.assertEqual(cluster.locate(found, "10.42.3.99"),
+                         {"id": "pod:10.42.3.99", "ip": "10.42.3.99", "kind": "pod",
+                          "host": f"host:{self.WORKER}", "name": None, "host_network": False,
+                          "new": True})
+        self.assertEqual(cluster.locate(found, "192.168.50.88")["id"], "lan:192.168.50.88")
+        self.assertEqual(cluster.locate(found, "10.43.0.99")["id"], "svc:10.43.0.99")
+        self.assertEqual(cluster.locate(found, "9.9.9.9")["id"], "internet")
+        self.assertIsNone(cluster.locate(found, "127.0.0.1"))
+
     def test_element_of_maps_addresses(self):
         found = cluster.infer_cluster(self.captures())
         element_of = cluster.element_index(found)
@@ -1542,6 +1609,51 @@ class LayoutChecks(unittest.TestCase):
         pdfa = statemachine.learn_pdfa([("a",)] * 4)
         states = layout.layered(pdfa)["states"]
         self.assertTrue(all(0.0 <= s["x"] <= 1.0 and 0.0 <= s["y"] <= 1.0 for s in states))
+
+    def settled_case(self):
+        rng = np.random.default_rng(0)
+        weights = np.array([0.5 ** i for i in range(8)])
+        stream = list(rng.choice(list("abcdefgh"), size=150, p=weights / weights.sum()))
+        events = []
+        pdfa = statemachine.learn_pdfa(statemachine.make_traces(stream), trace=events)
+        nodes = layout.icicle(events[0][1])
+        by_path = {n["path"]: n["id"] for n in nodes}
+        steps = [{"kind": e["kind"], "red": by_path[e["red_path"]], "blue": by_path[e["path"]]}
+                 for e in events[1:]]
+        return pdfa, nodes, steps
+
+    def test_settled_steps_never_show_a_state_before_it_exists(self):
+        pdfa, nodes, steps = self.settled_case()
+        settled = layout.settled_steps(nodes, steps)
+        state_of = {i: s for s, ids in layout.pta_to_pdfa_map(pdfa, nodes).items() for i in ids}
+        red_since = {0: 0}
+        red_since.update({step["blue"]: k for k, step in enumerate(steps, start=1)
+                          if step["kind"] == "promote"})
+        red_of_state = {state_of[r]: r for r in red_since}
+        self.assertEqual(settled[0], 0)
+        self.assertEqual(set(settled), {n["id"] for n in nodes})
+        self.assertTrue(all(0 <= k <= len(steps) for k in settled.values()))
+        for node_id, k in settled.items():
+            self.assertGreaterEqual(k, red_since[red_of_state[state_of[node_id]]], node_id)
+
+    def test_settling_is_not_simply_the_merged_subtree(self):
+        """The old replay coloured a merged candidate's whole subtree at once; that leaked."""
+        pdfa, nodes, steps = self.settled_case()
+        settled = layout.settled_steps(nodes, steps)
+        children = {}
+        for n in nodes:
+            children.setdefault(n["parent"], []).append(n["id"])
+
+        def subtree(i):
+            out, stack = [], [i]
+            while stack:
+                j = stack.pop()
+                out.append(j)
+                stack.extend(children.get(j, []))
+            return out
+        later = [i for k, step in enumerate(steps, start=1) if step["kind"] == "merge"
+                 for i in subtree(step["blue"]) if settled[i] > k]
+        self.assertTrue(later)
 
     def test_every_pta_node_lands_in_a_state(self):
         pdfa, root = self.learned()
@@ -1657,7 +1769,10 @@ class StoryBundleChecks(unittest.TestCase):
         self.assertTrue(released and released[0] > alerts[0])
         self.assertFalse(windows[-1]["flagged"])
         last = self.captures["flood"]["traces"][-1]
-        self.assertGreater(last["cumulative"], self.captures["flood"]["cutoffs"]["cumulative"])
+        # the burst's extra visits never leave the cumulative score: at the end it is still
+        # above anything benign reached by the same age
+        reference = self.captures["flood"]["cutoffs"]["cumulative_reference"]
+        self.assertGreater(last["cumulative"], reference[int(last["t"] // features.WINDOW_SIZE)])
         self.assertFalse(any(w["alert"] for w in self.captures["benign (held out)"]["windows"]))
 
     def test_quiet_replay_never_alerts(self):
@@ -1671,10 +1786,11 @@ class StoryBundleChecks(unittest.TestCase):
         windows = self.captures["flood"]["windows"]
         released = [w["index"] for w in windows if w["released"]]
         forget = statemachine.FORGET_SECONDS
-        # the last burst flow starts before 25 s; it leaves the clock 8 s later
+        # the last burst flow starts before 25 s; it leaves the clock 8 s later, and the
+        # release then waits for CLEAR_WINDOWS clean windows
         self.assertTrue(released)
         self.assertGreaterEqual(released[-1], 25)
-        self.assertLessEqual(released[-1], 25 + forget + 1)
+        self.assertLessEqual(released[-1], 25 + forget + reporting.CLEAR_WINDOWS)
 
     def test_window_status_names_the_strongest_verdict(self):
         statuses = {w["status"] for w in self.captures["flood"]["windows"]}
@@ -1701,6 +1817,109 @@ class StoryBundleChecks(unittest.TestCase):
         result = subprocess.run([sys.executable, "-X", "warn_default_encoding", "-c", code],
                                 cwd=Path(__file__).resolve().parent, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr[-400:])
+
+    def full_benign_scores(self, forget):
+        flows = self.model_and_flows(self.benign)
+        train, _ = statemachine.split_flows(flows)
+        model = statemachine.fit_model(train)
+        n = statemachine.n_windows_for(self.benign)
+        return statemachine.frequency_scores_by_window(model, flows, self.benign["ts"].min(),
+                                                        n, forget), train, flows
+
+    def test_cumulative_reference_is_benign_at_the_same_age(self):
+        scores, _, _ = self.full_benign_scores(None)
+        reference = self.captures["flood"]["cutoffs"]["cumulative_reference"]
+        expected = pd.Series(scores).cummax().to_numpy()
+        np.testing.assert_allclose(np.array(reference, dtype=float), expected, equal_nan=True)
+
+    def test_quiet_replay_stays_under_its_age_matched_reference(self):
+        """Capture length alone must not lift the cumulative score over its reference."""
+        built = story.build_story(self.benign, {"quiet": flow_capture()}, {}, "pod-lidar")
+        quiet = built["playback"]["captures"][1]
+        reference = np.array(quiet["cutoffs"]["cumulative_reference"], dtype=float)
+        for trace in quiet["traces"]:
+            w = int(trace["t"] // features.WINDOW_SIZE)
+            self.assertLessEqual(trace["cumulative"], reference[w] + 1e-9)
+
+    def test_windowed_cutoff_is_calibrated_on_a_warm_clock(self):
+        scores, train, flows = self.full_benign_scores(statemachine.FORGET_SECONDS)
+        _, holdout = statemachine.split_flows(flows)
+        first = int((holdout["start_ts"].iloc[0] - self.benign["ts"].min()) // features.WINDOW_SIZE)
+        expected = statemachine.frequency_cutoff(scores[first + 1:])
+        self.assertAlmostEqual(self.captures["flood"]["cutoffs"]["windowed"], expected)
+        held = self.captures[story.HELD_OUT]["windows"]
+        peaks = np.array([w["peak"] for w in held[first + 1:]], dtype=float)
+        np.testing.assert_allclose(peaks, scores[first + 1:], equal_nan=True)
+
+    def test_windows_without_traces_say_no_data(self):
+        gap = flow_capture()
+        gap = gap[~gap["ts"].between(gap["ts"].min() + 30, gap["ts"].min() + 40)]
+        built = story.build_story(self.benign, {"gap": gap}, {}, "pod-lidar")
+        windows = built["playback"]["captures"][1]["windows"]
+        self.assertTrue(all(windows[w]["status"] == "nodata" for w in range(31, 40)))
+
+    def test_attack_warm_up_is_never_called_normal(self):
+        warm = int(np.ceil(statemachine.FORGET_SECONDS / features.WINDOW_SIZE))
+        for w in self.captures["flood"]["windows"][:warm]:
+            self.assertIn(w["status"], {"warmup", "nodata", "flagged", "alert", "unseen"})
+        self.assertEqual(self.captures["flood"]["warmup_s"], statemachine.FORGET_SECONDS)
+        self.assertEqual(self.captures[story.HELD_OUT]["warmup_s"], 0.0)
+
+    def test_release_needs_clear_scored_windows(self):
+        windows = self.captures["flood"]["windows"]
+        releases = [w["index"] for w in windows if w["released"]]
+        self.assertTrue(releases)
+        for r in releases:
+            # empty windows neither count toward the clean run nor reset it
+            scored = [w for w in windows[:r + 1] if w["status"] != "nodata"]
+            self.assertEqual(scored[-1]["index"], r)
+            self.assertTrue(all(not w["flagged"] for w in scored[-reporting.CLEAR_WINDOWS:]))
+            self.assertTrue(any(w["alert"] for w in windows[:r]))
+        # a gap straight after the alert is not a release, and does not hurry one
+        gap = flow_capture(burst=(20, 25))
+        gap = gap[~gap["ts"].between(gap["ts"].min() + 25, gap["ts"].min() + 27)]
+        built = story.build_story(self.benign, {"gap": gap}, {}, "pod-lidar")
+        windows = built["playback"]["captures"][1]["windows"]
+        self.assertFalse(any(w["released"] for w in windows[25:28]))
+        self.assertTrue(any(w["released"] for w in windows[28:]))
+
+    def test_trace_visit_counts_are_exact_integers(self):
+        train, _ = statemachine.split_flows(self.model_and_flows(self.benign))
+        pdfa = statemachine.fit_model(train)["pdfa"]
+        visits = [n.visits for n in statemachine.pdfa_states_in_order(pdfa)]
+        parsed = json.loads(story.to_json(self.story))
+        for trace in parsed["playback"]["captures"][1]["traces"]:
+            self.assertEqual(len(trace["visits"]), len(trace["states"]))
+            for (clock, trained), state in zip(trace["visits"], trace["states"]):
+                self.assertIsInstance(clock, int)
+                self.assertEqual(trained, visits[state])
+
+    def test_states_carry_training_entries(self):
+        states = self.story["learning"]["pdfa"]["states"]
+        edges = self.story["learning"]["pdfa"]["edges"]
+        for state in states:
+            entered = sum(e["count"] for e in edges if e["dst"] == state["id"])
+            self.assertEqual(state["entries"], entered)
+        root = states[0]
+        self.assertEqual(root["visits"] - root["entries"], self.story["learning"]["traces"])
+
+    def test_capture_shows_conversations_benign_never_had(self):
+        attack = flow_capture(burst=(20, 25))
+        rows = attack[attack["src_ip"].eq("10.42.3.4")].head(4).copy()
+        rows["dst_ip"] = "10.42.3.99"
+        attack = pd.concat([attack, rows]).sort_values("ts")
+        built = story.build_story(self.benign, {"lateral": attack},
+                                  {"pod-lidar": self.benign}, "pod-lidar")
+        capture = built["playback"]["captures"][1]
+        self.assertIn("pod:10.42.3.99", {e["id"] for e in capture["new_elements"]})
+        pairs = {tuple(sorted((e["src"], e["dst"]))) for e in capture["new_edges"]}
+        self.assertIn(("pod:10.42.3.4", "pod:10.42.3.99"), pairs)
+        self.assertIn(["pod:10.42.3.4", "pod:10.42.3.99"], capture["flow_edges"])
+
+    def test_dropped_flows_are_reported_per_capture(self):
+        for capture in self.story["playback"]["captures"]:
+            self.assertIsInstance(capture["dropped_flows"], int)
+        self.assertGreater(self.story["meta"]["holdout_span_s"], 0)
 
     def test_trace_flows_map_to_cluster_elements(self):
         capture = self.captures["flood"]
@@ -1800,6 +2019,26 @@ class StoryEntryChecks(unittest.TestCase):
     def test_unknown_vantage_says_which_exist(self):
         with self.assertRaisesRegex(ValueError, "pod-lidar"):
             story.story_inputs(self.manifest(), "pod-nowhere")
+
+    def test_bulk_vantage_needs_explicit_consent(self):
+        bulk = next(iter(evaluation.BULK_LABELS))
+        manifest = self.manifest()
+        manifest.loc[manifest["label"].eq("pod-nginx"), "label"] = bulk
+        with self.assertRaisesRegex(ValueError, "bulk"):
+            story.story_inputs(manifest, bulk)
+        benign, _, _ = story.story_inputs(manifest, bulk, allow_bulk=True)
+        built = story.build_story(benign, {}, {}, bulk)
+        self.assertIn("bulk", built["meta"]["calibration_warning"])
+        self.assertIsNone(story.build_story(benign, {}, {}, "pod-lidar")["meta"]["calibration_warning"])
+
+    def test_bad_timebase_is_skipped_without_a_usable_column(self):
+        manifest = self.manifest().drop(columns="usable")
+        broken = pd.read_csv(manifest.loc[3, "path"])
+        broken.loc[:5, "ts"] = 0.0
+        broken.to_csv(manifest.loc[3, "path"], index=False)
+        _, targets, captures = story.story_inputs(manifest, "pod-lidar")
+        self.assertNotIn("lidar attack", targets)
+        self.assertIn("pod-camera", captures)          # no usable column: judged by timebase
 
     def test_main_writes_the_page(self):
         import tempfile

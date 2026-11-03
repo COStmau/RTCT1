@@ -260,20 +260,26 @@ def _copy_tree(root):
     return copy
 
 
-def _step(kind, red, blue, path, red_path, alpha):
-    """One red-blue step as plain data, read before the fold changes either state."""
+def _attempt(red, blue, red_path, alpha):
+    """One compatibility test as plain data, read before any fold changes either state."""
     tests = _frequency_tests(red, blue) if red.visits and blue.visits else []
     bound = (_hoeffding(red.visits, blue.visits, alpha) if red.visits and blue.visits
              else float("inf"))
-    return {"kind": kind, "path": path, "red_path": red_path, "red_visits": red.visits,
-            "blue_visits": blue.visits, "tests": tests, "bound": bound}
+    return {"red_path": red_path, "red_visits": red.visits, "tests": tests, "bound": bound}
+
+
+def _step(kind, blue, path, attempts):
+    """One red-blue step: every red state tried, in order; the last decided it."""
+    return {"kind": kind, "path": path, "blue_visits": blue.visits,
+            "attempts": attempts, **attempts[-1]}
 
 
 def learn_pdfa(traces, alpha=ALERGIA_ALPHA, trace=None):
     """PTA from traces, then red-blue ALERGIA state merging.
 
     `trace`, when a list, receives ("pta", copy of the unmerged tree) and then one dict per
-    red-blue step, so a visualization can replay the learning. It never changes the result.
+    red-blue step, with every red state the candidate was tested against in "attempts", so a
+    visualization can replay the learning. It never changes the result.
     A state is named by its symbol path from the root in the unmerged tree.
     """
     root = _Node()
@@ -299,17 +305,19 @@ def learn_pdfa(traces, alpha=ALERGIA_ALPHA, trace=None):
             break
         parent, symbol, blue = fringe[0]
         path = paths[id(blue)]
+        attempts = []
         for candidate in red:
+            if trace is not None:
+                attempts.append(_attempt(candidate, blue, paths[id(candidate)], alpha))
             if _compatible(candidate, blue, alpha):
                 if trace is not None:
-                    trace.append(_step("merge", candidate, blue, path,
-                                       paths[id(candidate)], alpha))
+                    trace.append(_step("merge", blue, path, attempts))
                 parent.children[symbol] = candidate
                 _fold_into(candidate, blue)
                 break
         else:
             if trace is not None:
-                trace.append(_step("promote", red[-1], blue, path, paths[id(red[-1])], alpha))
+                trace.append(_step("promote", blue, path, attempts))
             red.append(blue)
     return PDFA(root)
 

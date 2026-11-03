@@ -3,6 +3,7 @@
   icicle(root)               the unmerged prefix tree as stacked bars: depth down, visits across
   layered(pdfa)              the merged machine as columns by distance from the start state
   pta_to_pdfa_map(pdfa, ...) which prefix-tree nodes each final state absorbed
+  settled_steps(nodes, steps) the step at which each prefix-tree node joins a kept state
 
 All coordinates are in [0, 1]; the renderer scales them to whatever canvas it has. Ties are
 broken by symbol or state id, so the same machine always draws the same way.
@@ -50,7 +51,8 @@ def layered(pdfa):
     for index, node in enumerate(order):
         for symbol, (child, prob) in sorted(pdfa.probs[id(node)][1].items()):
             target = ids[id(child)]
-            edges.append({"src": index, "dst": target, "symbol": symbol, "prob": float(prob)})
+            edges.append({"src": index, "dst": target, "symbol": symbol, "prob": float(prob),
+                          "count": int(node.edge[symbol])})
             depth.setdefault(target, depth[index] + 1)
     columns = {}
     for index in range(len(order)):
@@ -81,7 +83,12 @@ def layered(pdfa):
             columns[level] = sorted(columns[level], key=centre)
             place(columns[level])
 
-    states = [{"id": index, "visits": int(node.visits),
+    # entries: how often training walked into the state, which is what a test trace's
+    # visits count; the start state's visits also count every trace that began there
+    entries = {index: 0 for index in range(len(order))}
+    for edge in edges:
+        entries[edge["dst"]] += edge["count"]
+    states = [{"id": index, "visits": int(node.visits), "entries": entries[index],
                "x": depth[index] / deepest if deepest else 0.0, "y": position[index]}
               for index, node in enumerate(order)]
     return {"states": states, "edges": edges}
@@ -101,3 +108,48 @@ def pta_to_pdfa_map(pdfa, nodes):
             state, _ = pdfa.transition(state, symbol)
         mapping.setdefault(ids[id(state)], []).append(node["id"])
     return mapping
+
+
+def settled_steps(nodes, steps):
+    """{prefix-tree id: the step after which it belongs to a kept (red) state; 0 = from start}.
+
+    Replays the red-blue steps on the prefix tree's ids with the same fold as
+    statemachine._fold_into. A merge folds the candidate into a red state, but the
+    candidate's children only fold into that red state's children, which may still be
+    candidates themselves, so they settle later, when their own group turns red or folds into
+    a red one. Colouring a merged subtree at once would show states that do not exist yet.
+    """
+    children = {node["id"]: {} for node in nodes}
+    parent = {}
+    for node in nodes:
+        if node["parent"] is not None:
+            children[node["parent"]][node["symbol"]] = node["id"]
+            parent[node["id"]] = (node["parent"], node["symbol"])
+    members = {node["id"]: {node["id"]} for node in nodes}
+    red = {nodes[0]["id"]}
+    settled = {nodes[0]["id"]: 0}
+
+    def fold(target, other):
+        members[target] |= members.pop(other)
+        for symbol, child in list(children.pop(other).items()):
+            if symbol in children[target]:
+                fold(children[target][symbol], child)
+            else:
+                children[target][symbol] = child
+                parent[child] = (target, symbol)
+
+    for index, step in enumerate(steps, start=1):
+        blue, target = step["blue"], step["red"]
+        if step["kind"] == "promote":
+            red.add(blue)
+            newly = members[blue]
+        else:
+            owner, symbol = parent[blue]
+            children[owner][symbol] = target
+            fold(target, blue)
+            newly = members[target]
+        for member in newly:
+            settled.setdefault(member, index)
+    for node in nodes:
+        settled.setdefault(node["id"], len(steps))
+    return settled
