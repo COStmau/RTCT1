@@ -1,0 +1,6 @@
+# Threat_Detection runtime, pinned to what was measured.
+# Install into a venv beside this file: python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
+numpy==2.4.6
+pandas==3.0.6
+matplotlib==3.11.2
+scikit-learn==1.9.1

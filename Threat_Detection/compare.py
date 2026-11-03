@@ -1,5 +1,5 @@
 """
-detectors see the same windows, the same matched benign reference and the same
+Every registered detector on the same windows, the same matched benign reference and the same
 split. The forest is fit on benign training windows only; its alert cutoff comes from
 held-out benign windows, so the benign false-alarm fraction is set by construction
 rather than by looking at the attacks.
@@ -9,12 +9,10 @@ import argparse
 import pandas as pd
 
 import local_paths
-from data_io import load_manifest, resolve_output
+from data_io import MANIFEST_NAME, load_manifest, resolve_output
 from detectors import REGISTRY, build, flag_stats
 from features import load_all_windows, split_reference
 from reporting import plot_comparison, print_comparison
-
-MANIFEST_FILE = "capture_manifest.csv"   # inside outputs/
 
 # Every registered detector gets compared. Adding one here is the whole change.
 DETECTORS = list(REGISTRY)
@@ -50,7 +48,7 @@ def compare_detectors(manifest):
 
 def main():
     parser = argparse.ArgumentParser(description="Compare every registered detector.")
-    parser.add_argument("--manifest", default=MANIFEST_FILE)
+    parser.add_argument("--manifest", default=MANIFEST_NAME)
     parser.add_argument("--out", default="detector_comparison.csv")
     args = parser.parse_args()
 

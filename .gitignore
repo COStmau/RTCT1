@@ -5,3 +5,12 @@ Threat_Detection/local_paths.py
 __pycache__/
 *.pyc
 .venv/
+
+# Hermes agent scratch (symlink to the plans folder outside the repo)
+.hermes/
+
+# Stray outputs from running scripts at the repo root
+/outputs/
+
+# macOS
+.DS_Store

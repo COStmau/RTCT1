@@ -1,7 +1,9 @@
 # RTCT1
-## Project Members
-- Charles Sandlin
-- Ashley Fuselier
-- James Suarez
+## Project Members & their responsible subsystems
+- Charles Sandlin - Threat Detection
+- Ashley Fuselier - Reaction Agent
+- James Suarez - Baseline Analyzer
+
+
 
   

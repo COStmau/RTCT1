@@ -1,6 +1,6 @@
 """Everything that shows a human something. Takes results, renders them.
 
-No detection logic lives here. Each function takes already-scored results and writes stdout
+No detection logic. Each function takes already-scored results and writes stdout
 or an image; none of them re-derives a number another module already computed.
 """
 from pathlib import Path
@@ -14,19 +14,24 @@ import numpy as np
 import pandas as pd
 
 from data_io import SNAPLEN_CEILINGS, SNAPLEN_REPORT_AT, resolve_output
-from detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, SVM_NU, THRESHOLD, WINDOW_SIZE,
+from evaluation import BULK_LABELS, TRAIN_FRACTION
+from detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, SVM_NU, THRESHOLD,
                        flag_stats, persistent_mask)
-from features import FEATURE_LABELS
+from features import FEATURE_LABELS, WINDOW_SIZE
 
 __all__ = ["flag_stats", "persistent_mask", "summarize_flags", "threshold_table",
-           "plot_detection", "print_matrix", "plot_matrix", "plot_comparison",
-           "print_comparison", "plot_regime_split", "plot_snaplen", "write_report",
-           "to_events", "write_events"]
+           "plot_detection", "print_matrix", "plot_matrix", "plot_detection_gap",
+           "plot_comparison", "print_comparison", "plot_regime_split", "plot_snaplen",
+           "write_report", "to_events", "write_events"]
 
 EVENT_VERSION = "LogV0"
 
+# Incident lifetime: consecutive clean windows before a flag may clear. Nothing enforces it
+# yet; the rule belongs to the event stream this module writes, not to the detector.
+CLEAR_WINDOWS = 3
+
 # Severity bands on the raw z_score. Only flagged windows reach here, so every
-# score sits above the 3.0 cutoff: low is borderline, high is far outside normal.
+# score sits above the detector's cutoff: low is borderline, high is far outside normal.
 SEVERITY_LOW_BELOW = 5.0
 SEVERITY_MED_BELOW = 10.0
 
@@ -95,13 +100,14 @@ def summarize_flags(results, benign_results, baseline_windows, evaluation_note):
     print("=" * 76)
 
 
-def threshold_table(results, benign_results, thresholds=(1.5, 2.0, 3.0, 4.0)):
-    """Flag counts at a few cutoffs, to sanity-check the 3-sigma default."""
+def threshold_table(results, benign_results, thresholds=(1.5, 2.0, THRESHOLD, 3.0, 4.0)):
+    """Flag counts at a few cutoffs, including the one this run alerted at."""
     print(f"\n   {'Threshold':>9} {'Benign flags':>13} {'Attack flags':>13}")
-    for threshold in thresholds:
+    for threshold in sorted(set(thresholds)):
         benign_flags = int(benign_results["anomaly_score"].gt(threshold).sum())
         attack_flags = int(results["anomaly_score"].gt(threshold).sum())
-        print(f"   {threshold:>9.1f} {benign_flags:>13} {attack_flags:>13}")
+        mark = "  <- alert cutoff" if threshold == THRESHOLD else ""
+        print(f"   {threshold:>9.1f} {benign_flags:>13} {attack_flags:>13}{mark}")
 
 
 def plot_detection(results, benign_results, mean, std, baseline_windows, path=None):
@@ -219,6 +225,87 @@ def print_matrix(results):
             print(table.to_string(float_format=lambda value: f"{value:5.2f}"))
 
 
+def plot_detection_gap(results, path=None):
+    """Flagged fraction above each capture's own benign rate, one column per scenario.
+
+    A raw fraction puts the noisiest capture at the top of the chart, so the benign
+    column is subtracted out and carried in the row label instead: the cell says what
+    the detector found, the row says what it costs to run there. Steady vantages sit
+    above the C2 bulk-transfer vantages so the saturated baselines are grouped visually.
+    """
+    path = resolve_output(path or "detection_gap.png")
+    view = results[results["group"].eq("all") & results["method"].eq("tcp")]
+    fractions = view.pivot_table(index="label", columns="scenario", values="flagged_fraction",
+                                 dropna=False)
+    windows = view.pivot_table(index="label", columns="scenario", values="windows",
+                               dropna=False)
+    scenarios = sorted(name for name in fractions.columns if name != "benign")
+    steady_labels = sorted(
+        [name for name in fractions.index if name not in BULK_LABELS],
+        key=lambda name: float(np.nanmax(fractions.loc[name, scenarios] - fractions.loc[name, "benign"])),
+        reverse=True,
+    )
+    bulk_labels = sorted(name for name in fractions.index if name in BULK_LABELS)
+    labels = steady_labels + bulk_labels
+    benign = fractions["benign"].reindex(labels)
+    gaps = fractions[scenarios].reindex(labels).sub(benign, axis=0)
+
+    fig, ax = plt.subplots(figsize=(10.5, 6.2))
+    cmap = plt.get_cmap("RdBu_r").with_extremes(bad="#eeeeee")
+    image = ax.imshow(gaps.to_numpy(dtype=float), cmap=cmap, vmin=-0.8, vmax=0.8, aspect="auto")
+    for row, label in enumerate(labels):
+        for column, scenario in enumerate(scenarios):
+            gap = float(gaps.loc[label, scenario])
+            win_count = windows.loc[label, scenario]
+            if np.isnan(gap) or pd.isna(win_count) or int(win_count) == 0:
+                ax.text(column, row, "quarantined\n(corrupt ts)",
+                        ha="center", va="center", fontsize=8.5, style="italic", color="#555555")
+            else:
+                ax.text(column, row, f"{gap:+.2f}\n{int(win_count)} windows",
+                        ha="center", va="center", fontsize=9,
+                        fontweight="bold" if gap >= 0.30 else "normal",
+                        color="white" if abs(gap) > 0.45 else "#111111")
+
+    if steady_labels and bulk_labels:
+        sep_y = len(steady_labels) - 0.5
+        ax.axhline(sep_y, color="#222222", linewidth=2.2, linestyle="--")
+
+    scenario_titles = {
+        "injection": "Injection Attack\n(Sidecar Recon)",
+        "lidar": "LiDAR Attack\n(Sensor Replay)",
+        "nginx": "NGINX Attack\n(Web Flood)",
+    }
+    ax.set_xticks(range(len(scenarios)))
+    ax.set_xticklabels(
+        [scenario_titles.get(name.replace(" attack", ""), name.replace(" attack", ""))
+         for name in scenarios],
+        fontsize=10.5, fontweight="bold",
+    )
+    ax.set_yticks(range(len(labels)))
+    row_labels = [
+        f"[C2 bulk] {label}  (benign: {benign[label]:.2f})" if label in BULK_LABELS
+        else f"{label}  (benign: {benign[label]:.2f})"
+        for label in labels
+    ]
+    ax.set_yticklabels(row_labels, fontsize=9.5)
+    for tick, label in zip(ax.get_yticklabels(), labels):
+        if label in BULK_LABELS:
+            tick.set_color("#8c1d18")
+        elif float(np.nanmax(gaps.loc[label])) >= 0.40:
+            tick.set_fontweight("bold")
+
+    ax.set_xticks(np.arange(-0.5, len(scenarios)), minor=True)
+    ax.set_yticks(np.arange(-0.5, len(labels)), minor=True)
+    ax.grid(which="minor", color="white", linewidth=1.8)
+    ax.tick_params(which="minor", length=0)
+    bar = fig.colorbar(image, ax=ax, fraction=0.035, pad=0.02)
+    bar.set_label("Attack flag rate minus benign flag rate (+ = clear detection)", fontsize=9.5)
+    fig.tight_layout()
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    return path
+
+
 def _fraction(view, label, scenario):
     row = view[view["label"].eq(label) & view["scenario"].eq(scenario)]
     return float(row["flagged_fraction"].iloc[0]) if len(row) else np.nan
@@ -303,12 +390,6 @@ def plot_comparison(comparison, path=None):
 
 
 # --- showcase report ----------------------------------------------------------------
-
-# The three vantages whose benign captures hold a bulk-transfer regime change. Measured,
-# not assumed: their benign held-out flag fraction is 0.93 against 0.31 for the other 16
-# captures, and they are also the only labels appearing in the snaplen-truncated set.
-BULK_LABELS = ("node-child4", "pod-robot-controller", "router-any")
-
 
 def _bulk_view(sweep):
     """Sweep rows split into the steady benign captures and the ones that change regime."""
@@ -521,13 +602,14 @@ def write_report(sweep, ablation, manifest, comparison, chart_dir=None, path=Non
     add("")
     add(f"Each recording is cut into {WINDOW_SIZE:g}-second slices and summarised by "
         f"{len(FEATURE_LABELS)} measurements. What normal looks like is learned from a benign "
-        f"recording only, with its last 30% held back as an honest check, so no detector is "
+        f"recording only, with its last {1 - TRAIN_FRACTION:.0%} held back as an honest check, "
+        f"so no detector is "
         f"graded on the seconds it learned from. Each slice is scored by its largest deviation "
         f"from that baseline, and an alert requires {PERSISTENCE_WINDOW} flagged slices in a "
         f"row. The baseline is a median and a MAD rather than a mean and standard deviation: a "
         f"mean/std pair is set by the bulk-transfer windows instead of by normal traffic. "
-        f"Regenerate everything in this file with `sweep.py`, `compare.py`, and "
-        f"`walkthrough.py`.")
+        f"Regenerate everything in this file with `demo.py`, which runs the sweep, the "
+        f"ablation, the comparison and this report in order.")
     add("")
 
     path.write_text("\n".join(lines) + "\n")

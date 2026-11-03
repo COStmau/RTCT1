@@ -10,12 +10,11 @@ import numpy as np
 import pandas as pd
 
 import local_paths
-from data_io import load_manifest, resolve_output
-from detectors import WINDOW_SIZE, build, flag_stats
-from features import FEATURE_GROUPS, load_all_windows, split_reference
-from reporting import plot_matrix, print_matrix
+from data_io import MANIFEST_NAME, load_manifest, resolve_output
+from detectors import build, flag_stats
+from features import FEATURE_GROUPS, WINDOW_SIZE, load_all_windows, split_reference
+from reporting import plot_detection_gap, plot_matrix, print_matrix
 
-MANIFEST_FILE = "capture_manifest.csv"   # inside outputs/
 DETECTOR = "z_score"
 
 
@@ -61,7 +60,7 @@ def run_sweep(manifest, groups=(None,)):
                                                 note=notes.get((scenario, label, method), "no capture")))
                     continue
                 reference, holdout = split_reference(reference_windows)
-                # For z_score, calibrate() installs the fixed 3-sigma design cutoff rather
+                # For z_score, calibrate() installs the fixed design cutoff rather
                 # than fitting a quantile, so this is the sweep's original behavior.
                 detector = build(DETECTOR).pipeline(reference if columns is None else reference[columns],
                                                      holdout if columns is None else holdout[columns])
@@ -84,7 +83,7 @@ def main():
     parser.add_argument("--groups", default="all",
                         help="'all', or a comma-separated subset of " + ", ".join(FEATURE_GROUPS))
     parser.add_argument("--out", default="sweep_results.csv")
-    parser.add_argument("--manifest", default=MANIFEST_FILE)
+    parser.add_argument("--manifest", default=MANIFEST_NAME)
     args = parser.parse_args()
 
     manifest = load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest)
@@ -105,6 +104,7 @@ def main():
     print(f"Times are per capture; windows are {WINDOW_SIZE:g}s. Flags are deviations, not confirmed attacks.")
     if len(groups) == 1 and groups[0] is None:
         print(f"\nWrote {plot_matrix(results)}")
+        print(f"Wrote {plot_detection_gap(results)}")
 
 
 if __name__ == "__main__":

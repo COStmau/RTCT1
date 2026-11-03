@@ -9,11 +9,17 @@ import numpy as np
 import pandas as pd
 
 import data_io
+import demo
+import evaluation
+import features
+import flag_scores
+import flag_verdict
+import reporting
 import statemachine
 import sweep
 from detectors import build
 from features import make_windows, split_reference
-from reporting import threshold_table, to_events, write_events
+from reporting import plot_detection_gap, threshold_table, to_events, write_events
 
 # The pre-refactor function names, mapped onto their layer homes. The old
 # DetectorChecks class pins behavior through these aliases so the assertions read the same
@@ -32,11 +38,15 @@ def _fit_z(benign):
     return detector.mean, detector.std
 
 
-def _score_z(windows, mean, std):
-    """score against a given (mean, std) pair, as the old detect_anomalies() did."""
+def _score_z(windows, mean, std, cutoff=None):
+    """score against a given (mean, std) pair, as the old detect_anomalies() did.
+
+    `cutoff` defaults to the module threshold; a fixture whose values sit near that
+    threshold passes its own, so changing the constant cannot flip its expectations.
+    """
     detector = build("z_score")
     detector.mean, detector.std = mean, std
-    detector.cutoff = detector.threshold
+    detector.cutoff = detector.threshold if cutoff is None else cutoff
     return detector.annotate(windows)
 
 
@@ -116,7 +126,9 @@ class DetectorChecks(unittest.TestCase):
         features = pd.DataFrame({"packet_count": [20, 20, 20, 2, 20, 20]})
         mean = pd.Series({"packet_count": 5.0})
         std = pd.Series({"packet_count": 1.0})
-        out = flag_persistent(detect_anomalies(features, mean, std))
+        # Its own cutoff: at 5 spreads the packet_count of 2 (z = -3) stays normal, so
+        # the fixture tests the persistence rule rather than where the constant sits.
+        out = flag_persistent(_score_z(features, mean, std, cutoff=5.0))
         self.assertEqual(out["persistent_flag"].tolist(),
                          [False, False, True, False, False, False])
         self.assertEqual(out["status"].iloc[2], "persistent_anomaly")
@@ -184,8 +196,8 @@ class DetectorProtocolChecks(unittest.TestCase):
 
         Mean/std is the wrong summary when 8 of 47 benign windows carry the whole dynamic
         range: the standard deviation is set by those windows, so a window near either mode
-        lands 3 sigma out and a third of held-out benign traffic flags. Median/MAD ignores
-        them. This is the router-any shape.
+        lands outside the cutoff and a third of held-out benign traffic flags. Median/MAD
+        ignores them. This is the router-any shape.
         """
         import detectors
         # 40 quiet windows at 50, one 146 MB window, 6 held-out windows near the quiet mode.
@@ -481,6 +493,34 @@ class SweepChecks(unittest.TestCase):
         self.assertEqual(attack["group"], "all")
         self.assertEqual(int(attack["windows"]), 60)
 
+    def test_detection_gap_is_relative_to_each_captures_own_benign(self):
+        """The cell is the gap, not the raw fraction: a noisy vantage cannot win on volume."""
+        import tempfile
+
+        import matplotlib.pyplot as plt
+        results = pd.DataFrame([
+            {"group": "all", "method": "tcp", "label": "noisy", "scenario": "benign",
+             "windows": 20, "flagged_fraction": 0.90},
+            {"group": "all", "method": "tcp", "label": "noisy", "scenario": "nginx attack",
+             "windows": 30, "flagged_fraction": 0.95},
+            {"group": "all", "method": "tcp", "label": "quiet", "scenario": "benign",
+             "windows": 20, "flagged_fraction": 0.10},
+            {"group": "all", "method": "tcp", "label": "quiet", "scenario": "nginx attack",
+             "windows": 30, "flagged_fraction": 0.80},
+        ])
+        close, plt.close = plt.close, lambda *args, **kwargs: None
+        try:
+            path = Path(tempfile.mkdtemp()) / "gap.png"
+            plot_detection_gap(results, path=str(path))
+            fig = plt.gcf()
+            fig.canvas.draw()
+            cells = [text.get_text() for text in fig.axes[0].texts]
+        finally:
+            plt.close = close
+        self.assertEqual(path.stat().st_size > 1000, True)
+        self.assertIn("+0.05\n30 windows", cells)   # 0.95 against its own 0.90: barely above
+        self.assertIn("+0.70\n30 windows", cells)   # 0.80 against its own 0.10: clearly above
+
     def test_unusable_capture_is_recorded_not_dropped(self):
         rows = fake_stratum(active=5)
         described = described_from(rows)
@@ -705,6 +745,109 @@ class ShowcaseReportChecks(unittest.TestCase):
             self.assertIn("per-vantage cutoff would suppress", text)
 
 
+class WindowedScorerChecks(unittest.TestCase):
+    """The expiring clock: visits leave the window, so a burst stops scoring as a burst."""
+
+    def setUp(self):
+        self.pdfa = statemachine.learn_pdfa(
+            [("a", "b", "c")] * 12 + [("a", "b", "b")] * 12 + [("c", "a")] * 12)
+
+    def stream(self, score, burst):
+        """Quiet ("c", "a") every second for 20 s, with ("a", "b", "b") x5 per second in 4-7 s.
+
+        `score(trace, when)`; the cumulative scorer ignores `when`.
+        """
+        scores = []
+        for second in range(20):
+            if burst and 4 <= second < 8:
+                for offset in range(5):
+                    score(("a", "b", "b"), second + offset / 10)
+            scores.append(score(("c", "a"), second + 0.9))
+        return scores
+
+    def windowed(self, forget):
+        return statemachine.WindowedFrequencyScorer(self.pdfa, forget).score
+
+    def cumulative(self):
+        scorer = statemachine.FrequencyScorer(self.pdfa)
+        return lambda trace, when: scorer.score(trace)
+
+    def test_infinite_window_is_cumulative_sequent(self):
+        traces = [("a", "b", "c"), ("a", "b", "b"), ("c", "a"), ("a", "b", "c"),
+                  ("a", "c", "b"), ("b", "b", "a")] * 5
+        cumulative = statemachine.FrequencyScorer(self.pdfa)
+        windowed = statemachine.WindowedFrequencyScorer(self.pdfa, float("inf"))
+        self.assertEqual([cumulative.score(trace) for trace in traces],
+                         [windowed.score(trace, float(when)) for when, trace in enumerate(traces)])
+
+    def test_score_returns_exactly_to_baseline_after_the_window(self):
+        forget = 4.0
+        control = self.stream(self.windowed(forget), False)
+        burst = self.stream(self.windowed(forget), True)
+        self.assertGreater(max(burst[4:8]), max(control[4:8]))     # the burst scores higher
+        # last burst visit is at 7.4 s; from 7.4 + 4 = 11.4 s it has left the window
+        self.assertEqual(burst[12:], control[12:])
+
+    def test_cumulative_score_never_returns_to_baseline(self):
+        control = self.stream(self.cumulative(), False)
+        burst = self.stream(self.cumulative(), True)
+        self.assertTrue(all(b > c for b, c in zip(burst[12:], control[12:])))
+
+    def test_window_is_in_seconds_not_in_traces(self):
+        scorer = statemachine.WindowedFrequencyScorer(self.pdfa, forget_seconds=2.0)
+        scorer.score(("a", "b", "b"), when=0.0)
+        scorer.score(("a", "b", "b"), when=2.0)               # 0.0 is still inside [0, 2]
+        self.assertEqual(sum(scorer.counts.values()), 6)
+        scorer.score(("c", "a"), when=5.0)                    # both earlier traces expire
+        self.assertEqual(sum(scorer.counts.values()),
+                         len(statemachine.trace_states(self.pdfa, ("c", "a"))))
+
+    def test_rejects_out_of_order_traces_and_empty_windows(self):
+        scorer = statemachine.WindowedFrequencyScorer(self.pdfa, forget_seconds=2.0)
+        scorer.score(("c", "a"), when=3.0)
+        with self.assertRaises(ValueError):
+            scorer.score(("c", "a"), when=1.0)
+        with self.assertRaises(ValueError):
+            statemachine.WindowedFrequencyScorer(self.pdfa, forget_seconds=0)
+
+    def test_default_window_is_the_module_constant(self):
+        scorer = statemachine.WindowedFrequencyScorer(self.pdfa)
+        self.assertEqual(scorer.forget_seconds, statemachine.FORGET_SECONDS)
+
+    def flows(self, burst):
+        """One request/response pair per second for 30 s; a flood repeats it 6x in 10-13 s.
+
+        The flood is the benign pattern hammered, not a new one: SEQUENT's score rises with
+        visits to known states, and a novel sequence walks fewer states and scores lower.
+        """
+        rows = []
+        for second in range(30):
+            pairs = 6 if burst and 10 <= second < 14 else 1
+            for pair in range(pairs):
+                start = second + 0.1 + pair / 8
+                rows += [{"start_ts": start, "bytes": 200, "duration": 0.01, "proto": "tcp"},
+                         {"start_ts": start + 0.05, "bytes": 300, "duration": 0.02,
+                          "proto": "tcp"}]
+        return pd.DataFrame(rows)
+
+    def test_per_window_scores_clear_where_cumulative_never_does(self):
+        model = statemachine.fit_model(self.flows(burst=False))
+        forget = statemachine.FORGET_SECONDS
+        scores = {(name, burst): statemachine.frequency_scores_by_window(
+                      model, self.flows(burst), 0.0, 30, forget_seconds=window)
+                  for name, window in (("cumulative", None), ("windowed", forget))
+                  for burst in (False, True)}
+        self.assertGreater(scores["windowed", True][12], scores["windowed", False][12])
+        # last burst flow starts before 14 s, so from window 14 + 8 = 22 on it has expired
+        np.testing.assert_array_equal(scores["windowed", True][22:],
+                                      scores["windowed", False][22:])
+        self.assertTrue((scores["cumulative", True][22:]
+                         > scores["cumulative", False][22:]).all())
+        # two flows a second and five-flow traces: no trace has ended inside window 0 or 1
+        self.assertTrue(np.isnan(scores["windowed", False][:2]).all())
+        self.assertTrue(np.isfinite(scores["windowed", False][2:]).all())
+
+
 class StateMachineChecks(unittest.TestCase):
     def flow_packets(self):
         return pd.DataFrame({
@@ -723,6 +866,114 @@ class StateMachineChecks(unittest.TestCase):
         self.assertEqual(flows.iloc[0]["bytes"], 300)
         self.assertAlmostEqual(flows.iloc[0]["duration"], 0.5)
         self.assertTrue((flows["start_ts"].diff().dropna() >= 0).all())
+
+    def test_segment_flows_drops_flows_crossing_a_window_boundary(self):
+        flows = pd.DataFrame({
+            "start_ts": [10.0, 10.1, 10.9, 10.0],
+            "bytes": [100, 100, 100, 100],
+            "duration": [1.0, 0.5, 0.3, 2.0],
+            "proto": ["tcp"] * 4,
+        })
+        kept, dropped = statemachine.segment_flows(flows, t0=10.0)
+        # Ending exactly on a boundary stays; anything reaching past it does not.
+        self.assertEqual(list(kept["duration"]), [1.0, 0.5])
+        self.assertEqual(dropped, 2)
+
+    def test_score_pair_drops_crossing_flows_before_symbolizing(self):
+        import tempfile
+        root = Path(tempfile.mkdtemp())
+        header = "ts,frame_len,src_ip,dst_ip,src_port,dst_port,proto\n"
+        # One long flow spans the whole capture; the rest fit inside their seconds.
+        lines = [header, "10.0,100,::1,::2,9999,8080,tcp\n", "70.0,100,::1,::2,9999,8080,tcp\n"]
+        lines += [f"{10.0 + w + i / 5:.4f},100,::1,::2,{1000 + w},8080,tcp\n"
+                  for w in range(30) for i in range(5)]
+        benign = root / "benign.csv"
+        benign.write_text("".join(lines))
+        benign_flags, _ = statemachine.score_pair(str(benign), str(benign))
+        self.assertEqual(len(benign_flags), 61)
+
+    def test_frequency_score_does_not_depend_on_chunk_boundaries(self):
+        """One windowed scorer for the stream equals a fresh scorer per chunk.
+
+        The windowed score depends only on the traces inside the trailing window, so a scorer
+        started at any chunk boundary and warmed with the previous FORGET_SECONDS of traces
+        returns bit-identical scores. Memory is bounded by the window, not the stream.
+        """
+        traces = [("a", "b", "c"), ("a", "b", "c"), ("a", "c", "b"),
+                  ("b", "a", "c"), ("a", "b", "b"), ("a", "b", "c")] * 10
+        times = [0.5 * index for index in range(len(traces))]
+        pdfa = statemachine.learn_pdfa(traces[:6])
+        forget = 4.0
+        stream = statemachine.WindowedFrequencyScorer(pdfa, forget)
+        whole = [stream.score(trace, when) for trace, when in zip(traces, times)]
+        for chunk in (1, 7, 13):
+            per_chunk = []
+            for start in range(0, len(traces), chunk):
+                scorer = statemachine.WindowedFrequencyScorer(pdfa, forget)
+                for trace, when in zip(traces[:start], times[:start]):
+                    if when >= times[start] - forget:      # warm-up: the trailing window only
+                        scorer.score(trace, when)
+                per_chunk += [scorer.score(trace, when) for trace, when in
+                              zip(traces[start:start + chunk], times[start:start + chunk])]
+            with self.subTest(chunk=chunk):
+                self.assertEqual(whole, per_chunk)
+        self.assertLessEqual(len(stream.visits), 3 * (forget / 0.5 + 1))
+
+    def test_load_flow_packets_reads_flags_only_when_asked(self):
+        import tempfile
+        root = Path(tempfile.mkdtemp())
+        header = ("ts,frame_len,src_ip,dst_ip,src_port,dst_port,proto,"
+                  "tcp_syn,tcp_rst\n")
+        path = root / "one.csv"
+        path.write_text(header + "10.0,100,::1,::2,1000,80,tcp,1,0\n")
+        plain = statemachine.load_flow_packets(str(path))
+        with_flags = statemachine.load_flow_packets(str(path), flags=True)
+        self.assertNotIn("tcp_syn", plain.columns)
+        self.assertIn("tcp_syn", with_flags.columns)
+        self.assertIn("tcp_rst", with_flags.columns)
+
+    def test_make_flows_marks_flag_presence_per_flow(self):
+        packets = pd.DataFrame({
+            "ts": [10.0, 10.2, 11.0],
+            "frame_len": [100, 100, 100],
+            "src_ip": ["a", "a", "c"], "dst_ip": ["b", "b", "d"],
+            "src_port": [1, 1, 2], "dst_port": [80, 80, 443],
+            "proto": ["tcp", "tcp", "tcp"],
+            "tcp_syn": [1, 0, 0], "tcp_rst": [0, 1, 0],
+        })
+        flows = statemachine.make_flows(packets)
+        self.assertEqual(list(flows["syn_seen"]), [True, False])
+        self.assertEqual(list(flows["rst_seen"]), [True, False])
+
+    def test_encode_adds_flag_bits_only_for_tcp_when_asked(self):
+        flows = pd.DataFrame({"proto": ["tcp", "tcp", "udp"],
+                              "bytes": [10, 900, 50],
+                              "duration": [0.1, 0.2, 0.1],
+                              "syn_seen": [True, False, False],
+                              "rst_seen": [False, True, False]})
+        plain = statemachine.fit_percentile(flows)
+        with_flags = statemachine.fit_percentile(flows, flags=True)
+        plain_symbols = list(statemachine.encode(flows, plain))
+        flag_symbols = list(statemachine.encode(flows, with_flags))
+        self.assertEqual(len(plain_symbols[0].split("_")), 3)
+        self.assertTrue(flag_symbols[0].startswith("tcp_s1r0_p"))
+        self.assertTrue(flag_symbols[1].startswith("tcp_s0r1_p"))
+        # UDP has no flags; its symbol stays three-part so its alphabet does not grow.
+        self.assertTrue(flag_symbols[2].startswith("udp_p"))
+        self.assertEqual(len(flag_symbols[2].split("_")), 3)
+
+    def test_encode_refuses_flags_when_flows_have_none(self):
+        flows = pd.DataFrame({"proto": ["tcp"], "bytes": [10], "duration": [0.1]})
+        enc = statemachine.fit_percentile(flows, flags=True)
+        with self.assertRaises(ValueError):
+            statemachine.encode(flows, enc)
+
+    def test_fit_model_carries_the_flag_setting(self):
+        flows = pd.DataFrame({"proto": ["tcp"] * 6, "bytes": range(6),
+                              "duration": [0.1] * 6,
+                              "syn_seen": [True] * 6, "rst_seen": [False] * 6})
+        self.assertTrue(statemachine.fit_model(flows, flags=True)["enc"]["flags"])
+        self.assertFalse(statemachine.fit_model(flows)["enc"]["flags"])
 
     def test_percentile_encoding_separates_small_from_large(self):
         train = pd.DataFrame({"proto": ["tcp"] * 4, "bytes": [10, 20, 30, 40],
@@ -760,6 +1011,59 @@ class StateMachineChecks(unittest.TestCase):
         path = Path(tempfile.mkdtemp()) / "graph.png"
         statemachine.plot_pdfa(pdfa, path=str(path))
         self.assertGreater(path.stat().st_size, 1000)
+
+    def test_plot_pdfa_legend_clears_the_states(self):
+        """States sit on the unit circle, so nothing in the key may reach y = -1."""
+        import tempfile
+        from pathlib import Path
+
+        import matplotlib.pyplot as plt
+        pdfa = statemachine.learn_pdfa([("a", "b")] * 8 + [("a", "c")] * 8)
+        close, plt.close = plt.close, lambda *args, **kwargs: None
+        try:
+            statemachine.plot_pdfa(pdfa, path=str(Path(tempfile.mkdtemp()) / "graph.png"))
+            fig = plt.gcf()
+            fig.canvas.draw()
+            ax = fig.axes[0]
+            key = ax.legend_.get_window_extent(fig.canvas.get_renderer())
+            top = key.transformed(ax.transData.inverted()).y1
+        finally:
+            plt.close = close
+        self.assertLessEqual(top, -1.0)
+        self.assertLess(key.x0, fig.bbox.width / 2)  # bottom left, not bottom right
+
+    def test_plot_pdfa_edge_labels_do_not_stack(self):
+        """A transition and its reverse, and a self-loop, each get their own label."""
+        import tempfile
+        from pathlib import Path
+
+        import matplotlib.pyplot as plt
+
+        # root -lb-> other is 1.00, other -lb-> root is 0.70: opposite directions on
+        # one pair of states, which matplotlib would otherwise draw on one arc.
+        other = statemachine._Node()
+        root = statemachine._Node()
+        root.visits, root.edge, root.children = 10, {"lb": 10}, {"lb": other}
+        other.visits, other.edge = 10, {"lb": 7, "loop": 3}
+        other.children = {"lb": root, "loop": other}
+        pdfa = statemachine.PDFA(root)
+        close, plt.close = plt.close, lambda *args, **kwargs: None
+        try:
+            statemachine.plot_pdfa(pdfa, path=str(Path(tempfile.mkdtemp()) / "graph.png"))
+            fig = plt.gcf()
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            labels = [(text.get_text(), text.get_window_extent(renderer))
+                      for text in fig.axes[0].texts
+                      if len(text.get_text().split()) == 2
+                      and not text.get_text()[0].isdigit()]
+        finally:
+            plt.close = close
+        self.assertGreater(len(labels), 1)
+        for i, (name, box) in enumerate(labels):
+            for other_label, other_box in labels[i + 1:]:
+                with self.subTest(labels=(name, other_label)):
+                    self.assertFalse(box.overlaps(other_box))
 
     def test_transition_probabilities_stay_within_unit_range(self):
         traces = ([("a", "b", "c")] * 8 + [("a", "b", "d")] * 8
@@ -818,6 +1122,153 @@ class EventLogChecks(unittest.TestCase):
         path = Path(tempfile.mkdtemp()) / "events.jsonl"
         write_events(events, path=str(path))
         self.assertEqual(len(path.read_text().strip().split("\n")), 3)
+
+
+class BoundaryChecks(unittest.TestCase):
+    """The evaluation policy lives in one module, and the scoring paths read that one."""
+
+    def test_bulk_labels_cover_six_files(self):
+        self.assertEqual(evaluation.BULK_LABELS,
+                         {"router-any", "node-child4", "pod-robot-controller"})
+        self.assertEqual(len(evaluation.BULK_LABELS) * len(data_io.METHODS), 6)
+
+    def test_bulk_labels_have_one_definition(self):
+        # reporting used to carry its own copy, so the label set could drift from the one
+        # the tests pin. demo.py and reporting.py must both resolve to evaluation's.
+        self.assertIs(reporting.BULK_LABELS, evaluation.BULK_LABELS)
+        self.assertIs(demo.BULK_LABELS, evaluation.BULK_LABELS)
+
+    def test_split_fraction_comes_from_evaluation(self):
+        self.assertEqual(features.BENIGN_TRAIN_FRACTION, evaluation.TRAIN_FRACTION)
+
+    def test_warmup_covers_a_whole_trace(self):
+        self.assertEqual(evaluation.WARMUP_WINDOWS, statemachine.TRACE_LEN)
+
+
+class FlagVerdictChecks(unittest.TestCase):
+    """The keep-or-drop rule for the flag alphabet, fixed before any AUROC was computed."""
+
+    def row(self, label, scenario, auc_plain, auc_flags, det_plain=0.5, det_flags=0.5):
+        return {"label": label, "scenario": scenario, "auc_plain": auc_plain,
+                "auc_flags": auc_flags, "det_plain": det_plain, "det_flags": det_flags}
+
+    def rows(self, target_plain=0.50, target_flags=0.62, router=0.60, child4=0.55,
+             det_plain=0.50, det_flags=0.50):
+        return [self.row("pod-lidar", "lidar attack", target_plain, target_flags,
+                         det_plain, det_flags),
+                self.row("router-any", "injection attack", router, router),
+                self.row("node-child4", "injection attack", child4, child4)]
+
+    def test_keep_when_the_target_gain_clears_the_bar(self):
+        verdict, reasons = flag_verdict.decide(self.rows())
+        self.assertEqual(verdict, "keep")
+        self.assertTrue(reasons)
+
+    def test_keep_at_the_exact_boundaries(self):
+        rows = self.rows(target_flags=0.60, router=0.65)
+        rows[1]["auc_flags"] = 0.60          # exactly the 0.05 allowed loss
+        verdict, _ = flag_verdict.decide(rows)
+        self.assertEqual(verdict, "keep")
+
+    def test_drop_when_the_target_gain_is_too_small(self):
+        verdict, reasons = flag_verdict.decide(self.rows(target_flags=0.58))
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("target AUC gain" in reason for reason in reasons))
+
+    def test_drop_when_target_detection_falls(self):
+        verdict, reasons = flag_verdict.decide(self.rows(det_plain=0.55, det_flags=0.50))
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("detection fell" in reason for reason in reasons))
+
+    def test_drop_when_another_stratum_loses_more_than_allowed(self):
+        rows = self.rows()
+        rows[1]["auc_plain"], rows[1]["auc_flags"] = 0.70, 0.63   # 0.07 loss on router-any
+        verdict, reasons = flag_verdict.decide(rows)
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("router-any" in reason for reason in reasons))
+
+    def test_undecidable_when_a_stratum_is_missing(self):
+        rows = self.rows()[:-1]
+        verdict, reasons = flag_verdict.decide(rows)
+        self.assertEqual(verdict, "undecidable")
+        self.assertTrue(any("node-child4" in reason for reason in reasons))
+
+
+class FlagScoreChecks(unittest.TestCase):
+    """Orientation and matching properties of the score dump's helpers."""
+
+    def test_auroc_is_one_when_attack_always_outranks_benign(self):
+        self.assertEqual(flag_scores.auroc([0.0, 1.0], [2.0, 3.0]), 1.0)
+
+    def test_auroc_is_zero_when_the_ranking_is_inverted(self):
+        self.assertEqual(flag_scores.auroc([2.0, 3.0], [0.0, 1.0]), 0.0)
+
+    def test_auroc_counts_ties_as_half(self):
+        self.assertEqual(flag_scores.auroc([1.0, 1.0], [1.0, 1.0]), 0.5)
+
+    def test_auroc_ignores_unscored_windows_and_needs_both_sides(self):
+        self.assertEqual(flag_scores.auroc([np.nan, 0.0], [1.0]), 1.0)
+        with self.assertRaises(ValueError):
+            flag_scores.auroc([], [1.0])
+
+    def test_window_scores_keep_the_most_anomalous_trace(self):
+        scored = [(10.1, 1.0), (10.9, 4.0), (11.5, 2.0)]
+        scores = flag_scores.window_scores(scored, t0=10.0, n_windows=3)
+        self.assertEqual(scores[0], 4.0)
+        self.assertEqual(scores[1], 2.0)
+        self.assertTrue(np.isnan(scores[2]))          # no trace ends there
+
+    def test_detection_uses_the_plain_model_benign_rate(self):
+        benign = [0.0, 1.0, 2.0, 3.0, 4.0]
+        attack = [4.0, 5.0]
+        detection, realised = flag_scores.detection_at_benign_rate(benign, attack, 0.2)
+        self.assertEqual(realised, 0.2)               # exactly the top fifth
+        self.assertEqual(detection, 1.0)
+        with self.assertRaises(ValueError):
+            flag_scores.detection_at_benign_rate(benign, attack, 0.0)
+
+
+    def test_alphabet_slope_draws_every_stratum_and_carries_the_verdict(self):
+            """One line per stratum, and the title's verdict is the committed rule's."""
+            import tempfile
+
+            import matplotlib.pyplot as plt
+            summary = pd.DataFrame([
+                {"label": "pod-lidar", "scenario": "lidar attack", "method": "tcp",
+                 "n_benign_plain": 15, "n_attack_plain": 55, "n_benign_flags": 15,
+                 "n_attack_flags": 55, "auc_plain": 0.50, "auc_flags": 0.65,
+                 "det_plain": 0.30, "det_flags": 0.35, "benign_rate_plain": 0.13,
+                 "benign_rate_flags": 0.13},
+                {"label": "router-any", "scenario": "injection attack", "method": "tcp",
+                 "n_benign_plain": 24, "n_attack_plain": 16, "n_benign_flags": 24,
+                 "n_attack_flags": 16, "auc_plain": 0.70, "auc_flags": 0.72,
+                 "det_plain": 0.40, "det_flags": 0.41, "benign_rate_plain": 0.20,
+                 "benign_rate_flags": 0.20},
+                {"label": "node-child4", "scenario": "injection attack", "method": "tcp",
+                 "n_benign_plain": 12, "n_attack_plain": 9, "n_benign_flags": 12,
+                 "n_attack_flags": 9, "auc_plain": 0.80, "auc_flags": 0.82,
+                 "det_plain": 0.50, "det_flags": 0.50, "benign_rate_plain": 0.25,
+                 "benign_rate_flags": 0.25},
+            ])
+            close, plt.close = plt.close, lambda *args, **kwargs: None
+            try:
+                path = Path(tempfile.mkdtemp()) / "alphabet.png"
+                flag_scores.plot_alphabet_slope(summary, path=str(path))
+                fig = plt.gcf()
+                fig.canvas.draw()
+                ax = fig.axes[0]
+                drawn = [line for line in ax.get_lines()
+                     if len(line.get_xdata()) == 2
+                     and line.get_ydata()[0] == line.get_ydata()[1]]  # rows, not axvline
+                labels = [tick.get_text() for tick in ax.get_yticklabels()]
+                title = fig.get_suptitle()
+            finally:
+                plt.close = close
+            self.assertEqual(path.stat().st_size > 1000, True)
+            self.assertEqual(len(drawn), len(summary))          # one line per stratum, none dropped
+            self.assertIn("pod-lidar · lidar", labels)
+            self.assertIn("verdict: keep", title)               # 0.50 -> 0.65 clears the 0.10 bar
+            self.assertEqual(flag_scores.verdict_rows(summary)[0]["label"], "pod-lidar")
 
 
 if __name__ == "__main__":

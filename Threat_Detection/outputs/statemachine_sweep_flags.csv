@@ -1,0 +1,43 @@
+detector,scenario,label,method,states,dropped_segments,flags,windows,flagged,flagged_fraction,persistent,persistent_fraction
+state_machine,benign,node-child1,tcp,4,47,True,63,1,0.0159,0,0.0
+state_machine,injection attack,node-child1,tcp,4,11,True,11,7,0.6364,2,0.1818
+state_machine,lidar attack,node-child1,tcp,4,56,True,64,23,0.3594,5,0.0781
+state_machine,nginx attack,node-child1,tcp,4,72,True,72,30,0.4167,2,0.0278
+state_machine,benign,node-child2,tcp,3,37,True,63,0,0.0,0,0.0
+state_machine,injection attack,node-child2,tcp,3,27,True,21,0,0.0,0,0.0
+state_machine,lidar attack,node-child2,tcp,3,43,True,63,0,0.0,0,0.0
+state_machine,nginx attack,node-child2,tcp,3,55,True,82,0,0.0,0,0.0
+state_machine,benign,node-child4,tcp,11,455,True,65,4,0.0615,0,0.0
+state_machine,injection attack,node-child4,tcp,11,294,True,31,21,0.6774,8,0.2581
+state_machine,lidar attack,node-child4,tcp,11,472,True,64,17,0.2656,1,0.0156
+state_machine,nginx attack,node-child4,tcp,11,458,True,84,40,0.4762,10,0.119
+state_machine,benign,node-gchild9,tcp,2,58,True,63,0,0.0,0,0.0
+state_machine,injection attack,node-gchild9,tcp,2,21,True,32,0,0.0,0,0.0
+state_machine,lidar attack,node-gchild9,tcp,2,53,True,63,0,0.0,0,0.0
+state_machine,nginx attack,node-gchild9,tcp,2,54,True,62,0,0.0,0,0.0
+state_machine,benign,pod-camera,tcp,3,2,True,62,2,0.0323,0,0.0
+state_machine,injection attack,pod-camera,tcp,3,2,True,20,5,0.25,2,0.1
+state_machine,lidar attack,pod-camera,tcp,3,2,True,62,12,0.1935,3,0.0484
+state_machine,nginx attack,pod-camera,tcp,3,2,True,79,17,0.2152,5,0.0633
+state_machine,benign,pod-lidar,tcp,5,45,True,64,2,0.0312,0,0.0
+state_machine,injection attack,pod-lidar,tcp,5,11,True,11,9,0.8182,3,0.2727
+state_machine,lidar attack,pod-lidar,tcp,5,55,True,64,37,0.5781,11,0.1719
+state_machine,nginx attack,pod-lidar,tcp,5,71,True,72,34,0.4722,11,0.1528
+state_machine,benign,pod-nginx,tcp,8,4,True,61,5,0.082,0,0.0
+state_machine,injection attack,pod-nginx,tcp,8,1,True,9,1,0.1111,0,0.0
+state_machine,lidar attack,pod-nginx,tcp,8,2,True,63,19,0.3016,2,0.0317
+state_machine,nginx attack,pod-nginx,tcp,8,9,True,60,17,0.2833,4,0.0667
+state_machine,benign,pod-robot-controller,tcp,12,453,True,65,4,0.0615,0,0.0
+state_machine,injection attack,pod-robot-controller,tcp,12,17,True,11,6,0.5455,4,0.3636
+state_machine,lidar attack,pod-robot-controller,tcp,12,474,True,66,22,0.3333,2,0.0303
+state_machine,benign,pod-robot-hardware,tcp,2,58,True,64,0,0.0,0,0.0
+state_machine,injection attack,pod-robot-hardware,tcp,2,23,True,30,0,0.0,0,0.0
+state_machine,lidar attack,pod-robot-hardware,tcp,2,57,True,63,0,0.0,0,0.0
+state_machine,nginx attack,pod-robot-hardware,tcp,2,44,True,58,0,0.0,0,0.0
+state_machine,benign,router-any,tcp,11,478,True,68,10,0.1471,3,0.0441
+state_machine,injection attack,router-any,tcp,11,397,True,64,34,0.5312,8,0.125
+state_machine,lidar attack,router-any,tcp,11,503,True,69,19,0.2754,1,0.0145
+state_machine,nginx attack,router-any,tcp,11,460,True,88,38,0.4318,3,0.0341
+state_machine,benign,router-flannel,tcp,2,0,True,52,1,0.0192,0,0.0
+state_machine,lidar attack,router-flannel,tcp,2,0,True,64,14,0.2188,0,0.0
+state_machine,nginx attack,router-flannel,tcp,2,10,True,87,21,0.2414,5,0.0575
