@@ -97,7 +97,7 @@ The menu, in order:
 Underneath the menu, the same commands run directly:
 
 ```bash
-.venv/bin/python -m unittest tests                    # 144 tests
+.venv/bin/python -m unittest tests                    # 148 tests
 .venv/bin/python sweep.py                             # all 88 captures, about 8 seconds
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv
 .venv/bin/python compare.py
