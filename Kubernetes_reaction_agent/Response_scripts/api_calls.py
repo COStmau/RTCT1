@@ -12,7 +12,6 @@ def get_pod_names(vi,namespace="default"): #Get the names of all pods in a speci
     pod_names = [pod.metadata.name for pod in ret[0].items] #Extracts the names of the pods from the list of pod objects
     return pod_names, None #Returns a list of pod names in the specified namespace
 
-
 def read_namespace_pod(vi,name, namespace="default"): #inspects a specific pod
 
     return safe_api_call(vi.read_namespaced_pod, name=name, namespace=namespace) #Retrieves the details of a specific pod in the specified namespace and returns the result of the inspection operation
@@ -71,7 +70,6 @@ def list_all_pods_all_namespaces(vi): #List all pods across all namespaces
     if ret[0] is None: #Checks if the API call was successful
         return ret
     return (ret[0].items, ret[1]) #Returns a list of all pods across all namespaces
-
 
 def list_of_all_pods_all_namespaces(vi): #Returns a list of all pods across all namespaces
 
