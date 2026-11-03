@@ -1585,6 +1585,35 @@ class PcapRowChecks(unittest.TestCase):
         self.assertEqual((row["eth_src"], row["eth_dst"], row["eth_type"]),
                          ("d2:8a:f5:39:9d:83", "ff:ff:ff:ff:ff:ff", None))
 
+    def test_zero_type_field_prints_as_hex(self):
+        # lidar attack node-child1-ptcp.csv frame 11804: an SLL header stored as Ethernet
+        row = self.row(_ether(_ipv4(_tcp(1, 2), 6), 0x0000))
+        self.assertEqual((row["eth_type"], row["src_ip"]), ("0x0000", None))
+
+    def test_port_80_is_http_too(self):
+        # nginx attack pod-nginx-tcp.csv frame 23: a SYN to :80
+        row = self.row(_sll2(_ipv4(_tcp(51148, 80, flags=0x02), 6), 0x0800), 276)
+        self.assertEqual(row["is_http"], 1)
+
+    def test_icmpv6_zero_code_is_printed(self):
+        # benign pod-robot-hardware-ptcp.csv frame 234: router solicitation, code 0
+        row = self.row(_ether(_ipv6(_icmp(133, 0), 58, "fe80::1", "ff02::2", 255), 0x86DD))
+        self.assertEqual((row["icmp_type"], row["icmp_code"]), (133, 0))
+
+    def test_icmpv6_behind_hop_by_hop_header(self):
+        # nginx attack node-child2-tcp.csv frame 1396: MLDv2 report after a hop-by-hop header
+        hop_by_hop = bytes([58, 0, 5, 2, 0, 0, 1, 0])
+        packet = _ipv6(hop_by_hop + _icmp(143, 0, bytes(20)), 0, "::", "ff02::16", 1)
+        row = self.row(_sll2(packet, 0x86DD), 276)
+        self.assertEqual((row["proto"], row["icmp_type"], row["icmp_code"]), ("0", 143, 0))
+
+    def test_tcp_behind_destination_options_header(self):
+        options = bytes([6, 0, 1, 4, 0, 0, 0, 0])
+        packet = _ipv6(options + _tcp(40000, 443, flags=0x10, payload=b"x" * 12), 60)
+        row = self.row(_ether(packet, 0x86DD))
+        self.assertEqual((row["proto"], row["dst_port"], row["is_https"], row["tcp_payload_len"]),
+                         ("60", 443, 1, 12))
+
     def test_raw_ip_under_ethernet_blanks_ip_columns(self):
         packet = _ipv4(_udp(1, 2, bytes(360)), 17, "192.168.50.22", "192.168.50.140")
         row = self.row(packet)
@@ -1650,6 +1679,118 @@ class PcapRowChecks(unittest.TestCase):
         target = Path(tempfile.mkdtemp()) / "x.csv"
         result = pcap_rows.write_capture_rows(_capture_file(blob[:-10]), target)
         self.assertEqual(result, {"rows": 1, "warnings": ["truncated after frame 1"]})
+
+
+class PcapDiffChecks(unittest.TestCase):
+    def tree(self):
+        import tempfile
+        root = Path(tempfile.mkdtemp())
+        flat = root / "benign" / "pcapng files" / "pod-nginx-tcp.pcapng"
+        nested = root / "nginx attack" / "pcapng files" / "ptcp" / "pod level" / "pod-nginx-ptcp.pcapng"
+        for path in (flat, nested):
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b"")
+        return root, flat, nested
+
+    def test_locate_pcap_flat_and_nested(self):
+        import pcap_diff
+        root, flat, nested = self.tree()
+        self.assertEqual(pcap_diff.locate_pcap(root, "benign", "pod-nginx", "tcp"), flat)
+        self.assertEqual(pcap_diff.locate_pcap(root, "nginx attack", "pod-nginx", "ptcp"), nested)
+
+    def test_locate_pcap_missing_or_duplicate_raises(self):
+        import pcap_diff
+        root, flat, _ = self.tree()
+        with self.assertRaisesRegex(ValueError, "benign/pod-lidar/tcp: 0 capture files"):
+            pcap_diff.locate_pcap(root, "benign", "pod-lidar", "tcp")
+        copy = flat.parent / "again" / flat.name
+        copy.parent.mkdir()
+        copy.write_bytes(b"")
+        with self.assertRaisesRegex(ValueError, "benign/pod-nginx/tcp: 2 capture files"):
+            pcap_diff.locate_pcap(root, "benign", "pod-nginx", "tcp")
+
+    def pair(self, edit=None, cut=0):
+        """A two-frame capture and its regenerated CSV, with one CSV cell optionally edited."""
+        import csv
+        import tempfile
+        import pcap_rows
+        packet = _ether(_ipv4(_tcp(40000, 8080, flags=0x02, payload=b"x" * 10), 6), 0x0800)
+        blob = _pcap_bytes([(100, 1, packet, len(packet)), (101, 2, packet, len(packet))], linktype=1)
+        pcap = _capture_file(blob[:len(blob) - cut])
+        csv_path = Path(tempfile.mkdtemp()) / "pod-nginx-ptcp.csv"
+        pcap_rows.write_capture_rows(pcap, csv_path)
+        if edit:
+            column, value = edit
+            with open(csv_path, newline="") as handle:
+                rows = list(csv.reader(handle))
+            rows[1][pcap_rows.COLUMNS.index(column)] = value
+            with open(csv_path, "w", newline="") as handle:
+                csv.writer(handle).writerows(rows)
+        return pcap, csv_path
+
+    def test_compare_capture_counts_and_names_mismatch(self):
+        import pcap_diff
+        result = pcap_diff.compare_capture(*self.pair(edit=("dst_port", "9999")))
+        self.assertEqual((result["rows_sponsor"], result["rows_regen"]), (2, 2))
+        self.assertEqual((result["tier_a_exact"], result["mismatch_cells"],
+                          result["differing_columns"]), (False, 1, "dst_port:1"))
+        self.assertEqual(result["first_mismatch"], "frame 1 dst_port 8080|9999")
+
+    def test_compare_capture_tier_b_only_is_still_tier_a_exact(self):
+        import pcap_diff
+        result = pcap_diff.compare_capture(*self.pair(edit=("eth_src", "aa:aa:aa:aa:aa:aa")))
+        self.assertEqual((result["tier_a_exact"], result["differing_columns"], result["windows"]),
+                         (True, "eth_src:1", "equal"))
+
+    def test_identical_capture_is_exact_with_equal_windows(self):
+        import pcap_diff
+        result = pcap_diff.compare_capture(*self.pair())
+        self.assertEqual((result["tier_a_exact"], result["mismatch_cells"], result["windows"],
+                          result["warnings"]), (True, 0, "equal", ""))
+
+    def test_truncation_warning_blocks_exact(self):
+        import pcap_diff
+        result = pcap_diff.compare_capture(*self.pair(cut=10))
+        self.assertEqual((result["rows_regen"], result["mismatch_cells"]), (1, 0))
+        self.assertEqual((result["tier_a_exact"], result["warnings"]),
+                         (False, "truncated after frame 1"))
+
+    def test_row_count_difference_blocks_exact(self):
+        import pcap_diff
+        pcap, csv_path = self.pair()
+        with open(csv_path, "a", newline="") as handle:
+            handle.write("3" + "," * 33 + "\r\n")
+        result = pcap_diff.compare_capture(pcap, csv_path)
+        self.assertEqual((result["rows_sponsor"], result["rows_regen"], result["tier_a_exact"]),
+                         (3, 2, False))
+
+    def test_summary_names_captures_cut_short_at_the_source(self):
+        import pcap_diff
+        results = pd.DataFrame([
+            {"tier_a_exact": False, "mismatch_cells": 0, "rows_sponsor": 5, "rows_regen": 5,
+             "windows": "equal", "differing_columns": "", "warnings": "truncated after frame 5",
+             "note": ""},
+            {"tier_a_exact": True, "mismatch_cells": 0, "rows_sponsor": 9, "rows_regen": 9,
+             "windows": "equal", "differing_columns": "", "warnings": "", "note": ""}])
+        self.assertIn("1 of 2 Tier-A exact; 1 more identical but cut short at the source",
+                      pcap_diff.summarize(results))
+
+    def test_report_flag_reads_cached_output_without_drive(self):
+        import tempfile
+        out = Path(tempfile.mkdtemp()) / "pcap_diff.csv"
+        pd.DataFrame([{"scenario": "benign", "label": "pod-nginx", "method": "tcp",
+                       "tier_a_exact": True, "windows": "equal", "differing_columns": "",
+                       "mismatch_cells": 0, "rows_sponsor": 4, "rows_regen": 4, "warnings": "",
+                       "note": ""},
+                      {"scenario": "benign", "label": "pod-lidar", "method": "tcp",
+                       "tier_a_exact": False, "windows": "differ", "differing_columns": "eth_src:2;ts:1",
+                       "mismatch_cells": 3, "rows_sponsor": 4, "rows_regen": 4, "warnings": "",
+                       "note": ""}]).to_csv(out, index=False)
+        run = subprocess.run([sys.executable, "pcap_diff.py", "--report", "--out", str(out)],
+                             capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("1 of 2 Tier-A exact; windows equal on 1", run.stdout)
+        self.assertIn("eth_src:2", run.stdout)
 
 
 # --- The converter against the sponsor's own CSVs, on the four smallest captures ---------

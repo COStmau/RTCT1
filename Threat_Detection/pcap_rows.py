@@ -8,11 +8,15 @@ SPONSOR_QUIRKS (each one copied deliberately, each pinned by a test):
   - SLL2 frames (the tcp captures) leave eth_src, eth_dst and eth_type blank.
   - A raw IP packet stored under an Ethernet interface is read as Ethernet: its eth_type is
     two bytes of the source address (0xc0a8 for 192.168.x.x) and its IP columns stay blank.
-  - An 802.3 frame (type field <= 1500, a length) keeps its MACs but leaves eth_type blank.
-  - icmp_type and icmp_code are blank when their value is 0 (echo reply prints no type).
+  - An 802.3 frame (type field 1-1500, a length) keeps its MACs but leaves eth_type blank.
+    A type field of 0 is still printed, as 0x0000.
+  - ICMPv4 icmp_type and icmp_code are blank when their value is 0 (echo reply prints no
+    type); ICMPv6 prints a zero as 0.
+  - proto is the IPv6 header's own next-header (0 for hop-by-hop), but ports and ICMP fields
+    come from the transport found behind the extension headers.
   - An ICMP error message takes its ports, TCP flags and udp_length from the packet it
     quotes, so a port-unreachable for :8080 counts as HTTP. tcp_payload_len stays blank.
-  - is_dns, is_http and is_https match either port (53, 8080, 443), whatever the transport.
+  - is_dns, is_http and is_https match either port (53; 80 or 8080; 443), whatever the transport.
   - The first row's iat is the integer 0; later ones are float differences and can be
     negative when the capture wrote frames out of timestamp order.
 """
@@ -36,11 +40,12 @@ TS_RULE = "div"
 PROTO_NAMES = {1: "icmp", 6: "tcp", 17: "udp"}
 TCP_FLAGS = ["tcp_fin", "tcp_syn", "tcp_rst", "tcp_psh", "tcp_ack", "tcp_urg", "tcp_ece",
              "tcp_cwr"]
-APP_PORTS = {"is_dns": 53, "is_http": 8080, "is_https": 443}
+APP_PORTS = {"is_dns": {53}, "is_http": {80, 8080}, "is_https": {443}}
 ICMP_ERRORS = {1: {3, 4, 5, 11, 12}, 58: {1, 2, 3, 4}}   # message types that quote a packet
+IPV6_EXTENSIONS = {0, 43, 60}      # hop-by-hop, routing, destination options: skipped over
 LINK_HEADER = {1: 14, 276: 20}
 IPV4, IPV6, ARP = 0x0800, 0x86DD, 0x0806
-MAX_8023_LENGTH = 1500             # a type field at or below this is an 802.3 frame length
+MAX_8023_LENGTH = 1500             # a type field from 1 to this is an 802.3 frame length
 
 
 class _Short(Exception):
@@ -84,7 +89,7 @@ def dissect(frame):
         if frame.linktype == 1:
             dst, src, ethertype = _take(data, 0, ">6s6sH")
             row.update(eth_src=_mac(src), eth_dst=_mac(dst))
-            if ethertype > MAX_8023_LENGTH:
+            if ethertype == 0 or ethertype > MAX_8023_LENGTH:
                 row["eth_type"] = f"0x{ethertype:04x}"
         else:
             ethertype = _take(data, 0, ">H")[0]
@@ -123,7 +128,12 @@ def _ip(data, offset, row, outer):
     if outer:
         row.update(ip_version=version, src_ip=str(src), dst_ip=str(dst),
                    proto=PROTO_NAMES.get(proto, str(proto)), ttl_or_hlim=hops)
-    return proto, offset + header, payload
+    offset += header
+    # proto keeps the first next-header, but the transport is found behind any extensions.
+    while version == 6 and proto in IPV6_EXTENSIONS:
+        proto, units = _take(data, offset, ">BB")
+        offset, payload = offset + (units + 1) * 8, payload - (units + 1) * 8
+    return proto, offset, payload
 
 
 def _transport(data, proto, offset, ip_payload, row, quoted=False):
@@ -138,13 +148,15 @@ def _transport(data, proto, offset, ip_payload, row, quoted=False):
         row.update(src_port=sport, dst_port=dport, udp_length=length)
     elif proto in ICMP_ERRORS and not quoted:
         icmp_type, code = _take(data, offset, ">BB")
-        row.update(icmp_type=icmp_type or None, icmp_code=code or None)
+        if proto == 1:                          # ICMPv4 prints a zero as blank; ICMPv6 does not
+            icmp_type, code = icmp_type or None, code or None
+        row.update(icmp_type=icmp_type, icmp_code=code)
         if icmp_type in ICMP_ERRORS[proto]:
             inner_proto, inner_l4, _ = _ip(data, offset + 8, row, outer=False)
             _transport(data, inner_proto, inner_l4, None, row, quoted=True)
     if row["src_port"] is not None:
-        for column, port in APP_PORTS.items():
-            row[column] = int(port in (row["src_port"], row["dst_port"]))
+        for column, ports in APP_PORTS.items():
+            row[column] = int(bool(ports & {row["src_port"], row["dst_port"]}))
 
 
 def frame_row(frame):
