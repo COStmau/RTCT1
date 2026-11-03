@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 import cluster
+import cv_verdict
 import data_io
 import demo
 import evaluation
@@ -2360,6 +2361,71 @@ class WindowedSweepChecks(unittest.TestCase):
         self.assertEqual(self.row("benign")["start_visits"] - self.row("benign")["start_entries"],
                          self.row("benign", "entries")["start_visits"]
                          - self.row("benign", "entries")["start_entries"])
+
+
+class CvVerdictChecks(unittest.TestCase):
+    """The cross-validated calibration rule, judged on rows made to pass or fail each clause."""
+
+    def rows(self, taps=4, gain=5.0, flagged=3, windows=60, ratio=0.1, change=0.0,
+             one_loss=0.0, tap_rate=None):
+        rows = []
+        for t in range(taps):
+            label = f"pod-{t}"
+            for method in ("tcp", "ptcp"):
+                common = {"label": label, "method": method, "group": "steady"}
+                rows.append(dict(common, scenario="benign", calibration="split", cutoff_windows=10))
+                hit = tap_rate if (tap_rate is not None and t == 0) else flagged
+                rows.append(dict(common, scenario="benign", calibration="cv5",
+                                 cutoff_windows=int(10 * gain), oos_flagged=hit,
+                                 oos_windows=windows, scale_ratio=ratio))
+                for k, scenario in enumerate(("lidar attack", "nginx attack")):
+                    loss = one_loss if (t == 0 and k == 0 and method == "tcp") else 0.0
+                    rows.append(dict(common, scenario=scenario, calibration="split", auroc=0.7))
+                    rows.append(dict(common, scenario=scenario, calibration="cv5",
+                                     auroc=0.7 + change - loss))
+        rows.append({"label": "router-any", "method": "tcp", "group": "bulk",
+                     "scenario": "lidar attack", "calibration": "cv5", "auroc": 0.0})
+        return rows
+
+    def test_keep_when_every_clause_holds(self):
+        verdict, reasons = cv_verdict.decide(self.rows())
+        self.assertEqual(verdict, "keep", reasons)
+
+    def test_undecidable_with_too_few_strata(self):
+        self.assertEqual(cv_verdict.decide(self.rows(taps=2))[0], "undecidable")
+
+    def test_drop_when_the_sample_barely_grows(self):
+        verdict, reasons = cv_verdict.decide(self.rows(gain=2.0))
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("sample gain" in r for r in reasons))
+
+    def test_drop_when_out_of_fold_rate_leaves_the_band(self):
+        for flagged in (0, 9):                          # 0% and 15% of 60
+            verdict, reasons = cv_verdict.decide(self.rows(flagged=flagged))
+            self.assertEqual(verdict, "drop", flagged)
+            self.assertTrue(any("out-of-fold benign rate" in r for r in reasons))
+
+    def test_drop_when_one_tap_flags_too_much(self):
+        verdict, reasons = cv_verdict.decide(self.rows(tap_rate=20))   # 20 of 60 on one tap
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("pod-0/" in r and "above 0.25" in r for r in reasons))
+
+    def test_drop_when_fold_and_full_scores_disagree(self):
+        verdict, reasons = cv_verdict.decide(self.rows(ratio=0.4))
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("scale shift" in r for r in reasons))
+
+    def test_drop_on_a_stratum_loss_or_a_mean_loss(self):
+        self.assertEqual(cv_verdict.decide(self.rows(one_loss=0.06))[0], "drop")
+        self.assertEqual(cv_verdict.decide(self.rows(change=-0.02))[0], "drop")
+        self.assertEqual(cv_verdict.decide(self.rows(one_loss=0.05))[0], "keep")
+
+    def test_bulk_rows_decide_nothing(self):
+        rows = self.rows()
+        rows.append({"label": "router-any", "method": "tcp", "group": "bulk", "scenario": "benign",
+                     "calibration": "cv5", "cutoff_windows": 1, "oos_flagged": 50,
+                     "oos_windows": 50, "scale_ratio": 9.0})
+        self.assertEqual(cv_verdict.decide(rows)[0], "keep")
 
 
 if __name__ == "__main__":
