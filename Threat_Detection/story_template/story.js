@@ -747,7 +747,7 @@ function actDetection() {
   const caps = S.playback.captures;
   controls.html(`
     <select id="d-cap" aria-label="recording">${caps.map((c, i) =>
-      `<option value="${i}" ${i === player.capture ? "selected" : ""}>${c.scenario}</option>`).join("")}</select>
+      `<option value="${i}" ${i === player.capture ? "selected" : ""}>${c.scenario}${c.scored_windows ? "" : " · no scored windows"}</option>`).join("")}</select>
     <div class="seg" id="d-view" role="group" aria-label="view">${[["tap", "This tap"], ["taps", "Across taps"]].map(([v, text]) =>
       `<button data-v="${v}" aria-pressed="${v === player.view}">${text}</button>`).join("")}</div>
     <button class="primary" id="d-play">▶ Play</button>
@@ -999,7 +999,8 @@ function scoreStrip(g, box) {
     g.append("text").attr("class", "t-small halo").attr("text-anchor", end ? "end" : "start")
       .attr("x", end ? box.x + box.w - 2 : box.x + 4).attr("y", y(value) - 4).text(text).style("fill", "var(--ink-2)");
   };
-  cut(yA, c.cutoffs.windowed, "var(--s1)", `windowed cutoff ${f1(c.cutoffs.windowed)}`, false);
+  cut(yA, c.cutoffs.windowed, "var(--s1)",
+      `windowed cutoff ${f1(c.cutoffs.windowed)} · ${c.cutoffs.calibration.windowed_windows} held-out windows`, false);
   cut(yB, c.cutoffs.likelihood, "var(--muted)", `cutoff ${f2(c.cutoffs.likelihood)}`, true);
 
   if (reference.length) {
@@ -1104,6 +1105,22 @@ const STATUS = {
 const windowAt = t => capture().c.windows[Math.floor(t / S.meta.window_size)];
 const statusOf = t => { const w = windowAt(t); return w ? STATUS[w.status] : { cls: "idle", text: "NO DATA" }; };
 
+// what each cutoff rests on. A 95th percentile of a dozen held-out windows sits next to
+// their maximum, so the page says how many there were and how often they actually flag
+const pct = d3.format(".0%");
+const FEW_WINDOWS = 20;
+function calibrationNote(c) {
+  const k = c.cutoffs.calibration;
+  return `<h2>How sure the cutoffs are</h2>
+    <dl class="kv">
+      <dt>windowed</dt><dd>${f1(c.cutoffs.windowed)} · from ${k.windowed_windows} held-out window${k.windowed_windows === 1 ? "" : "s"} · flags ${pct(k.windowed_benign_rate)} of them</dd>
+      <dt>likelihood</dt><dd>${f2(c.cutoffs.likelihood)} · from ${fmt(k.likelihood_traces)} held-out traces · flags ${pct(k.likelihood_benign_rate)}</dd>
+    </dl>
+    <p style="font-size:12.5px">Both aim to flag ${pct(k.nominal_rate)} of held-out benign.
+      ${k.windowed_windows < FEW_WINDOWS ? `With only ${k.windowed_windows} windows the windowed cutoff sits next to the
+      largest held-out score, from one short recording: read a flag near the line as weak evidence.` : ""}</p>`;
+}
+
 function detectionPanel() {
   let shownKey = null;
   const ws = S.meta.window_size, forget = S.meta.forget_seconds;
@@ -1134,6 +1151,7 @@ function detectionPanel() {
         <p>The score asks: are states being visited more often, in the last ${forget} s, than
           training said they would be?</p>
         <p style="font-size:12.5px">${disclosure}</p>
+        ${calibrationNote(c)}
         <h2>State fill · visits on the clock vs training rate</h2>${heatLegend}`);
       return;
     }
@@ -1190,7 +1208,8 @@ function detectionPanel() {
       <p style="margin-top:8px;font-size:12.5px">The cumulative score grows with recording length alone, so it is
         compared with the whole benign recording at the same age. That reference includes the 70% the
         machine learned from. ${disclosure}</p>
-      <h2>State fill · visits on the clock vs training rate</h2>${heatLegend}`);
+      ${calibrationNote(c)}
+        <h2>State fill · visits on the clock vs training rate</h2>${heatLegend}`);
   });
 }
 
@@ -1272,7 +1291,8 @@ function acrossTaps(g, box) {
         showTip(e, `<div class="tt-title">${r.label} · ${f1(at)} s</div>
           <div class="tt-row">its own clock ${f1(own)} s · window ${Math.floor(own / ws)}</div>
           ${w && own >= r.begin && own <= r.end ? `<div class="tt-row">${STATUS[w.status].text.toLowerCase()}</div>
-            <div class="tt-row">peak ${w.peak === null ? "—" : f1(w.peak)} vs cutoff ${f1(r.c.cutoffs.windowed)}</div>`
+            <div class="tt-row">peak ${w.peak === null ? "—" : f1(w.peak)} vs cutoff ${f1(r.c.cutoffs.windowed)}
+              (${r.c.cutoffs.calibration.windowed_windows} held-out windows)</div>`
             : `<div class="tt-row">outside this tap's recording</div>`}
           <div class="tt-row">click to replay this tap from here</div>`);
       })

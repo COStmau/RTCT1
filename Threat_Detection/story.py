@@ -12,6 +12,7 @@ Run it with:  .venv/bin/python story.py                       (every steady tap,
               .venv/bin/python story.py --vantage pod-nginx   (open on pod-nginx)
               .venv/bin/python story.py --vantages pod-lidar pod-nginx
 """
+import html
 import json
 import math
 from collections import Counter
@@ -25,7 +26,7 @@ import cluster as topology
 import layout
 from data_io import (MANIFEST_NAME, level_from_label, load_manifest, resolve_output,
                      timebase_issues)
-from detectors import PERSISTENCE_WINDOW, persistent_mask
+from detectors import BENIGN_QUANTILE, PERSISTENCE_WINDOW, persistent_mask
 from evaluation import BULK_LABELS
 from reporting import CLEAR_WINDOWS
 from features import WINDOW_SIZE
@@ -77,10 +78,22 @@ def build_story(benign, targets, cluster_captures, vantage, forget_seconds=FORGE
     first_held = int((float(holdout["start_ts"].iloc[0]) - t0) // WINDOW_SIZE)
     warm = frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds)
     by_age = frequency_scores_by_window(model, flows, t0, n_windows, None)
+    held_traces = score_flows(model, holdout)
+    held_windows = warm[first_held + 1:]
+    held_windows = held_windows[np.isfinite(held_windows)]
     cutoffs = {
-        "likelihood": score_cutoff(score_flows(model, holdout)),
-        "windowed": frequency_cutoff(warm[first_held + 1:]),
+        "likelihood": score_cutoff(held_traces),
+        "windowed": frequency_cutoff(held_windows),
         "cumulative_reference": list(pd.Series(by_age).cummax().to_numpy()),
+    }
+    # what each cutoff rests on: a 95th percentile of a dozen windows sits next to their
+    # maximum, so the page shows the sample size and the share of held-out benign it flags
+    cutoffs["calibration"] = {
+        "nominal_rate": BENIGN_QUANTILE,
+        "windowed_windows": int(len(held_windows)),
+        "windowed_benign_rate": float(np.mean(held_windows > cutoffs["windowed"])),
+        "likelihood_traces": len(held_traces),
+        "likelihood_benign_rate": float(np.mean([v < cutoffs["likelihood"] for _, v in held_traces])),
     }
     # the held-out replay runs on the whole recording so its clock is warm; only the traces
     # ending in the held-out part are kept
@@ -247,16 +260,18 @@ def _capture(scenario, flows, t0, n_windows, duration, model, found, forget, cut
             "expired": [[float(seen), ids[key]] for seen, key in expired],
         })
     edges, new_elements, new_edges = _flow_elements(flows, found)
+    windows = _windows(traces, n_windows, cutoffs, warmup_s)
     return {
         # t0 is the capture's first packet (epoch seconds): taps recorded side by side line
         # up on it, so the page can compare one scenario across taps on one time axis
         "scenario": scenario, "t0": float(t0), "duration_s": duration,
         "start_s": traces[0]["t"] if traces else 0.0,
         "warmup_s": warmup_s, "dropped_flows": int(dropped),
+        "scored_windows": sum(w["status"] != "nodata" for w in windows),
         "cutoffs": cutoffs,
         "flow_edges": edges, "new_elements": new_elements, "new_edges": new_edges,
         "traces": traces,
-        "windows": _windows(traces, n_windows, cutoffs, warmup_s),
+        "windows": windows,
     }
 
 
@@ -348,9 +363,16 @@ def _windows(traces, n_windows, cutoffs, warmup_s):
 
 
 def _clean(value):
-    """JSON-safe: numpy scalars to Python, non-finite floats to null, floats to 4 places."""
+    """JSON-safe: numpy scalars to Python, non-finite floats to null, floats to 4 places.
+
+    Strings, keys included, are HTML-escaped. Scenario names, labels, addresses and protocol
+    strings all come from files, and the page inserts them into HTML in many places, so they
+    are made inert here, once, rather than at every place the page uses them.
+    """
     if isinstance(value, dict):
-        return {str(key): _clean(item) for key, item in value.items()}
+        return {html.escape(str(key)): _clean(item) for key, item in value.items()}
+    if isinstance(value, str):
+        return html.escape(value)
     if isinstance(value, (list, tuple, np.ndarray)):
         return [_clean(item) for item in value]
     if isinstance(value, (bool, np.bool_)):

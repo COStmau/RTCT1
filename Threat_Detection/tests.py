@@ -1851,6 +1851,46 @@ class StoryBundleChecks(unittest.TestCase):
         peaks = np.array([w["peak"] for w in held[first + 1:]], dtype=float)
         np.testing.assert_allclose(peaks, scores[first + 1:], equal_nan=True)
 
+    def test_cutoffs_disclose_the_sample_they_rest_on(self):
+        """A 95th percentile of a handful of windows is close to their maximum: say how many."""
+        scores, train, flows = self.full_benign_scores(statemachine.FORGET_SECONDS)
+        _, holdout = statemachine.split_flows(flows)
+        first = int((holdout["start_ts"].iloc[0] - self.benign["ts"].min()) // features.WINDOW_SIZE)
+        held = scores[first + 1:]
+        held = held[np.isfinite(held)]
+        cutoffs = self.captures["flood"]["cutoffs"]
+        calibration = cutoffs["calibration"]
+        self.assertEqual(calibration["windowed_windows"], len(held))
+        self.assertAlmostEqual(calibration["windowed_benign_rate"],
+                               float(np.mean(held > cutoffs["windowed"])))
+        model = statemachine.fit_model(train)
+        self.assertEqual(calibration["likelihood_traces"],
+                         len(statemachine.score_flows(model, holdout)))
+        self.assertEqual(calibration["nominal_rate"], statemachine.BENIGN_QUANTILE)
+
+    def test_capture_counts_its_scored_windows(self):
+        for capture in self.captures.values():
+            self.assertEqual(capture["scored_windows"],
+                             sum(w["status"] != "nodata" for w in capture["windows"]))
+        # one second holds two flows, fewer than a trace needs
+        empty = story.build_story(self.benign, {"silent": flow_capture(seconds=1)}, {}, "pod-lidar")
+        self.assertEqual(empty["playback"]["captures"][1]["scored_windows"], 0)
+
+    def test_capture_text_cannot_become_markup(self):
+        """Scenario names, labels and protocol strings come from files; the page inserts them
+        as HTML, so the bundle carries them escaped."""
+        import tempfile
+        hostile = "<img src=x onerror=alert(1)>"
+        attack = flow_capture(burst=(20, 25))
+        attack.loc[attack.index[:40], "proto"] = "<b>tcp</b>"
+        built = story.build_story(self.benign, {hostile: attack}, {}, "pod-lidar")
+        parsed = json.loads(story.to_json(built))
+        self.assertEqual(parsed["playback"]["captures"][1]["scenario"],
+                         "&lt;img src=x onerror=alert(1)&gt;")
+        page = story.write_html(built, Path(tempfile.mkdtemp()) / "p.html").read_text()
+        self.assertNotIn("<img", page)
+        self.assertNotIn("<b>tcp", page)
+
     def test_windows_without_traces_say_no_data(self):
         gap = flow_capture()
         gap = gap[~gap["ts"].between(gap["ts"].min() + 30, gap["ts"].min() + 40)]

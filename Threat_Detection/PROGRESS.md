@@ -159,12 +159,30 @@ test of whether detection survives without the length features is
   3-window capture the same as an 80-window one. Per-scenario window counts belong beside every
   such number, and the injection column is not comparable to the others.
 
-- **`evaluation.py` names three policies the code does not all enforce yet.** `BULK_LABELS` (the
-  six bulk-transfer files) is read by the reporting path but does not exclude anything from
-  scoring, and `WARMUP_WINDOWS` has no consumer at all. `CLEAR_WINDOWS`, the incident-clear rule,
-  now sits with the event stream in `reporting.py` and no incident clears on it yet. Wiring them
-  into `statemachine_rows` and the windower drops three labels from the sweep and changes the
-  numbers, so it lands with the windowed scorer, after the static baseline is frozen.
+- **`evaluation.py` names three policies the sweeps do not enforce yet.** The story page
+  (`story.py`) now enforces two of them for the windowed scorer: a `BULK_LABELS` vantage is
+  refused unless `--allow-bulk` and then marked inspection only, and an alert is released only
+  after `CLEAR_WINDOWS` scored clean windows. Its cold-clock warm-up is the forgetting window
+  itself (8 s), not `WARMUP_WINDOWS`, which still has no consumer. The sweeps (`sweep.py`,
+  `statemachine_rows`) still score bulk labels and never clear an incident; wiring the rules in
+  there drops three labels and changes the numbers, so it lands with the windowed scorer's own
+  sweep.
+
+- **The windowed scorer's cutoffs rest on very few windows.** On the eight steady tcp taps the
+  cutoff is set from 3 to 16 scored one-second held-out windows (a window with no finished
+  trace is no evidence, and the first held-out window, which mixes in training traces, is
+  left out), so the 95th-percentile cutoff sits next to the held-out maximum. On those same
+  windows it flags between 0% and 33% (router-flannel 1 of 3, node-child2 and node-gchild9
+  1 of 8, pod-robot-hardware 0 of 9) against a nominal 5%. The story page prints the count and the realised rate beside each
+  cutoff. The fix is more benign recording per vantage, the same blocker as calibration in
+  general.
+
+- **The frequency scorers count the start state twice in training.** `FrequencyScorer` and
+  `WindowedFrequencyScorer` take training counts from `node.visits`, which for the start state
+  includes one visit per training trace start; `trace_states` never counts the start at test
+  time. On pod-lidar the start state's training count is 702 against 554 real entries. The
+  page discloses it; whether to change the scorer, and what that does to the numbers, is being
+  measured with a pre-registered rule before anything is changed.
 
 ## Next: feature selection and the interface question
 
