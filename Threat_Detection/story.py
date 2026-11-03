@@ -144,11 +144,17 @@ def build_stories(inputs, cluster_captures, forget_seconds=FORGET_SECONDS, selec
 
 
 def compose(stories, cluster, selected=None):
-    """{vantage: build_story bundle} as the page bundle: a shared cluster, one block each."""
+    """{vantage: build_story bundle} as the page bundle: a shared cluster, one block each.
+
+    `absent` names every tap on the map that has no block and why: a bulk-transfer tap is
+    left out by policy, any other was simply not chosen for this page.
+    """
     if not stories:
         raise ValueError("No vantage to draw.")
     selected = selected if selected in stories else next(iter(stories))
-    return {"selected": selected, "cluster": cluster, "trimmed": [],
+    absent = {v["label"]: "bulk transfer" if v["label"] in BULK_LABELS else "not chosen"
+              for v in cluster["vantages"] if v["label"] not in stories}
+    return {"selected": selected, "cluster": cluster, "trimmed": [], "absent": absent,
             "vantages": {vantage: {part: story[part] for part in VANTAGE_PARTS}
                          for vantage, story in stories.items()}}
 

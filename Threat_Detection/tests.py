@@ -2047,6 +2047,15 @@ class StoryBundleChecks(unittest.TestCase):
         self.assertEqual(bundle["selected"], "pod-nginx")
         self.assertEqual(bundle["trimmed"], [])
 
+    def test_absent_taps_say_why(self):
+        """A tap left off the page is either a bulk-transfer tap or simply not chosen; the page
+        must not blame bulk transfer for a tap the builder just did not pick."""
+        bulk = next(iter(evaluation.BULK_LABELS))
+        captures = {"pod-lidar": self.benign, "pod-nginx": self.benign, bulk: self.benign}
+        inputs = {"pod-lidar": (self.benign, {"flood": self.attack})}
+        bundle = story.build_stories(inputs, captures)
+        self.assertEqual(bundle["absent"], {"pod-nginx": "not chosen", bulk: "bulk transfer"})
+
     def test_captures_carry_their_first_packet_time(self):
         """Taps record side by side; the page lines one scenario up across them on t0."""
         bundle, inputs, _ = self.two_vantages()

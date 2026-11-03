@@ -290,7 +290,7 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     hover(tg, d => `<div class="tt-title">capture tap: ${d.label}</div><div class="tt-row">${d.level}-level recording</div>
       <div class="tt-row">${d.label === focus ? "the tap this story replays"
         : B.vantages[d.label] ? "click to replay the story from this tap"
-        : "not on this page: a bulk-transfer tap never sets a cutoff (rebuild with --allow-bulk)"}</div>`);
+        : absentWhy(d.label)}</div>`);
     if (onTap && onPage && !isFocus) tg.on("click", (event, d) => { hideTip(); onTap(d.label); });
     if (isFocus) pos.set("__focus__", { x: tx, y: ty });
   }
@@ -303,6 +303,14 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     if (pod) return pod.name || pod.ip;
     return id.replace(/^\w+:/, "");
   }
+}
+
+// why a tap on the map has no story on this page: bulk transfer is policy, anything else
+// was just not chosen when the page was built
+function absentWhy(label) {
+  return (B.absent || {})[label] === "bulk transfer"
+    ? "not on this page: a bulk-transfer tap never sets a cutoff (rebuild with --allow-bulk)"
+    : "not on this page: not chosen when it was built (add it with --vantages)";
 }
 
 // shorten text to fit a pixel width at the small label size
@@ -348,9 +356,12 @@ function actCluster() {
     <p><span class="mono">${S.meta.vantage}</span> is ${where}</p>
     <p>This page carries <b>${VANTAGES.length} taps</b>. Click any other tap on the map, or pick one
       at the top, and the learning and detection acts replay from there.${absent.length
-        ? ` Not on this page (drawn faint): ${absent.map(l => `<span class="mono">${l}</span>`).join(", ")}.
-            A bulk-transfer tap never sets a cutoff, so it is left out unless the page is built
-            with <span class="mono">--allow-bulk</span>.`
+        ? ` Not on this page (drawn faint): ${[["bulk transfer", "a bulk-transfer tap never sets a cutoff, so it is left out unless the page is built with <span class=\"mono\">--allow-bulk</span>"],
+                                               ["not chosen", "not chosen when the page was built; add with <span class=\"mono\">--vantages</span>"]]
+            .map(([reason, why]) => {
+              const these = absent.filter(l => ((B.absent || {})[l] || "not chosen") === reason);
+              return these.length ? `${these.map(l => `<span class="mono">${l}</span>`).join(", ")} (${why})` : "";
+            }).filter(Boolean).join("; ")}.`
         : ""}</p>
     <h2>Reading the map</h2>
     <div class="legend" style="flex-direction:column;align-items:flex-start">
@@ -1236,6 +1247,10 @@ function tapRows(scenario) {
     r.firstAlert = alerts.length ? r.off + alerts[0].index * ws : null;
     r.unseen = r.shown.filter(w => w.likelihood_flag).length;
     r.flagged = r.shown.filter(w => w.flagged).length;
+    // windows that could carry a verdict: a trace ended there and the clock was warm (a flag
+    // in warm-up still counts, since a cold clock only lowers scores)
+    r.judged = r.shown.filter(w => w.flagged || (w.status !== "nodata" && w.status !== "warmup")).length;
+    r.blind = r.judged === 0 && r.unseen === 0;
   }
   return rows;
 }
@@ -1281,7 +1296,7 @@ function acrossTaps(g, box) {
     rg.append("text").attr("class", r.alerts ? "t-title" : "t-small t-muted").attr("text-anchor", "end")
       .attr("x", box.x + box.w - 10).attr("y", y + rowH / 2 + 3)
       .style("fill", r.alerts ? "var(--critical)" : null)
-      .text(r.alerts ? `${r.alerts}` : "none");
+      .text(r.alerts ? `${r.alerts}` : r.blind ? "no verdict" : "none");
 
     // hover reads the window under the pointer; a click replays this tap from that moment
     rg.append("rect").attr("x", left).attr("y", y).attr("width", right - left).attr("height", rowH - 4)
@@ -1297,16 +1312,7 @@ function acrossTaps(g, box) {
           <div class="tt-row">click to replay this tap from here</div>`);
       })
       .on("pointerleave", hideTip)
-      .on("click", e => {
-        hideTip();
-        const own = x.invert(d3.pointer(e)[0]) - r.off;
-        player.view = "tap";
-        if (r !== selected) selectVantage(r.label);
-        player.capture = r.i;
-        prepared.clear();
-        player.t = Math.max(r.begin, Math.min(r.end, own));
-        show("detection");
-      });
+      .on("click", e => replayFrom(r, x.invert(d3.pointer(e)[0]) - r.off));
   });
 
   const bottom = top + rows.length * rowH;
@@ -1334,31 +1340,47 @@ function acrossTaps(g, box) {
   tapsPanel(current.scenario, rows);
 }
 
+// switch to one tap's own replay of this scenario, at a moment on that tap's own clock
+function replayFrom(r, own) {
+  hideTip();
+  player.view = "tap";
+  if (r.label !== S.meta.vantage) selectVantage(r.label);
+  player.capture = r.i;
+  prepared.clear();
+  player.t = Math.max(r.begin, Math.min(r.end, own));
+  show("detection");
+}
+
 function tapsPanel(scenario, rows) {
   const spread = d3.max(rows, r => r.off);
   const order = rows.slice().sort((a, b) => (a.firstAlert ?? Infinity) - (b.firstAlert ?? Infinity) || d3.ascending(a.label, b.label));
-  const heard = rows.filter(r => r.alerts);
+  const heard = rows.filter(r => r.alerts), blind = rows.filter(r => r.blind);
+  const first = order[0];
   panel.html(`
     <h2>${scenario} · every tap</h2>
     <p class="big">${heard.length} of ${rows.length} taps raise a sustained alert${heard.length
-      ? `; the first at <b>${heard.length ? order[0].label : ""}</b>, ${f1(order[0].firstAlert)} s in` : ""}.</p>
+      ? `; the first at <b>${first.label}</b>${first.v.meta.calibration_warning ? " (⚠ bulk transfer, inspection only)" : ""}, ${f1(first.firstAlert)} s in` : ""}.
+      ${blind.length ? `${blind.length} could not judge it: no trace ended in a window past the clock's warm-up
+        (${blind.map(r => `<span class="mono">${r.label}</span>`).join(", ")}).` : ""}</p>
     <p>Each row is one tap's replay of the same recording. Time is shared: 0 s is the first packet
       any of these taps saw, and the taps started up to ${f1(spread)} s apart. Each tap learned its own
       machine and is judged on <b>its own</b> cutoffs, so a row says what that tap would have reported.</p>
     <table class="taps">
-      <thead><tr><th>tap</th><th>first alert</th><th>alerts</th><th>unseen</th></tr></thead>
+      <thead><tr><th>tap</th><th>first alert</th><th>alerts</th><th>unseen</th><th>judged</th></tr></thead>
       <tbody>${order.map(r => `<tr class="${r.label === S.meta.vantage ? "selected" : ""}" data-label="${r.label}">
         <td class="mono">${r.label}${r.v.meta.calibration_warning ? " ⚠" : ""}</td>
-        <td>${r.firstAlert === null ? "—" : `${f1(r.firstAlert)} s`}</td>
-        <td>${r.alerts}</td><td>${r.unseen}</td></tr>`).join("")}</tbody>
+        <td>${r.blind ? "no verdict" : r.firstAlert === null ? "—" : `${f1(r.firstAlert)} s`}</td>
+        <td>${r.alerts}</td><td>${r.unseen}</td><td>${r.judged}</td></tr>`).join("")}</tbody>
     </table>
-    <p style="margin-top:10px">Counts are windows of ${S.meta.window_size} s. <i>Unseen</i> windows hold a
-      trace benign never produced (the likelihood detector). Hover a row for a window's verdict; click it
-      to replay that tap from that moment.</p>
+    <p style="margin-top:10px">Counts are windows of ${S.meta.window_size} s. <i>Judged</i> windows had a
+      trace end in them on a warm clock; a tap with none gave <i>no verdict</i>, which is not the same as
+      staying quiet. <i>Unseen</i> windows hold a trace benign never produced (the likelihood detector).
+      Hover a row in the chart for a window's verdict, click it to replay from that moment; click a
+      row here to replay that tap from its first alert.</p>
     ${rows.some(r => r.v.meta.calibration_warning) ? `<p style="font-size:12.5px">⚠ a bulk-transfer tap: its cutoff is not trusted, so its row is for inspection only.</p>` : ""}`);
   panel.selectAll("tr[data-label]").style("cursor", "pointer").on("click", function () {
-    const label = this.dataset.label;
-    if (label !== S.meta.vantage) { selectVantage(label); show("detection"); }
+    const r = rows.find(row => row.label === this.dataset.label);
+    replayFrom(r, r.firstAlert === null ? r.begin : r.firstAlert - r.off);
   });
 }
 
@@ -1399,8 +1421,11 @@ function selectVantage(label) {
   d3.select("#vantage").property("value", label);
   d3.select("#subtitle").text(`${S.meta.vantage} · ${S.meta.trace_len}-flow traces · `
     + `${S.meta.forget_seconds} s anomaly clock · built ${S.meta.generated.slice(0, 10)}`);
-  try { localStorage.setItem("story-vantage", label); } catch (e) { /* storage may be blocked */ }
+  try { localStorage.setItem(TAP_KEY, label); } catch (e) { /* storage may be blocked */ }
 }
+
+// the remembered tap is keyed to the build, so a page rebuilt with --vantage opens there
+const TAP_KEY = `story-vantage:${B.vantages[B.selected].meta.generated}:${B.selected}`;
 
 function switchTo(label) {
   if (!B.vantages[label] || label === S.meta.vantage) return;
@@ -1430,7 +1455,8 @@ let start = "cluster", tap = B.selected;
 try {
   const query = new URLSearchParams(location.search);
   start = query.get("act") || localStorage.getItem("story-act") || start;
-  tap = query.get("vantage") || localStorage.getItem("story-vantage") || tap;
+  // a remembered tap belongs to this build: a rebuilt page opens where --vantage says
+  tap = query.get("vantage") || localStorage.getItem(TAP_KEY) || tap;
 } catch (e) { /* ignore */ }
 selectVantage(B.vantages[tap] ? tap : B.selected);
 show(ACTS[start] ? start : "cluster");
