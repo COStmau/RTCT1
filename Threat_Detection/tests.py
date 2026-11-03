@@ -18,6 +18,7 @@ import flag_scores
 import flag_verdict
 import layout
 import reporting
+import root_verdict
 import statemachine
 import story
 import sweep
@@ -1304,6 +1305,48 @@ class FlagVerdictChecks(unittest.TestCase):
         verdict, reasons = flag_verdict.decide(rows)
         self.assertEqual(verdict, "undecidable")
         self.assertTrue(any("node-child4" in reason for reason in reasons))
+
+
+class RootVerdictChecks(unittest.TestCase):
+    """The start-state count rule, fixed before either variant's AUROC was computed."""
+
+    def rows(self, changes, group="steady"):
+        rows = []
+        for index, change in enumerate(changes):
+            for counts, auroc in (("visits", 0.70), ("entries", 0.70 + change)):
+                rows.append({"label": f"tap-{index}", "scenario": "lidar attack",
+                             "method": "tcp", "group": group, "train_counts": counts,
+                             "auroc": auroc})
+        return rows
+
+    def test_keep_when_nothing_loses(self):
+        verdict, reasons = root_verdict.decide(self.rows([0.0] * 12))
+        self.assertEqual(verdict, "keep")
+        self.assertTrue(reasons)
+
+    def test_keep_at_the_exact_boundaries(self):
+        changes = [-0.05] + [0.0] * 4 + [0.0] * 5          # mean exactly -0.005, worst -0.05
+        self.assertEqual(root_verdict.decide(self.rows(changes))[0], "keep")
+
+    def test_drop_when_one_stratum_loses_too_much(self):
+        verdict, reasons = root_verdict.decide(self.rows([-0.06] + [0.01] * 11))
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("tap-0" in reason for reason in reasons))
+
+    def test_drop_when_the_mean_falls(self):
+        verdict, reasons = root_verdict.decide(self.rows([-0.02] * 12))
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("mean AUROC change" in reason for reason in reasons))
+
+    def test_bulk_and_unpaired_rows_never_decide(self):
+        rows = self.rows([-0.5] * 12, group="bulk") + self.rows([0.0] * 9)
+        rows.append({"label": "lonely", "scenario": "lidar attack", "method": "tcp",
+                     "group": "steady", "train_counts": "visits", "auroc": 0.9})
+        rows.append({"label": "nan", "scenario": "lidar attack", "method": "tcp",
+                     "group": "steady", "train_counts": "visits", "auroc": float("nan")})
+        verdict, reasons = root_verdict.decide(rows)
+        self.assertEqual(verdict, "undecidable")
+        self.assertTrue(any("9 paired" in reason for reason in reasons))
 
 
 class FlagScoreChecks(unittest.TestCase):
