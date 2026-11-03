@@ -111,6 +111,13 @@ class CaptureReader:
             if length < 12 or start + length > size:
                 self._truncated(number)
                 return
+            # A block ends by repeating its length. A file whose tail was zero-filled can hold a
+            # block whose header survived but whose end did not: that block is not complete.
+            handle.seek(start + length - 4)
+            if struct.unpack(order + "I", handle.read(4))[0] != length:
+                self._truncated(number)
+                return
+            handle.seek(start + 8)
             if block_type == IDB:
                 interfaces.append(self._interface(handle.read(length - 12), order))
             elif block_type == EPB:

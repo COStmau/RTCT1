@@ -1400,6 +1400,15 @@ class PcapReadChecks(unittest.TestCase):
         self.assertEqual(len(frames), 1)
         self.assertEqual(reader.warnings, ["truncated after frame 1"])
 
+    def test_zero_filled_tail_drops_the_block_it_cuts(self):
+        # injection attack node-child4-ptcp: real blocks end at 4.58 GB of a 10.8 GB file, the
+        # rest is zeros, and the last packet block's closing length is one of those zeros.
+        last = _pcapng_epb(0, 2, b"b" * 64)
+        blob = _pcapng_bytes(_pcapng_idb(), _pcapng_epb(0, 1, b"a" * 64), last[:-4] + bytes(4))
+        frames, reader = self.frames(blob + bytes(4096))
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(reader.warnings, ["truncated after frame 1"])
+
     def test_unsupported_linktype_raises_with_path(self):
         path = _capture_file(_pcap_bytes([(1, 0, b"x" * 20, 20)], linktype=101))
         import pcap_read
@@ -1774,6 +1783,12 @@ class PcapDiffChecks(unittest.TestCase):
              "windows": "equal", "differing_columns": "", "warnings": "", "note": ""}])
         self.assertIn("1 of 2 Tier-A exact; 1 more identical but cut short at the source",
                       pcap_diff.summarize(results))
+
+    def test_menu_adds_pcap_diff_without_renumbering(self):
+        names = [name for name, _, _ in demo.ITEMS]
+        self.assertEqual((names[7], names[8], names[9]), ("Everything", "Tests", "Pcap diff"))
+        # The full diff reads ~178 GB; "Everything" must not start it.
+        self.assertNotIn("pcap_diff", demo.everything.__code__.co_names)
 
     def test_report_flag_reads_cached_output_without_drive(self):
         import tempfile
