@@ -238,3 +238,71 @@ Separate measurement, worth keeping: the nominal 5% cutoff is applied to trace s
 window flags when its most anomalous trace clears the cutoff, so the median realised benign
 window rate across strata is 0.217, not 0.05. Quote the realised rate beside any detection
 number.
+
+## The windowed score, measured on every stratum (2026-11-03)
+
+`story.py` presents the windowed SEQUENT frequency score (the 8 s `FORGET_SECONDS` clock) as
+its detector, but until now only the likelihood detector had a sweep. `windowed_scores.py`
+writes `outputs/windowed_sweep.csv`: 174 rows, one per (label, scenario, method, training
+count source), every label in both capture methods. One stratum is excluded and named:
+`nginx attack/pod-robot-controller/tcp`, unusable timebase.
+
+How it is measured, and what that costs:
+
+- **Calibration is the page's, exactly.** The whole benign recording runs through one scorer
+  so the clock is warm, and the cutoff is the top 5% of the held-out windows after the one
+  the split falls in. A test holds the sweep's cutoff equal to the bundle's.
+- **The cutoffs rest on 3-16 scored windows** per steady tap, and the realised benign rate is
+  measured on those same windows (one benign recording per tap; there is nothing else). It
+  runs **0.000-0.333**, median 0.077 tcp and 0.118 ptcp, against the nominal 0.05. Pooled:
+  7 of 86 held-out windows flagged on tcp, 8 of 77 on ptcp. `router-flannel` sets its cutoff
+  on 3 windows and flags one of them.
+- **Missing is missing.** A window no trace ended in enters no rate and no AUROC; it is
+  counted in `missing_windows`. On the steady taps, 75 tcp held-out windows are missing
+  beside 86 scored, and up to 63 of 88 windows on an attack capture.
+- **Attack clocks start cold.** The first 8 windows of an attack capture are warm-up: they are
+  flagged and counted (`warmup_flagged`), but detection and AUROC use only warm windows. Most
+  injection captures are shorter than 8 s, so 2 of 8 tcp and 4 of 8 ptcp steady injection
+  strata have no warm window and no detection number at all.
+- **Bulk taps set no cutoff.** The three `evaluation.BULK_LABELS` taps get an AUROC and no
+  flag, detection or benign rate, in group `bulk`, outside every figure below.
+
+Steady taps, training counts from entries (the adopted variant). Detection is pooled over
+warm windows, at each tap's own realised benign rate:
+
+| method | scenario | strata with warm windows | warm windows | detection | median AUROC | AUROC < 0.5 |
+|---|---|---|---|---|---|---|
+| tcp | injection | 6 of 8 | 36 | 0.500 | 0.795 | 1 |
+| tcp | lidar | 8 of 8 | 285 | 0.347 | 0.628 | 2 |
+| tcp | nginx | 8 of 8 | 297 | 0.172 | 0.514 | 4 |
+| ptcp | injection | 4 of 8 | 26 | 0.154 | 0.500 | 2 |
+| ptcp | lidar | 8 of 8 | 284 | 0.123 | 0.426 | 5 |
+| ptcp | nginx | 8 of 8 | 305 | 0.148 | 0.446 | 5 |
+
+What that says: on tcp the windowed score ranks lidar and injection better than chance, and
+nginx at chance. On ptcp it ranks attack windows *below* benign ones in most strata. The
+best stratum is the one the clock was sized for: `pod-lidar/lidar attack/tcp`, AUROC 0.908,
+detection 0.784 at a realised benign rate of 0.071 on 14 windows. The worst named numbers
+rest on almost nothing: `node-child1/injection/tcp` reads AUROC 1.000 on one warm window.
+The page's headline detector is a lidar detector on tcp, not a general one, and the injection
+column is not comparable to the others.
+
+### Root-count verdict: keep the entries fix
+
+The scorers took each state's training count from `node.visits`. For the start state that
+includes one visit per training trace start, which a test trace never adds, so its count was
+inflated (tcp `pod-lidar`: 702 visits, 554 entries). The start state *is* re-entered at test
+time on every tap (entries are non-zero everywhere), so the inflated count reached scores.
+
+The rule was committed in `0d4e0a7` before either variant's AUROC existed (`root_verdict.py`):
+keep entries unless a steady stratum loses more than 0.05 AUROC or the steady mean falls by
+more than 0.01; fewer than 10 paired steady strata is undecidable.
+
+Measured: **keep**. 42 paired steady strata, mean AUROC change +0.006, worst −0.029
+(`pod-nginx/lidar attack/ptcp`, 0.664 to 0.635). Detection on `pod-lidar/lidar attack/tcp`
+rose 0.725 to 0.784 and tcp nginx pooled 0.148 to 0.172, with every tap's realised benign
+rate unchanged between the variants. Bulk-tap AUROCs rose more (tcp median 0.500 to 0.552),
+but bulk strata decide nothing. `statemachine.TRAIN_COUNTS` is now `"entries"`; `"visits"` stays
+selectable and its tests still hold. The story page shows the scorer's own training count
+per state, so the start state now reads its entries, and the page says the trace starts are
+not counted.

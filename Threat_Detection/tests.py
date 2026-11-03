@@ -22,6 +22,7 @@ import root_verdict
 import statemachine
 import story
 import sweep
+import windowed_scores
 from detectors import build
 from features import make_windows, split_reference
 from reporting import plot_detection_gap, threshold_table, to_events, write_events
@@ -2208,6 +2209,106 @@ class StoryEntryChecks(unittest.TestCase):
         benign, _, shared = story.story_inputs(self.manifest(), "pod-nginx", cluster_captures=captures)
         self.assertIs(shared, captures)
         self.assertIs(benign, captures["pod-nginx"])
+
+
+class WindowedSweepChecks(unittest.TestCase):
+    """The windowed score's sweep: story.py's calibration, and missing windows kept missing."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.benign = flow_capture(vary=True)
+        cls.attack = flow_capture(burst=(20, 25), vary=True)
+        cls.rows = windowed_scores.label_rows("pod-lidar", "tcp", cls.benign,
+                                              {"flood": cls.attack})
+
+    def row(self, scenario, variant="visits", rows=None):
+        match = [r for r in rows or self.rows
+                 if r["scenario"] == scenario and r["train_counts"] == variant]
+        self.assertEqual(len(match), 1)
+        return match[0]
+
+    def test_cutoff_is_the_story_pages_cutoff(self):
+        bundle = story.build_story(self.benign, {"flood": self.attack},
+                                   {"pod-lidar": self.benign}, "pod-lidar")
+        expected = bundle["playback"]["captures"][0]["cutoffs"]["windowed"]
+        page_counts = bundle["meta"]["train_counts"]
+        self.assertEqual(page_counts, statemachine.TRAIN_COUNTS)
+        self.assertEqual(self.row("benign", page_counts)["cutoff"], expected)
+        self.assertEqual(self.row("flood", page_counts)["cutoff"], expected)
+        # the page's per-state training count is the scorer's, so the start state shows entries
+        entries = {s["id"]: s["entries"] for s in bundle["learning"]["pdfa"]["states"]}
+        for trace in bundle["playback"]["captures"][1]["traces"]:
+            for state, (_, trained) in zip(trace["states"], trace["visits"]):
+                self.assertEqual(trained, entries[state])
+
+    def test_held_out_windows_are_scored_on_a_warm_clock(self):
+        flows, _ = statemachine.segment_flows(statemachine.make_flows(self.benign),
+                                              self.benign["ts"].min())
+        train, holdout = statemachine.split_flows(flows)
+        model = statemachine.fit_model(train)
+        t0 = self.benign["ts"].min()
+        n = statemachine.n_windows_for(self.benign)
+        held = windowed_scores.held_out_scores(model, flows, holdout, t0, n)
+        cold = statemachine.frequency_scores_by_window(model, holdout, t0, n,
+                                                       statemachine.FORGET_SECONDS)
+        first_held = int((holdout["start_ts"].iloc[0] - t0) // features.WINDOW_SIZE)
+        self.assertEqual(len(held), n - first_held - 1)
+        # the cold clock starts empty at the split: it needs a whole trace before it scores
+        # at all, and its first scored window counts fewer visits than the warm clock's
+        cold = cold[first_held + 1:]
+        self.assertTrue(np.isfinite(held[:3]).all() and np.isnan(cold[0]))
+        first = int(np.flatnonzero(np.isfinite(cold))[0])
+        self.assertGreater(held[first], cold[first])
+        self.assertEqual(self.row("benign")["cutoff_windows"], int(np.isfinite(held).sum()))
+
+    def test_missing_windows_are_not_counted_as_normal(self):
+        held = np.array([1.0, 2.0, 3.0, np.nan])
+        attack = np.array([9.0, np.nan, np.nan, 9.0, np.nan, 0.0])
+        row = windowed_scores.attack_fields(held, attack, cutoff=5.0, first_warm=1)
+        self.assertEqual(row["missing_windows"], 3)
+        self.assertEqual(row["warm_scored"], 2)              # windows 3 and 5
+        self.assertEqual(row["detection"], 0.5)               # not 1 of 5
+        self.assertEqual(row["warmup_flagged"], 1)
+        self.assertEqual(row["n_benign"], 3)
+        self.assertEqual(row["auroc"], flag_scores.auroc([1.0, 2.0, 3.0], [9.0, 0.0]))
+        benign = windowed_scores.benign_fields(held, cutoff=2.5)
+        self.assertEqual(benign["cutoff_windows"], 3)
+        self.assertAlmostEqual(benign["realised_benign_rate"], 1 / 3)
+
+    def test_a_capture_with_no_warm_window_has_no_detection(self):
+        row = windowed_scores.attack_fields([1.0, 2.0], [9.0, 9.0, np.nan], 5.0, first_warm=2)
+        self.assertTrue(np.isnan(row["detection"]))
+        self.assertTrue(np.isnan(row["auroc"]))
+        self.assertEqual(row["warmup_flagged"], 2)
+
+    def test_bulk_tap_sets_no_cutoff(self):
+        label = sorted(evaluation.BULK_LABELS)[0]
+        rows = windowed_scores.label_rows(label, "tcp", self.benign, {"flood": self.attack},
+                                          variants=("visits",))
+        for row in rows:
+            self.assertEqual(row["group"], "bulk")
+            self.assertTrue(np.isnan(row["cutoff"]))
+            self.assertTrue(np.isnan(row["flagged_fraction"]))
+        self.assertTrue(np.isnan(self.row("flood", rows=rows)["detection"]))
+        self.assertTrue(np.isfinite(self.row("flood", rows=rows)["auroc"]))
+
+    def test_entries_differ_from_visits_only_at_the_start_state(self):
+        traces = [("a", "b", "c")] * 12 + [("a", "b", "b")] * 12 + [("c", "a")] * 12
+        pdfa = statemachine.learn_pdfa(traces)
+        visits = statemachine.state_train_counts(pdfa, "visits")
+        entries = statemachine.state_train_counts(pdfa, "entries")
+        root = id(pdfa.root)
+        self.assertEqual(visits[root] - entries[root], len(traces))
+        self.assertEqual({k: v for k, v in visits.items() if k != root},
+                         {k: v for k, v in entries.items() if k != root})
+        with self.assertRaises(ValueError):
+            statemachine.state_train_counts(pdfa, "starts")
+
+    def test_both_count_sources_are_reported(self):
+        self.assertEqual({r["train_counts"] for r in self.rows}, set(windowed_scores.VARIANTS))
+        self.assertEqual(self.row("benign")["start_visits"] - self.row("benign")["start_entries"],
+                         self.row("benign", "entries")["start_visits"]
+                         - self.row("benign", "entries")["start_entries"])
 
 
 if __name__ == "__main__":
