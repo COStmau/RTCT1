@@ -1419,5 +1419,232 @@ class PcapReadChecks(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
 
 
+# --- Frames built layer by layer, for the row dissection -------------------------------
+
+def _mac(text):
+    return bytes(int(part, 16) for part in text.split(":"))
+
+
+def _ether(payload, ethertype, src="00:00:00:00:00:00", dst="00:00:00:00:00:00"):
+    import struct
+    return _mac(dst) + _mac(src) + struct.pack(">H", ethertype) + payload
+
+
+def _sll2(payload, protocol):
+    import struct
+    return struct.pack(">HHIHBB8s", protocol, 0, 1, 772, 0, 6, bytes(8)) + payload
+
+
+def _ipv4(payload, proto, src="10.0.0.1", dst="10.0.0.2", ttl=64, total_len=None):
+    import ipaddress
+    import struct
+    total = total_len if total_len is not None else 20 + len(payload)
+    return (struct.pack(">BBHHHBBH4s4s", 0x45, 0, total, 1, 0x4000, ttl, proto, 0,
+                        ipaddress.ip_address(src).packed, ipaddress.ip_address(dst).packed)
+            + payload)
+
+
+def _ipv6(payload, next_header, src="::1", dst="::1", hop_limit=64):
+    import ipaddress
+    import struct
+    return (struct.pack(">IHBB16s16s", 6 << 28, len(payload), next_header, hop_limit,
+                        ipaddress.ip_address(src).packed, ipaddress.ip_address(dst).packed)
+            + payload)
+
+
+def _tcp(sport, dport, flags=0, payload=b"", header_len=20):
+    import struct
+    head = struct.pack(">HHIIBBHHH", sport, dport, 1, 1, (header_len // 4) << 4, flags, 512, 0, 0)
+    return head + bytes(header_len - 20) + payload
+
+
+def _udp(sport, dport, payload=b""):
+    import struct
+    return struct.pack(">HHHH", sport, dport, 8 + len(payload), 0) + payload
+
+
+def _icmp(icmp_type, code, payload=b""):
+    import struct
+    return struct.pack(">BBHI", icmp_type, code, 0, 0) + payload
+
+
+def _arp(op, sender_mac, sender_ip, target_mac, target_ip):
+    import ipaddress
+    import struct
+    return (struct.pack(">HHBBH", 1, 0x0800, 6, 4, op) + _mac(sender_mac)
+            + ipaddress.ip_address(sender_ip).packed + _mac(target_mac)
+            + ipaddress.ip_address(target_ip).packed)
+
+
+def _frame(data, linktype=1, orig_len=None, number=1, sec=1771545908, frac=877129, digits=6):
+    import pcap_read
+    return pcap_read.Frame(number, sec, frac, digits, orig_len or len(data),
+                           data[:pcap_read.HEAD_BYTES], linktype)
+
+
+class PcapRowChecks(unittest.TestCase):
+    def row(self, data, linktype=1, orig_len=None):
+        import pcap_rows
+        return pcap_rows.frame_row(_frame(data, linktype, orig_len))
+
+    def test_sll2_ipv6_udp_matches_sponsor_row1(self):
+        # benign pod-nginx-tcp.csv row 1
+        row = self.row(_sll2(_ipv6(_udp(53570, 8080, b"x" * 9), 17), 0x86DD), linktype=276)
+        self.assertEqual((row["frame_len"], row["eth_src"], row["eth_dst"], row["eth_type"]),
+                         (77, None, None, None))
+        self.assertEqual((row["ip_version"], row["src_ip"], row["dst_ip"], row["proto"],
+                          row["ttl_or_hlim"]), (6, "::1", "::1", "udp", 64))
+        self.assertEqual((row["src_port"], row["dst_port"], row["is_http"], row["is_dns"],
+                          row["is_https"]), (53570, 8080, 1, 0, 0))
+        self.assertEqual((row["udp_length"], row["tcp_payload_len"], row["tcp_syn"],
+                          row["icmp_type"]), (17, None, 0, None))
+
+    def test_row_has_every_column_but_the_three_capture_wide_ones(self):
+        import pcap_rows
+        row = self.row(_ether(_ipv4(_udp(1, 2), 17), 0x0800))
+        self.assertEqual(list(row), pcap_rows.COLUMNS[3:])
+
+    def test_ethernet_loopback_zero_macs(self):
+        row = self.row(_ether(_ipv6(_udp(1, 2), 17), 0x86DD))
+        self.assertEqual((row["eth_src"], row["eth_dst"], row["eth_type"]),
+                         ("00:00:00:00:00:00", "00:00:00:00:00:00", "0x86dd"))
+
+    def test_ethernet_macs_are_lowercase(self):
+        row = self.row(_ether(_ipv4(_udp(1, 2), 17), 0x0800, src="6C:F6:DA:C5:D5:B9"))
+        self.assertEqual(row["eth_src"], "6c:f6:da:c5:d5:b9")
+
+    def test_ipv4_tcp_payload_and_flags(self):
+        row = self.row(_ether(_ipv4(_tcp(40000, 80, flags=0x12, payload=b"p" * 100), 6), 0x0800))
+        self.assertEqual((row["ip_version"], row["src_ip"], row["dst_ip"], row["proto"]),
+                         (4, "10.0.0.1", "10.0.0.2", "tcp"))
+        self.assertEqual((row["tcp_syn"], row["tcp_ack"], row["tcp_fin"], row["tcp_rst"]),
+                         (1, 1, 0, 0))
+        self.assertEqual((row["tcp_payload_len"], row["udp_length"]), (100, None))
+
+    def test_every_tcp_flag_bit(self):
+        row = self.row(_ether(_ipv4(_tcp(1, 2, flags=0xFF), 6), 0x0800))
+        self.assertEqual([row[c] for c in ("tcp_fin", "tcp_syn", "tcp_rst", "tcp_psh", "tcp_ack",
+                                           "tcp_urg", "tcp_ece", "tcp_cwr")], [1] * 8)
+
+    def test_tcp_without_payload_prints_zero(self):
+        row = self.row(_ether(_ipv4(_tcp(1, 2, flags=0x10), 6), 0x0800))
+        self.assertEqual(row["tcp_payload_len"], 0)
+
+    def test_clipped_frame_uses_header_lengths(self):
+        segment = _tcp(777, 2049, flags=0x18, payload=bytes(65160), header_len=32)
+        data = _ether(_ipv4(segment, 6, total_len=65212), 0x0800)
+        row = self.row(data)
+        self.assertEqual((row["frame_len"], row["tcp_payload_len"]), (65226, 65160))
+
+    def test_ports_either_side_set_flags(self):
+        self.assertEqual(self.row(_ether(_ipv4(_udp(53, 5000), 17), 0x0800))["is_dns"], 1)
+        self.assertEqual(self.row(_ether(_ipv4(_tcp(443, 5000), 6), 0x0800))["is_https"], 1)
+        self.assertEqual(self.row(_ether(_ipv4(_tcp(5000, 8080), 6), 0x0800))["is_http"], 1)
+        quiet = self.row(_ether(_ipv4(_tcp(5000, 5001), 6), 0x0800))
+        self.assertEqual((quiet["is_dns"], quiet["is_http"], quiet["is_https"]), (0, 0, 0))
+
+    def test_icmp_zero_type_and_code_are_blank(self):
+        request = self.row(_sll2(_ipv4(_icmp(8, 0, bytes(56)), 1, "127.0.0.1", "127.0.0.1"), 0x0800), 276)
+        reply = self.row(_sll2(_ipv4(_icmp(0, 0, bytes(56)), 1, "127.0.0.1", "127.0.0.1"), 0x0800), 276)
+        self.assertEqual((request["proto"], request["icmp_type"], request["icmp_code"]), ("icmp", 8, None))
+        self.assertEqual((reply["icmp_type"], reply["icmp_code"], reply["src_port"]), (None, None, None))
+        self.assertEqual(request["frame_len"], 104)
+
+    def test_icmpv6_error_takes_quoted_udp_ports(self):
+        # benign pod-nginx-tcp.csv row 2: port unreachable quoting the row-1 datagram
+        quoted = _ipv6(_udp(53570, 8080, b"x" * 9), 17)
+        row = self.row(_sll2(_ipv6(_icmp(1, 4, quoted), 58), 0x86DD), linktype=276)
+        self.assertEqual((row["frame_len"], row["proto"], row["icmp_type"], row["icmp_code"]),
+                         (125, "58", 1, 4))
+        self.assertEqual((row["src_port"], row["dst_port"], row["is_http"], row["udp_length"],
+                          row["tcp_payload_len"]), (53570, 8080, 1, 17, None))
+
+    def test_icmpv4_error_takes_quoted_tcp_ports_and_flags(self):
+        quoted = _ipv4(_tcp(40000, 443, flags=0x02), 6)
+        row = self.row(_ether(_ipv4(_icmp(3, 3, quoted), 1), 0x0800))
+        self.assertEqual((row["src_port"], row["dst_port"], row["tcp_syn"], row["is_https"],
+                          row["tcp_payload_len"]), (40000, 443, 1, 1, None))
+
+    def test_igmp_proto_is_numeric_string(self):
+        row = self.row(_ether(_ipv4(bytes(8), 2, "192.168.50.1", "224.0.0.1", ttl=1), 0x0800))
+        self.assertEqual((row["proto"], row["ttl_or_hlim"], row["src_port"]), ("2", 1, None))
+
+    def test_arp_fills_arp_columns_only(self):
+        arp = _arp(1, "40:ae:30:a7:6f:f6", "192.168.50.1", "00:00:00:00:00:00", "192.168.50.22")
+        row = self.row(_ether(arp, 0x0806, src="40:ae:30:a7:6f:f6", dst="ff:ff:ff:ff:ff:ff"))
+        self.assertEqual((row["arp_opcode"], row["arp_sender_ip"], row["arp_target_ip"],
+                          row["arp_sender_mac"], row["arp_target_mac"]),
+                         (1, "192.168.50.1", "192.168.50.22", "40:ae:30:a7:6f:f6",
+                          "00:00:00:00:00:00"))
+        self.assertEqual((row["ip_version"], row["src_ip"], row["proto"], row["eth_type"]),
+                         (None, None, None, "0x0806"))
+
+    def test_raw_ip_under_ethernet_blanks_ip_columns(self):
+        packet = _ipv4(_udp(1, 2, bytes(360)), 17, "192.168.50.22", "192.168.50.140")
+        row = self.row(packet)
+        self.assertEqual(row["eth_type"], "0xc0a8")
+        self.assertEqual((row["src_ip"], row["dst_ip"], row["dst_port"]), (None, None, None))
+
+    def test_short_frame_leaves_missing_fields_blank(self):
+        import pcap_rows
+        data = _ether(_ipv4(_tcp(1, 2), 6), 0x0800)[:30]       # IPv4 header cut mid-way
+        row, complete = pcap_rows.dissect(_frame(data, orig_len=54))
+        self.assertFalse(complete)
+        self.assertEqual((row["eth_type"], row["src_ip"], row["frame_len"]), ("0x0800", None, 54))
+
+    def test_iat_first_row_int_zero_then_signed_float(self):
+        import pcap_rows
+        packet = _sll2(_ipv4(_udp(1, 2), 17), 0x0800)
+        path = _capture_file(_pcap_bytes([(100, 500000, packet, len(packet)),
+                                          (100, 750000, packet, len(packet)),
+                                          (100, 700000, packet, len(packet))]))
+        rows = list(pcap_rows.capture_rows(path))
+        self.assertEqual([r[0] for r in rows], [1, 2, 3])
+        iats = [r[2] for r in rows]
+        self.assertEqual(pcap_rows.format_cell(iats[0]), "0")
+        self.assertIsInstance(iats[0], int)
+        self.assertGreater(iats[1], 0)
+        self.assertLess(iats[2], 0)
+        self.assertEqual(iats[2], rows[2][1] - rows[1][1])
+
+    def test_ts_seconds_rules_differ_only_in_last_ulp(self):
+        import pcap_rows
+        add = pcap_rows.ts_seconds(1771545910, 906831167, 9, rule="add")
+        div = pcap_rows.ts_seconds(1771545910, 906831167, 9, rule="div")
+        self.assertLessEqual(abs(add - div), 2.4e-7)
+        with self.assertRaises(ValueError):
+            pcap_rows.ts_seconds(1, 0, 6, rule="other")
+
+    def test_format_cell(self):
+        import pcap_rows
+        self.assertEqual([pcap_rows.format_cell(v) for v in (None, 0, 17, "udp", 8.58306884765625e-06)],
+                         ["", "0", "17", "udp", "8.58306884765625e-06"])
+
+    def test_written_csv_loads_through_data_io(self):
+        import tempfile
+        import pcap_rows
+        packet = _ether(_ipv4(_tcp(40000, 8080, flags=0x02, payload=b"x" * 10), 6), 0x0800)
+        source = _capture_file(_pcap_bytes([(100, 1, packet, len(packet)),
+                                            (100, 2, packet, len(packet))], linktype=1))
+        target = Path(tempfile.mkdtemp()) / "pod-nginx-ptcp.csv"
+        result = pcap_rows.write_capture_rows(source, target)
+        self.assertEqual(result, {"rows": 2, "warnings": []})
+        raw = target.read_bytes()
+        self.assertEqual(raw.split(b"\r\n")[0].decode().split(","), pcap_rows.COLUMNS)
+        self.assertEqual(raw.count(b"\r\n"), 3)
+        frame = data_io.load_capture(str(target))
+        self.assertEqual(list(frame.columns), data_io.PACKET_COLUMNS)
+        self.assertEqual(int(frame["dst_port"].iloc[0]), 8080)
+
+    def test_reader_warnings_reach_the_writer(self):
+        import tempfile
+        import pcap_rows
+        packet = _sll2(_ipv4(_udp(1, 2, bytes(50)), 17), 0x0800)
+        blob = _pcap_bytes([(1, 0, packet, len(packet)), (2, 0, packet, len(packet))])
+        target = Path(tempfile.mkdtemp()) / "x.csv"
+        result = pcap_rows.write_capture_rows(_capture_file(blob[:-10]), target)
+        self.assertEqual(result, {"rows": 1, "warnings": ["truncated after frame 1"]})
+
+
 if __name__ == "__main__":
     unittest.main()
