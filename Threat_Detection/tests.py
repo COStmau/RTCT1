@@ -1970,7 +1970,9 @@ class StoryBundleChecks(unittest.TestCase):
     def test_trace_visit_counts_are_exact_integers(self):
         train, _ = statemachine.split_flows(self.model_and_flows(self.benign))
         pdfa = statemachine.fit_model(train)["pdfa"]
-        visits = [n.visits for n in statemachine.pdfa_states_in_order(pdfa)]
+        # the training count the page shows is the one the scorer uses, whatever its source
+        counts = statemachine.state_train_counts(pdfa)
+        visits = [counts[id(n)] for n in statemachine.pdfa_states_in_order(pdfa)]
         parsed = json.loads(story.to_json(self.story))
         for trace in parsed["playback"]["captures"][1]["traces"]:
             self.assertEqual(len(trace["visits"]), len(trace["states"]))

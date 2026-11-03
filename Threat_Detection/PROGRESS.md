@@ -177,12 +177,10 @@ test of whether detection survives without the length features is
   cutoff. The fix is more benign recording per vantage, the same blocker as calibration in
   general.
 
-- **The frequency scorers count the start state twice in training.** `FrequencyScorer` and
-  `WindowedFrequencyScorer` take training counts from `node.visits`, which for the start state
-  includes one visit per training trace start; `trace_states` never counts the start at test
-  time. On pod-lidar the start state's training count is 702 against 554 real entries. The
-  page discloses it; whether to change the scorer, and what that does to the numbers, is being
-  measured with a pre-registered rule before anything is changed.
+- **Resolved: the frequency scorers counted the start state twice in training.** Training
+  counts came from `node.visits`, which for the start state includes every trace start that a
+  test trace never adds (pod-lidar: 702 against 554 entries). The pre-registered rule kept the
+  fix; the scorers now count entries. See "Root-count verdict" below.
 
 ## Next: feature selection and the interface question
 
