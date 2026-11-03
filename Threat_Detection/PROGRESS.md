@@ -322,3 +322,39 @@ but bulk strata decide nothing. `statemachine.TRAIN_COUNTS` is now `"entries"`; 
 selectable and its tests still hold. The story page shows the scorer's own training count
 per state, so the start state now reads its entries, and the page says the trace starts are
 not counted.
+
+## Cross-validated calibration: dropped by its own rule (2026-11-03)
+
+The windowed score's cutoffs rest on 3-16 held-out windows per steady tap, the last 30% of one
+benign recording. The candidate fix used every benign window out of fold: the recording cut
+into 5 contiguous blocks, each block scored on a warm clock by a machine learned from the
+other four (kept as separate segments, so no training trace spans the hole), the cutoff set
+from all of them, and one machine learned from the whole recording deployed on the page.
+
+The rule was committed in `274cf63` (`cv_verdict.py`) before any of these numbers existed.
+`cv_calibration.py` writes `outputs/cv_calibration.csv`. Verdict: **drop**, on every clause.
+
+- **The sample grew 2.9x, not 5x** (median over steady taps; rule asks 3x). Each block's first
+  window mixes in training traces and the recording's first 8 s run on a cold clock, so both
+  are left out, and many windows hold no finished trace. Per tap: 9 to 50 windows against 3 to 16.
+- **Out of fold, the windowed score flags about 11% of benign windows**: 26 of 231 on tcp, 23 of
+  205 on ptcp, each block judged against a cutoff set from the other four. The rule's band is
+  2-10%. `router-flannel` flags 3 of 9 in both methods.
+- **Fold and full machines do not share a scale.** On attack windows, out of sample for every
+  machine, they differ by a median 0.43 of the benign interquartile range (rule: 0.25). A
+  machine learned from all the data scores differently from one learned from 80%, so a cutoff
+  set by the fold machines cannot be carried to the deployed one.
+- **Ranking moved both ways.** Over 42 paired steady strata the mean AUROC rose 0.039 and 23
+  strata improved, but 18 lost more than 0.05, the worst `node-child2/injection/tcp` (0.392)
+  and `pod-lidar/lidar/tcp` (0.908 to 0.565). Those losses mix two changes, a different
+  machine and a benign sample three times larger, so they do not say which one costs.
+
+What stays, and what it is worth:
+
+- The split calibration stays; the page and `windowed_scores.py` are unchanged.
+- The out-of-fold rate is the first benign false-alarm rate for this detector measured on
+  windows that did not set its cutoff. It is a property of fold machines, not of the deployed
+  one, but it says the nominal 5% is optimistic by about a factor of two. Quote 11% beside the
+  windowed score's detection numbers until there is a second benign recording per tap.
+- `statemachine.fit_segments` (fit on several stretches of one recording with no trace across
+  a gap) stays: `fit_model` is now its one-segment case, with every existing test unchanged.

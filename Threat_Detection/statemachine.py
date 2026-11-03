@@ -448,9 +448,20 @@ def split_flows(flows, train_fraction=BENIGN_TRAIN_FRACTION):
 def fit_model(train_flows, nbins=NBINS, trace_len=TRACE_LEN, alpha=ALERGIA_ALPHA,
               encoding="percentile", flags=False, trace=None):
     """Bin edges plus PDFA learned from benign training flows; `trace` as in learn_pdfa."""
+    return fit_segments([train_flows], nbins, trace_len, alpha, encoding, flags, trace)
+
+
+def fit_segments(segments, nbins=NBINS, trace_len=TRACE_LEN, alpha=ALERGIA_ALPHA,
+                 encoding="percentile", flags=False, trace=None):
+    """fit_model over several stretches of one recording, with no trace across a gap.
+
+    The bins are fitted on every segment's flows together; traces slide within each segment
+    only, so holding a block out of the middle of a recording never splices its two sides
+    into a trace benign traffic did not produce.
+    """
     fitter = fit_frequency if encoding == "frequency" else fit_percentile
-    enc = fitter(train_flows, nbins, flags=flags)
-    traces = make_traces(encode(train_flows, enc), trace_len)
+    enc = fitter(pd.concat(segments, ignore_index=True), nbins, flags=flags)
+    traces = [t for segment in segments for t in make_traces(encode(segment, enc), trace_len)]
     if not traces:
         raise ValueError("Too few training flows for one trace.")
     return {"enc": enc, "pdfa": learn_pdfa(traces, alpha, trace=trace), "trace_len": trace_len}

@@ -2428,5 +2428,74 @@ class CvVerdictChecks(unittest.TestCase):
         self.assertEqual(cv_verdict.decide(rows)[0], "keep")
 
 
+class CvCalibrationChecks(unittest.TestCase):
+    """Cross-validated calibration: every benign window held out once, scored out of fold."""
+
+    @classmethod
+    def setUpClass(cls):
+        import cv_calibration
+        cls.cv = cv_calibration
+        cls.benign = flow_capture(vary=True)
+        cls.t0 = cls.benign["ts"].min()
+        cls.flows, _ = statemachine.segment_flows(statemachine.make_flows(cls.benign), cls.t0)
+        cls.n = statemachine.n_windows_for(cls.benign)
+        cls.result = cls.cv.calibrate(cls.flows, cls.t0, cls.n)
+
+    def test_fold_blocks_tile_the_recording(self):
+        blocks = self.cv.fold_blocks(self.n)
+        self.assertEqual(len(blocks), cv_verdict.CV_FOLDS)
+        self.assertEqual(blocks[0][0], 0)
+        self.assertEqual(blocks[-1][1], self.n)
+        self.assertTrue(all(a[1] == b[0] for a, b in zip(blocks, blocks[1:])))
+
+    def test_segments_never_make_a_trace_across_the_gap(self):
+        half = len(self.flows) // 2
+        segments = [self.flows.iloc[:half], self.flows.iloc[half + 7:]]
+        events = []
+        statemachine.fit_segments(segments, trace=events)
+        root = events[0][1]
+        length = statemachine.TRACE_LEN
+        self.assertEqual(root.visits, sum(len(seg) - length + 1 for seg in segments))
+        alone = statemachine.fit_segments([self.flows])
+        whole = statemachine.fit_model(self.flows)
+        self.assertEqual(alone["pdfa"].n_states, whole["pdfa"].n_states)
+
+    def test_every_benign_window_is_held_out_once(self):
+        kept = [w for fold in self.result["folds"] for w in fold["windows"]]
+        self.assertEqual(len(kept), len(set(kept)))
+        warm = int(np.ceil(statemachine.FORGET_SECONDS / features.WINDOW_SIZE))
+        excluded = {start for start, _ in self.cv.fold_blocks(self.n)} | set(range(warm))
+        self.assertEqual(set(kept), set(range(self.n)) - excluded)
+        for fold in self.result["folds"]:
+            start, end = fold["block"]
+            self.assertTrue(all(start < w < end for w in fold["windows"]))
+
+    def test_out_of_fold_rate_uses_cutoffs_set_without_the_fold(self):
+        folds = self.result["folds"]
+        flagged = windows = 0
+        for k, fold in enumerate(folds):
+            others = np.concatenate([f["scores"] for j, f in enumerate(folds) if j != k])
+            cutoff = statemachine.frequency_cutoff(others)
+            scores = fold["scores"][np.isfinite(fold["scores"])]
+            flagged += int((scores > cutoff).sum())
+            windows += len(scores)
+        self.assertEqual((self.result["oos_flagged"], self.result["oos_windows"]), (flagged, windows))
+        pooled = np.concatenate([f["scores"] for f in folds])
+        self.assertEqual(self.result["cutoff_windows"], int(np.isfinite(pooled).sum()))
+        self.assertAlmostEqual(self.result["cutoff"], statemachine.frequency_cutoff(pooled))
+
+    def test_rows_carry_what_the_verdict_reads(self):
+        rows = self.cv.label_rows("pod-lidar", "tcp", self.benign,
+                                  {"flood": flow_capture(burst=(20, 25), vary=True)})
+        by = {(r["calibration"], r["scenario"]): r for r in rows}
+        self.assertEqual(set(by), {("split", "benign"), ("split", "flood"),
+                                   ("cv5", "benign"), ("cv5", "flood")})
+        cv = by[("cv5", "benign")]
+        for key in ("cutoff_windows", "oos_flagged", "oos_windows", "scale_ratio"):
+            self.assertIn(key, cv)
+        self.assertGreater(cv["cutoff_windows"], by[("split", "benign")]["cutoff_windows"])
+        self.assertIn(cv_verdict.decide(rows)[0], {"keep", "drop", "undecidable"})
+
+
 if __name__ == "__main__":
     unittest.main()

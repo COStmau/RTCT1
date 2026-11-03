@@ -147,8 +147,13 @@ def _load(path):
     return packets if timebase_issues(packets)["usable"] else None
 
 
-def sweep(manifest, methods=("tcp", "ptcp"), forget_seconds=FORGET_SECONDS):
-    """Rows for every (label, scenario, method, count source), and what was excluded."""
+def sweep(manifest, methods=("tcp", "ptcp"), forget_seconds=FORGET_SECONDS, rows_for=None):
+    """Rows for every (label, scenario, method, count source), and what was excluded.
+
+    `rows_for(label, method, benign, targets, forget_seconds)` makes one tap's rows; it is
+    label_rows unless a variant (cv_calibration) supplies its own.
+    """
+    rows_for = rows_for or label_rows
     if "usable" not in manifest.columns:      # a freshly built manifest carries no verdict
         manifest = describe_captures(manifest)
     rows, excluded = [], []
@@ -176,13 +181,14 @@ def sweep(manifest, methods=("tcp", "ptcp"), forget_seconds=FORGET_SECONDS):
                     continue
                 targets[scenario] = packets
             try:
-                rows += label_rows(label, method, benign, targets, forget_seconds)
+                rows += rows_for(label, method, benign, targets, forget_seconds)
             except ValueError as error:
                 excluded.append(f"{label}/{method} ({error})")
     frame = pd.DataFrame(rows)
     if not frame.empty:
-        frame = frame.sort_values(["method", "group", "label", "scenario", "train_counts"],
-                                  kind="stable").reset_index(drop=True)
+        order = [c for c in ("method", "group", "label", "scenario", "train_counts",
+                             "calibration") if c in frame.columns]
+        frame = frame.sort_values(order, kind="stable").reset_index(drop=True)
     return frame, excluded
 
 
