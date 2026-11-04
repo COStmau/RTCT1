@@ -362,6 +362,12 @@ def run_tests():
     _run("-m", "unittest", "tests")
 
 
+def pcap_diff():
+    """The last pcap_diff.py run, summarized. The run itself reads every capture file, so
+    it is started by hand: .venv/bin/python pcap_diff.py"""
+    _run("pcap_diff.py", "--report")
+
+
 # --- 8. Everything ---------------------------------------------------------------
 
 def everything():
@@ -384,6 +390,7 @@ ITEMS = [
     ("Feature value", feature_value, "what each measurement is worth on its own"),
     ("Everything", everything, "all of the above, in the order the report needs it"),
     ("Tests", run_tests, "the unit suite"),
+    ("Pcap diff", pcap_diff, "regenerated packet rows against the sponsor CSVs"),
 ]
 
 
