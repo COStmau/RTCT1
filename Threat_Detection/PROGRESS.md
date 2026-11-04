@@ -358,3 +358,40 @@ What stays, and what it is worth:
   windowed score's detection numbers until there is a second benign recording per tap.
 - `statemachine.fit_segments` (fit on several stretches of one recording with no trace across
   a gap) stays: `fit_model` is now its one-segment case, with every existing test unchanged.
+
+## Pcap converter verdict (2026-11-03)
+
+Built `pcap_read.py`, `pcap_rows.py` and `pcap_diff.py` so a capture file becomes the packet
+CSV the pipeline reads without the sponsor's conversion step. Judged by a diff fixed before
+the run: Tier A is `frame_number` plus every column the pipeline reads, which must be
+identical, with equal window tables; Tier B is the other 22 columns, counted.
+
+Result over all 88 captures: every regenerated row identical, cell for cell, to the
+sponsor's row at the same position, in every column; row counts equal on 87; window tables
+equal on 87. 74 are called exact and 13 "identical but cut short at the source". The run
+takes 461 seconds.
+
+The 88th changes a standing conclusion. `nginx attack / pod-robot-controller / tcp` was
+quarantined for 64,853 zero timestamps. They are not packets: the recording ends at frame
+155,603, 3.56 GB into a 3.75 GB file, the rest is zeros, and the sponsor's conversion read
+64,853 of those zero records as packets. The converter stops at the first one, so this
+capture is recoverable: 155,603 real frames that window normally. The quarantine stays in
+the sweep until the sweep reads converted captures; that is a decision for later, not made
+here.
+
+Found on the way, each now a rule with a test built from the real frame:
+
+- The tcp captures are classic pcap with Linux cooked headers, not pcapng; the extension is
+  wrong for half the corpus.
+- Sponsor rules the converter copies: HTTP is port 80 or 8080; ICMP errors take the quoted
+  packet's ports; ICMPv4 prints zero type/code blank, ICMPv6 prints them; IPv6 extension
+  headers are looked behind for the transport while `proto` keeps the first next-header; an
+  802.3 length field leaves `eth_type` blank, a zero type field prints `0x0000`.
+- 14 capture files are cut mid-record with zero-filled tails, `injection attack /
+  node-child4-ptcp` with 6.2 GB of zeros after 4.58 GB of data. The reader ends a capture at
+  the first record that cannot be real: a pcapng block whose closing length does not match,
+  or a pcap record that is empty, longer than its wire frame, or past the snaplen. Worth
+  raising with the sponsor: those files lost data.
+- `data_io.at_snaplen` counts 64 KB frames (65535 plus the link header), which are offloaded
+  super-frames, not snaplen truncation: the tcp captures have a 262144-byte snaplen. The name
+  is misleading; the measurement itself is unchanged here.

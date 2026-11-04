@@ -1,0 +1,106 @@
+
+{
+  "rule_id": "R000",
+  "name": "Rule Name",
+  "description": "Description of what this rule handles",
+  "enabled": true,
+  "priority": 50,
+
+  "conditions": {
+    "issue_type": "issue_type",
+    "location_type": "pod",
+    "minimum_severity": "low"
+  },
+
+  "required_Actions": [
+    "action_1",
+    "action_2",
+    "action_3"
+  ],
+
+  "required_Validations": [
+    "validation_1",
+    "validation_2",
+    "validation_3"
+  ],
+
+  "response_steps": [
+    {
+      "step": 1,
+      "name": "Initial Response",
+      "action": "action_1",
+      "parameters": {},
+      "validation": "validation_1",
+      "verification_delay_seconds": 30,
+
+      "escalation": {
+        "logic": "OR",
+        "criteria": [
+          { "type": "manual_intervention" },
+          { "type": "time_elapsed", "parameters": { "seconds": 5 } },
+          { "type": "deviation_from_baseline" }
+        ]
+      },
+
+      "deescalation": {
+        "logic": "OR",
+        "criteria": [
+          { "type": "manual_intervention" },
+          { "type": "return_to_baseline" }
+        ]
+      }
+    },
+
+    {
+      "step": 2,
+      "name": "Secondary Response",
+      "action": "action_2",
+      "parameters": {},
+      "validation": "validation_2",
+      "verification_delay_seconds": 30,
+
+      "escalation": {
+        "logic": "OR",
+        "criteria": [
+          { "type": "manual_intervention" },
+          { "type": "time_elapsed", "parameters": { "seconds": 10 } },
+          { "type": "deviation_from_baseline" }
+        ]
+      },
+
+      "deescalation": {
+        "logic": "OR",
+        "criteria": [
+          { "type": "manual_intervention" },
+          { "type": "return_to_baseline" }
+        ]
+      }
+    },
+
+    {
+      "step": 3,
+      "name": "Final Response",
+      "action": "action_3",
+      "parameters": {},
+      "validation": "validation_3",
+      "verification_delay_seconds": 30,
+
+      "escalation": {
+        "logic": "OR",
+        "criteria": []
+      },
+
+      "deescalation": {
+        "logic": "OR",
+        "criteria": [
+          { "type": "manual_intervention" },
+          { "type": "return_to_baseline" }
+        ]
+      }
+    }
+  ],
+
+  "on_execution_failure": "manual_review",
+  "on_resolution": "begin_recovery",
+  "on_max_escalation": "manual_review"
+}

@@ -1,0 +1,25 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: robot-controller-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+
+spec:
+  groups:
+    - name: robot-controller-detection
+      interval: 5s
+      rules:
+        - alert: RobotControllerHighTraffic
+          expr: |
+            benign_replay_packets_per_second{job="benign-replay",source="pod-robot-controller"}
+            > on(source)
+            benign_baseline_upper_3scale{job="benign-replay",source="pod-robot-controller",metric="packets_per_second"}
+          for: 10s
+          labels:
+            severity: warning
+            subsystem: threat-detection
+          annotations:
+            summary: "Sustained abnormal traffic on robot controller"
+            description: "Packet rate exceeded the frozen Median/MAD upper threshold."

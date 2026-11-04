@@ -30,11 +30,19 @@ testable on their own.
 | `cluster.py` | The k3s cluster's shape inferred from benign traffic: nodes, pods (including host-network ones), services, conversations and where each capture listened. Used by the story page. |
 | `layout.py` | Computed positions for the story page: the prefix tree as an icicle, the learned machine in columns. |
 
+**Capture conversion** — capture files to the packet CSVs `data_io` reads. Upstream of
+the layers above and independent of them; see "Capture to packet rows" below.
+
+| File | What it does |
+|---|---|
+| `pcap_read.py` | The two capture containers (pcap, pcapng) to raw frames. Format from the magic number, never the extension. Reads at most 256 bytes of each frame. |
+| `pcap_rows.py` | Frames to the sponsor's 34-column packet rows, written as their CSV. Copies the sponsor's own quirks on purpose; `SPONSOR_QUIRKS` in its docstring lists them. |
+
 **The one entry point** — everything a person looks at goes through it.
 
 | File | What it does |
 |---|---|
-| `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 are the experiments below; 8 regenerates every artifact; 9 runs the tests; 10 builds the interactive state-machine story page. |
+| `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 are the experiments below; 8 regenerates every artifact; 9 runs the tests; 10 builds the interactive state-machine story page; 11 summarizes the last capture-conversion diff. |
 
 **The experiments** — each runs one measurement and writes its own CSV. `demo.py` runs
 these as documented; they also run on their own.
@@ -49,6 +57,8 @@ these as documented; they also run on their own.
 | `windowed_scores.py` | The story page's detector, the windowed SEQUENT score, on every stratum, calibrated exactly as the page is. Quotes the windows each cutoff rests on and the realised benign rate beside every number. Prints the root-count verdict. |
 | `cv_calibration.py` | Cross-validated calibration of the windowed score (every benign window scored out of fold) against the split. Prints the pre-registered verdict: drop, so the split stays. |
 | `story.py` | The state machine as one interactive page, `outputs/statemachine_story.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). One page carries every steady capture tap (`--vantages` to choose; `--vantage` picks the one it opens on): click a tap on the map or use the header picker to switch the learning and detection acts, and Act 3's *Across taps* view lines one scenario up at every tap on a shared capture-time axis. Self-contained (about 3 MB for the 8 steady taps; past 15 MB the other taps' per-trace breakdown is dropped); opens offline. `demo.py` item 10. The renderer is `story_template/`. Bulk-transfer vantages (`evaluation.BULK_LABELS`) never set a cutoff, so they are left out unless `--allow-bulk`, and the page then marks their verdicts as inspection only. Each cutoff shows how many held-out windows it rests on and how often it actually flags them; capture text is HTML-escaped in the bundle. |
+
+| `pcap_diff.py` | Regenerates every sponsor packet CSV from its capture file and diffs the two row for row, plus the window tables. Writes `outputs/pcap_diff.csv`. Reads every capture, so `demo.py` only summarizes the last run. |
 
 **Supporting files**
 
@@ -89,12 +99,13 @@ The menu, in order:
  8  Everything      all of the above, in the order the report needs it
  9  Tests           the unit suite
 10  Story           the state machine learned and replayed, as an interactive page
+11  Pcap diff       regenerated packet rows against the sponsor CSVs (last run's summary)
 ```
 
 Underneath the menu, the same commands run directly:
 
 ```bash
-.venv/bin/python -m unittest tests                    # 203 tests
+.venv/bin/python -m unittest tests                    # 259 tests
 .venv/bin/python sweep.py                             # all 88 captures, about 8 seconds
 .venv/bin/python sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv
 .venv/bin/python compare.py
@@ -105,6 +116,10 @@ Underneath the menu, the same commands run directly:
 .venv/bin/python windowed_scores.py                   # the windowed SEQUENT score on every stratum
 .venv/bin/python cv_calibration.py                    # cross-validated calibration and its verdict
 .venv/bin/python story.py                             # interactive page, every steady tap; --vantage pod-nginx opens on it
+
+.venv/bin/python pcap_diff.py                         # all 88 captures regenerated and diffed
+.venv/bin/python pcap_diff.py --max-gb 0.2            # only the 64 captures under 0.2 GB, for quick checks
+.venv/bin/python pcap_diff.py --report                # summary of the last run, no Drive needed
 ```
 
 `sweep.py` writes `outputs/sweep_summary.png` and `outputs/detection_gap.png`; `flag_scores.py`
@@ -113,13 +128,49 @@ writes `outputs/alphabet_verdict.png` alongside `flag_auc.csv`.
 The two sweeps do not have the same row count, and the gap is not missing captures.
 `sweep_results.csv` covers both capture methods and holds 88 rows. `statemachine_sweep.csv`
 runs one method per invocation, so 44 strata, and excludes two: the quarantined zero-timestamp
-capture (`nginx attack / pod-robot-controller`) and `injection attack / router-flannel`, which
+capture (`nginx attack / pod-robot-controller`; see "Capture to packet rows" for its cause) and `injection attack / router-flannel`, which
 has too few flows left after boundary-crossing segments are dropped. That leaves 42. Run it
 twice, once per method, to compare against the 88-row file.
 
 Generated files always land in `Threat_Detection/outputs/`, whichever directory you run
 from. Delete `outputs/capture_manifest.csv` after any dataset change, or the sweep scores
 the previous inventory.
+
+## Capture to packet rows
+
+`pcap_read.py` and `pcap_rows.py` turn a capture file into the same 34-column packet CSV
+the sponsor supplied, so a capture taken today can be windowed and scored with no dataset in
+between. `pcap_diff.py` is the proof: it regenerates every sponsor CSV from its capture and
+diffs the two.
+
+What the corpus actually is, read from the files rather than their names:
+
+- Every capture is named `.pcapng`, but only the 44 ptcp ones are pcapng (ptcpdump v0.37.0,
+  Ethernet link layer, nanosecond timestamps). The 44 tcp ones are classic pcap (Linux cooked
+  capture v2, microsecond timestamps). The reader goes by the magic number.
+- `benign/` and `injection attack/` keep their captures flat under `pcapng files/`; the
+  other two nest them under `{tcp,ptcp}/<level> level/`.
+- 14 capture files end mid-record, their tails filled with zeros. In
+  `injection attack/node-child4-ptcp` the real data stops at 4.58 GB of a 10.8 GB file. The
+  sponsor's CSVs were made from these same cut files.
+
+The converter copies the sponsor's conversion where it is surprising rather than correcting
+it, so the rows match; `SPONSOR_QUIRKS` in `pcap_rows.py` lists each rule with its evidence.
+The one deliberate exception is a zero-filled tail, which the reader stops at instead of
+reading zeros as packets.
+The ones that change a counted feature: `is_http` matches port 80 or 8080 on either side, and
+an ICMP error message takes its ports from the packet it quotes.
+
+Measured 2026-11-03 over all 88 captures, 461 seconds: every regenerated row identical, cell
+for cell, to the sponsor's row at the same position, and the window tables equal on 87.
+`pcap_diff.py` counts 74 captures Tier-A exact and 13 "identical but cut short at the source",
+because a file cut mid-record is never called complete.
+
+The 88th is the quarantined `nginx attack / pod-robot-controller / tcp`, and the converter
+explains it. Its recording ends at frame 155,603, 3.56 GB into a 3.75 GB file; the rest is
+zeros. The sponsor's conversion read 64,853 of those zero records as packets with timestamp
+0, which is what made the capture unusable. The converter stops at the first zero record, so
+its version of this capture is 155,603 real frames and can be windowed.
 
 ## Adding a detector
 

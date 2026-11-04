@@ -1,0 +1,20 @@
+ECEN403 — Subsystem 1: Baseline & Monitoring
+
+Five benign pod datasets processed into 5-second windows.
+Eight statistical features per pod, 40 total.
+40/40 feature statistics independently reproduced.
+Median + scaled MAD used primarily, with standard deviation fallback when MAD=0.
+38 usable scales; two zero-variance features unscorable.
+Prometheus successfully collected all five sources.
+Frozen median metrics showed zero changes during a 5-minute observation.
+
+LIMITATIONS
+Only 66 processed windows total, including 21 held-out windows.
+13/21 held-out benign windows exceeded at least one 3-scale feature threshold.
+Robot-controller traffic distribution changed substantially between training and held-out windows.
+A single TCP flow dominated recorded byte volume during later benign windows.
+65,555-byte frame records may reflect capture or offloading characteristics; cause unverified.
+No labeled attack data available; attack-detection performance has not been established.
+
+CONCLUSION
+The baseline pipeline is mathematically reproducible and operational in Prometheus. Its representativeness of all normal workload conditions remains unvalidated. Longer independent benign captures and capture-method clarification are needed.
