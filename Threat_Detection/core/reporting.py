@@ -36,7 +36,7 @@ from core.data_io import SNAPLEN_CEILINGS, SNAPLEN_REPORT_AT, resolve_output
 from core.evaluation import BULK_LABELS, TRAIN_FRACTION
 from core.detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, SVM_NU, THRESHOLD,
                        flag_stats, persistent_mask)
-from core.features import FEATURE_LABELS, WINDOW_SIZE
+from core.features import DETECTION_FEATURES, FEATURE_LABELS, WINDOW_SIZE
 
 __all__ = ["flag_stats", "persistent_mask", "summarize_flags", "threshold_table",
            "plot_detection", "print_matrix", "plot_matrix", "plot_detection_gap",
@@ -69,7 +69,7 @@ def summarize_flags(results, benign_results, baseline_windows, evaluation_note):
     print(f"   {evaluation_note}")
     print("   The reference stays fixed during evaluation.")
     print("\n2. COMPARE EACH WINDOW")
-    print(f"   Window: {WINDOW_SIZE:g} s  |  Features: {len(FEATURE_LABELS)}")
+    print(f"   Window: {WINDOW_SIZE:g} s  |  Features: {len(DETECTION_FEATURES)}")
     print(f"   Flag when score > {THRESHOLD:g}")
     print("   Score = the largest absolute feature deviation, in standard deviations.")
     print()
@@ -637,7 +637,8 @@ def write_report(sweep, ablation, manifest, comparison, chart_dir=None, path=Non
     add("## Method")
     add("")
     add(f"Each recording is cut into {WINDOW_SIZE:g}-second slices and summarised by "
-        f"{len(FEATURE_LABELS)} measurements. What normal looks like is learned from a benign "
+        f"{len(FEATURE_LABELS)} measurements, {len(DETECTION_FEATURES)} of which the detector reads "
+        f"(raw byte and timing measurements drift with load and are left out). What normal looks like is learned from a benign "
         f"recording only, with its last {1 - TRAIN_FRACTION:.0%} held back as an honest check, "
         f"so no detector is "
         f"graded on the seconds it learned from. Each slice is scored by its largest deviation "

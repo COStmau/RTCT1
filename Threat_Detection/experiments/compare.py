@@ -18,18 +18,18 @@ import pandas as pd
 import local_paths
 from core.data_io import MANIFEST_NAME, load_manifest, resolve_output
 from core.detectors import REGISTRY, build, flag_stats
-from core.features import load_all_windows, split_reference
+from core.features import DETECTION_FEATURES, load_all_windows, split_reference
 from core.reporting import plot_comparison, print_comparison
 
 # Every registered detector gets compared. Adding one here is the whole change.
 DETECTORS = list(REGISTRY)
 
 
-def compare_detectors(manifest):
+def compare_detectors(manifest, features=DETECTION_FEATURES):
     """One row per detector per capture stratum: flagged and sustained fractions.
 
     Same windows, same reference, same split for all three -- that is the only reason
-    the numbers are comparable.
+    the numbers are comparable. `features` are the columns every detector reads; None reads all.
     """
     windows, _ = load_all_windows(manifest)
     attacks = [s for s in sorted(manifest["scenario"].unique()) if s != "benign"]
@@ -40,7 +40,7 @@ def compare_detectors(manifest):
             if reference_windows is None:
                 continue
             reference, holdout = split_reference(reference_windows)
-            fitted = {name: build(name).pipeline(reference, holdout) for name in DETECTORS}
+            fitted = {name: build(name, features=features).pipeline(reference, holdout) for name in DETECTORS}
             targets = [("benign", holdout)] + [(s, windows.get((s, label, method))) for s in attacks]
             for scenario, target in targets:
                 if target is None:

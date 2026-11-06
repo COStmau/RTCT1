@@ -83,7 +83,7 @@ def _fit(benign):
     benign, captured = benign
     windows = make_windows(captured)
     reference, held = split_reference(windows)
-    z = build_detector("z_score").pipeline(reference, held)
+    z = build_detector("z_score", features=None).pipeline(reference, held)   # all 13, as measured
     t0 = float(benign["ts"].min())
     flows, _ = segment_flows(make_flows(benign), t0)
     train, holdout = split_flows(flows)

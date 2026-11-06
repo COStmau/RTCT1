@@ -46,7 +46,7 @@ def _finite(scores):
 def rows_for(label, method, benign, attacks, columns, name):
     """The held-out benign row and one row per attack for one tap under one feature set."""
     reference, held = split_reference(benign[columns])
-    detector = build_detector("z_score").pipeline(reference, held)
+    detector = build_detector("z_score", features=None).pipeline(reference, held)   # the columns are the arm
     held_scores, held_flags = detector.score(held), detector.flag(held)
     group = "bulk" if label in BULK_LABELS else "steady"
     rows = [{"set": name, "method": method, "label": label, "group": group,

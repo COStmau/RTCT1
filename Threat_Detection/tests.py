@@ -46,7 +46,7 @@ sweep_thresholds = threshold_table
 
 def _fit_z(benign):
     """fit() and the (mean, std) the old build_baseline() returned."""
-    detector = build("z_score").fit(benign)
+    detector = build("z_score", features=None).fit(benign)
     return detector.mean, detector.std
 
 
@@ -56,7 +56,7 @@ def _score_z(windows, mean, std, cutoff=None):
     `cutoff` defaults to the module threshold; a fixture whose values sit near that
     threshold passes its own, so changing the constant cannot flip its expectations.
     """
-    detector = build("z_score")
+    detector = build("z_score", features=None)
     detector.mean, detector.std = mean, std
     detector.cutoff = detector.threshold if cutoff is None else cutoff
     return detector.annotate(windows)
@@ -180,7 +180,7 @@ class DetectorProtocolChecks(unittest.TestCase):
         import core.detectors
         for name, make in detectors.REGISTRY.items():
             with self.subTest(detector=name):
-                det = make().fit(self.train).calibrate(self.holdout)
+                det = make(features=None).fit(self.train).calibrate(self.holdout)
                 flagged = det.flag(self.shifted)
                 benign = det.flag(self.holdout)
                 self.assertGreater(int(flagged.sum()), len(self.shifted) // 2)
@@ -191,7 +191,7 @@ class DetectorProtocolChecks(unittest.TestCase):
         import core.detectors
         for name, make in detectors.REGISTRY.items():
             with self.subTest(detector=name):
-                det = make().fit(self.train).calibrate(self.holdout)
+                det = make(features=None).fit(self.train).calibrate(self.holdout)
                 self.assertGreater(float(det.score(self.shifted).mean()),
                                    float(det.score(self.holdout).mean()),
                                    f"{name} scores the attack lower than benign")
@@ -201,7 +201,7 @@ class DetectorProtocolChecks(unittest.TestCase):
         for name, make in detectors.REGISTRY.items():
             with self.subTest(detector=name):
                 with self.assertRaises(RuntimeError):
-                    make().fit(self.train).flag(self.shifted)
+                    make(features=None).fit(self.train).flag(self.shifted)
 
     def test_z_score_uses_a_robust_baseline_for_a_lopsided_baseline(self):
         """A baseline with a few enormous windows must not turn ordinary held-out seconds into flags.
@@ -214,7 +214,7 @@ class DetectorProtocolChecks(unittest.TestCase):
         import core.detectors
         # 40 quiet windows at 50, one 146 MB window, 6 held-out windows near the quiet mode.
         reference = pd.DataFrame({"payload_bytes": [50.0] * 40 + [146_000_000.0] + [50.0] * 6})
-        detector = detectors.build("z_score").fit(reference).calibrate(reference)
+        detector = detectors.build("z_score", features=None).fit(reference).calibrate(reference)
         quiet = detector.annotate(reference.tail(6))
         self.assertEqual(int(quiet["anomaly"].sum()), 0,
                          "held-out windows in the dominant mode must not flag")
@@ -226,7 +226,7 @@ class DetectorProtocolChecks(unittest.TestCase):
         """MAD is 0 for a constant feature, and dividing by that 0 would flag every window."""
         import core.detectors
         reference = pd.DataFrame({"packet_count": [3.0] * 12})
-        detector = detectors.build("z_score").fit(reference).calibrate(reference)
+        detector = detectors.build("z_score", features=None).fit(reference).calibrate(reference)
         # A constant feature has no scale, so it IS degenerate -- recorded, not hidden.
         self.assertTrue(bool(detector.degenerate["packet_count"]))
         same = detector.annotate(pd.DataFrame({"packet_count": [3.0]}))
@@ -251,7 +251,7 @@ class DetectorProtocolChecks(unittest.TestCase):
         reference = pd.DataFrame({"packet_count": [9, 10, 11, 10],
                                   "total_bytes": [90, 100, 110, 100]})
         windows = pd.DataFrame({"packet_count": [10, 10], "total_bytes": [100, 400]})
-        det = detectors.build("z_score").fit(reference)
+        det = detectors.build("z_score", features=None).fit(reference)
         det.calibrate(reference)
         evidence = det.explain(windows)
         # Window 1 moves total_bytes far and packet_count not at all -> total_bytes is named.
@@ -278,7 +278,7 @@ class DetectorProtocolChecks(unittest.TestCase):
         import core.detectors
         for name in detectors.REGISTRY:
             with self.subTest(detector=name), self.assertRaisesRegex(ValueError, "Insufficient"):
-                detectors.build(name).fit(pd.DataFrame({"packet_count": [1]}))
+                detectors.build(name, features=None).fit(pd.DataFrame({"packet_count": [1]}))
 
 
 class LayeringChecks(unittest.TestCase):
@@ -638,12 +638,12 @@ def described_from(rows):
 class SweepChecks(unittest.TestCase):
     def test_run_sweep_flags_a_matched_view_and_spares_benign(self):
         described = described_from(fake_stratum(active=40))
-        results = sweep.run_sweep(described)
+        results = sweep.run_sweep(described, groups=("full",))   # the fake captures carry no protocol columns
         attack = results[results["scenario"].eq("nginx attack")].iloc[0]
         benign = results[results["scenario"].eq("benign")].iloc[0]
         self.assertGreater(attack["flagged_fraction"], 0.9)   # 8x rate shift, same view
         self.assertLess(benign["flagged_fraction"], 0.2)       # holdout windows, matched reference
-        self.assertEqual(attack["group"], "all")
+        self.assertEqual(attack["group"], "full")
         self.assertEqual(int(attack["windows"]), 60)
 
     def test_detection_gap_is_relative_to_each_captures_own_benign(self):
@@ -680,7 +680,7 @@ class SweepChecks(unittest.TestCase):
         bad_path = rows[1][1]
         bad_path.write_text("ts,iat,frame_len,dst_ip,dst_port,tcp_syn,tcp_rst\n"
                             + "\n".join("0.0,0.05,100,::1,8080,0,0" for _ in range(60)) + "\n")
-        results = sweep.run_sweep(described)
+        results = sweep.run_sweep(described, groups=("full",))
         attack = results[results["scenario"].eq("nginx attack")].iloc[0]
         self.assertIn("excluded", attack["note"])
         self.assertEqual(int(attack["windows"]), 0)
@@ -699,6 +699,32 @@ class FeatureValueChecks(unittest.TestCase):
         self.assertLess(feature_value.detection_at_budget(benign, benign, benign[8:11]), 0.5)
 
 
+class AdoptedFeatureChecks(unittest.TestCase):
+    """The detectors read the nine adopted features by default, and say so."""
+
+    def test_the_list_is_the_candidate_the_rule_judged(self):
+        from core.features import DETECTION_FEATURES
+        self.assertEqual(set(DETECTION_FEATURES), set(hybrid_verdict.CANDIDATE))
+        self.assertEqual(len(DETECTION_FEATURES), 9)
+
+    def test_default_detector_reads_the_nine_and_ignores_the_rest(self):
+        from core.features import DETECTION_FEATURES
+        rng = np.random.default_rng(0)
+        frame = pd.DataFrame(rng.normal(10, 1, (40, 13)),
+                             columns=list(DETECTION_FEATURES) + ["total_bytes", "payload_bytes",
+                                                                 "mean_packet_size", "mean_iat"])
+        detector = detectors.build("z_score").pipeline(frame.iloc[:28], frame.iloc[28:])
+        self.assertEqual(list(detector.mean.index), list(DETECTION_FEATURES))
+        wild = frame.copy()
+        wild["total_bytes"] = 1e9          # a volume feature the detector must not read
+        pd.testing.assert_series_equal(detector.flag(wild), detector.flag(frame))
+
+    def test_features_none_reads_every_column(self):
+        frame = pd.DataFrame({"a": [1.0, 2.0, 3.0, 2.0, 1.0, 2.0], "b": [5.0, 6, 5, 6, 5, 6]})
+        detector = detectors.build("z_score", features=None).fit(frame)
+        self.assertEqual(list(detector.mean.index), ["a", "b"])
+
+
 class DetectorComparisonChecks(unittest.TestCase):
     def setUp(self):
         self.train = pd.DataFrame({"packet_count": [10, 11, 9, 10, 12, 10, 11, 9, 10, 10, 11, 12]})
@@ -712,7 +738,7 @@ class DetectorComparisonChecks(unittest.TestCase):
         self.assertEqual(set(learned), {"isolation_forest", "one_class_svm"})
         for name in learned:
             with self.subTest(detector=name):
-                detector = detectors.build(name).pipeline(self.train, self.holdout)
+                detector = detectors.build(name, features=None).pipeline(self.train, self.holdout)
                 flagged = detector.flag(self.shifted)
                 benign = detector.flag(self.holdout)
                 self.assertGreater(int(flagged.sum()), len(self.shifted) // 2)
@@ -721,7 +747,7 @@ class DetectorComparisonChecks(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("sklearn"), "scikit-learn not installed")
     def test_compare_detectors_scores_every_detector_on_the_same_windows(self):
         from experiments import compare
-        comparison = compare.compare_detectors(described_from(fake_stratum(active=40)))
+        comparison = compare.compare_detectors(described_from(fake_stratum(active=40)), features=None)
         self.assertEqual(set(comparison["detector"]),
                          {"z_score", "isolation_forest", "one_class_svm"})
         per_detector = comparison.groupby("detector")["windows"].apply(list)

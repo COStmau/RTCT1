@@ -2,7 +2,7 @@
 
 ## The correction that changes how these numbers read
 
-Earlier drafts called the high flag rates on a few capture points a calibration problem. It is not. 3 of 11 benign vantages contain a bulk-transfer regime change: normal traffic steps from tens of KB/s to hundreds of MB/s partway through the recording and stays there. Across both capture methods the detector flags 0.93 of held-out windows on those captures and 0.43 on the other 8 (max 0.79). A step change in normal traffic is something the detector is supposed to notice, so a per-vantage cutoff would suppress a real change in the cluster rather than remove a false alarm.
+Earlier drafts called the high flag rates on a few capture points a calibration problem. It is not. 3 of 11 benign vantages contain a bulk-transfer regime change: normal traffic steps from tens of KB/s to hundreds of MB/s partway through the recording and stays there. Across both capture methods the detector flags 0.87 of held-out windows on those captures and 0.29 on the other 8 (max 0.53). A step change in normal traffic is something the detector is supposed to notice, so a per-vantage cutoff would suppress a real change in the cluster rather than remove a false alarm.
 
 ![Benign flag fraction per capture: steady against bulk-transfer](steady_bulk_split.png)
 
@@ -26,9 +26,9 @@ Steady captures only, 1s windows, alert above 2.5 sigma. Per capture: `outputs/s
 
 | scenario | flagged fraction |
 |---|---|
-| nginx attack | 0.70 |
-| injection attack | 0.68 |
-| lidar attack | 0.54 |
+| nginx attack | 0.64 |
+| injection attack | 0.59 |
+| lidar attack | 0.42 |
 
 ![Flagged fraction per capture point, one series per scenario](sweep_summary.png)
 
@@ -46,5 +46,5 @@ Steady captures only, 1s windows, alert above 2.5 sigma. Per capture: `outputs/s
 
 ## Method
 
-Each recording is cut into 1-second slices and summarised by 13 measurements. What normal looks like is learned from a benign recording only, with its last 30% held back as an honest check, so no detector is graded on the seconds it learned from. Each slice is scored by its largest deviation from that baseline, and an alert requires 3 flagged slices in a row. The baseline is a median and a MAD rather than a mean and standard deviation: a mean/std pair is set by the bulk-transfer windows instead of by normal traffic. Regenerate everything in this file with `demo.py`, which runs the sweep, the ablation, the comparison and this report in order.
+Each recording is cut into 1-second slices and summarised by 13 measurements, 9 of which the detector reads (raw byte and timing measurements drift with load and are left out). What normal looks like is learned from a benign recording only, with its last 30% held back as an honest check, so no detector is graded on the seconds it learned from. Each slice is scored by its largest deviation from that baseline, and an alert requires 3 flagged slices in a row. The baseline is a median and a MAD rather than a mean and standard deviation: a mean/std pair is set by the bulk-transfer windows instead of by normal traffic. Regenerate everything in this file with `demo.py`, which runs the sweep, the ablation, the comparison and this report in order.
 

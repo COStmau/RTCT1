@@ -1,7 +1,7 @@
 """The detection subsystem. Four layers, one direction, nothing else in here.
 
     data_io    read captures, resolve output paths, build the capture manifest
-    features   packets -> one row per second (13 features, no baseline, no thresholds)
+    features   packets -> one row per second (13 features, 9 of them read by the detectors; no baseline, no thresholds)
     detectors  the detector protocol (fit/calibrate/score/flag) and the z-score
     reporting  render results: tables, charts, the event stream
 
@@ -26,7 +26,7 @@ from core.detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, THRESHOLD, Dete
                             REGISTRY, ZScoreDetector, build as build_detector, flag_stats,
                             persistent_mask)
 from core.evaluation import BULK_LABELS, TRAIN_FRACTION, WARMUP_WINDOWS
-from core.features import (FEATURE_GROUPS, FEATURE_LABELS, WINDOW_SIZE, load_all_windows,
+from core.features import (DETECTION_FEATURES, FEATURE_GROUPS, FEATURE_LABELS, WINDOW_SIZE, load_all_windows,
                            make_windows, split_reference)
 from core.reporting import to_events, write_events, write_report
 
@@ -36,7 +36,7 @@ __all__ = [
     "level_from_label", "load_capture", "load_manifest", "parse_capture", "resolve_output",
     "timebase_issues",
     # windows
-    "FEATURE_GROUPS", "FEATURE_LABELS", "WINDOW_SIZE", "load_all_windows", "make_windows",
+    "DETECTION_FEATURES", "FEATURE_GROUPS", "FEATURE_LABELS", "WINDOW_SIZE", "load_all_windows", "make_windows",
     "split_reference",
     # detectors
     "BENIGN_QUANTILE", "PERSISTENCE_WINDOW", "THRESHOLD", "Detector", "REGISTRY",

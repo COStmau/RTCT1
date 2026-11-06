@@ -148,7 +148,7 @@ def walkthrough():
     mean, spread = detector.mean, detector.std
     print(f"   learned from {len(learned)} seconds, kept {len(unseen_normal)} seconds aside")
     print("\n   What each slice counts, and what 'normal' looked like:")
-    for name in learned.columns:
+    for name in detector.features:
         label, unit = FEATURE_LABELS[name]
         print(f"      {label:<26} normal is about {mean[name]:>8.2f} {unit}")
 

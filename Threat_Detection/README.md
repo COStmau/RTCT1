@@ -40,8 +40,8 @@ presented on. `core` imports nothing outside itself.
 |---|---|
 | `core/__init__.py` | The front door, and the whole subsystem in six calls: `load_capture` → `make_windows` → `split_reference` → `build_detector` → `pipeline` → `annotate`. Its docstring is the shortest correct description of this folder. |
 | `core/data_io.py` | The input format and where output goes. Names every capture, reads the packet columns, checks the timebase and snaplen saturation, builds and caches the manifest, resolves `outputs/`. |
-| `core/features.py` | Packets → one row per second. The 13 features, the ablation groups, and the temporal train/held-out split. Stateless: no baseline, no thresholds, no detection. |
-| `core/detectors.py` | Every detection method behind one interface: `fit` → `calibrate` → `score` → `flag`, with optional `explain`. The z-score baseline is median + MAD. Add one by writing a class and adding it to `REGISTRY`. |
+| `core/features.py` | Packets → one row per second. The 13 features, the 9 the detectors read by default (`DETECTION_FEATURES`), the ablation groups, and the temporal train/held-out split. Stateless: no baseline, no thresholds, no detection. |
+| `core/detectors.py` | Every detection method behind one interface (each reads `DETECTION_FEATURES` unless built with `features=None`): `fit` → `calibrate` → `score` → `flag`, with optional `explain`. The z-score baseline is median + MAD. Add one by writing a class and adding it to `REGISTRY`. |
 | `core/evaluation.py` | How a result is judged, in one place: the 70/30 split, the six bulk-transfer files that never calibrate, and the warm-up window. |
 | `core/reporting.py` | Console reports, charts, the `SHOWCASE.md` handover file, and the event log the response side reads. Takes results, renders them; computes no detection logic. Pins matplotlib to `Agg`, so nothing here opens a window. |
 | `methods/pdfa.py` | PDFA anomaly detection after Cao et al. (ARES 2022), learning half: packet flows to symbols, the prefix tree, ALERGIA state merging, the automaton. |
