@@ -4,7 +4,7 @@ build_story() runs the same pipeline the detector runs, through the instrumentat
 statemachine.py, and returns a plain dict (the "bundle") for one vantage. build_stories()
 composes one bundle per vantage around a single shared cluster, so the page can switch taps
 without re-running Python. write_html() inlines that bundle and the renderer in
-story_template/ into one self-contained page in outputs/. The page draws only what the bundle
+template/ into one self-contained page in outputs/. The page draws only what the bundle
 says: the cluster is inferred from traffic (cluster.py), positions are computed (layout.py),
 and every score is the scorer's own number.
 
@@ -15,15 +15,20 @@ Run it with:  .venv/bin/python story.py                       (every steady tap,
 import html
 import json
 import math
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+# A script run as `python story/page.py` gets story/ as sys.path[0], so the
+# project root has to go back on the path before any project import.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
 import pandas as pd
 
-import cluster as topology
-import layout
+from story import cluster as topology
+from story import layout
 from core.data_io import (MANIFEST_NAME, level_from_label, load_manifest, resolve_output,
                      timebase_issues)
 from core.detectors import BENIGN_QUANTILE, PERSISTENCE_WINDOW, persistent_mask
@@ -47,7 +52,7 @@ STORY_HTML = "statemachine_story.html"
 PAGE_LIMIT = 15 * 1024 * 1024   # bytes; past it, trace detail of the other vantages is dropped
 VANTAGE_PARTS = ("meta", "learning", "playback")   # what each vantage carries; the cluster is shared
 TRIMMED_KEYS = ("terms", "expired")                # per-trace detail only the side panel reads
-TEMPLATE_DIR = Path(__file__).resolve().parent / "story_template"
+TEMPLATE_DIR = Path(__file__).resolve().parent / "template"
 D3_FILE = "vendor/d3.v7.9.0.min.js"
 
 

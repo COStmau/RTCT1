@@ -26,9 +26,9 @@ from verdicts import cv as cv_verdict
 from verdicts import flag as flag_verdict
 from verdicts import root_count as root_verdict
 
-import cluster
-import layout
-import story
+from story import cluster
+from story import layout
+from story import page as story
 
 # The pre-refactor function names, mapped onto their layer homes. The old
 # DetectorChecks class pins behavior through these aliases so the assertions read the same
@@ -2020,7 +2020,8 @@ class StoryBundleChecks(unittest.TestCase):
         self.assertFalse(any(windows[i]["flagged"] for i in shown))
 
     def test_template_is_read_as_utf8_whatever_the_locale(self):
-        code = ("import warnings, tempfile, pathlib, story, tests; "
+        code = ("import warnings, tempfile, pathlib, tests; "
+                "import story.page as story; "
                 "warnings.simplefilter('error', EncodingWarning); "
                 "story.write_html(story.build_story(tests.flow_capture(), {}, {}, 'pod-lidar'), "
                 "pathlib.Path(tempfile.mkdtemp()) / 'p.html')")
