@@ -24,6 +24,7 @@ from core.reporting import plot_detection_gap, threshold_table, to_events, write
 from experiments import feature_value, flag_scores, metrics, sweep, windowed_scores
 from verdicts import cv as cv_verdict
 from verdicts import flag as flag_verdict
+from verdicts import load_behavior as load_behavior_verdict
 from verdicts import root_count as root_verdict
 
 from viz import cluster
@@ -1509,6 +1510,57 @@ class FlagVerdictChecks(unittest.TestCase):
         verdict, reasons = flag_verdict.decide(rows)
         self.assertEqual(verdict, "undecidable")
         self.assertTrue(any("node-child4" in reason for reason in reasons))
+
+
+class LoadBehaviorVerdictChecks(unittest.TestCase):
+    """The load-versus-behavior rule, fixed before the comparison was measured."""
+
+    def bulk(self, behavior=0.5, control=0.95, n=20, taps=3):
+        return [{"label": f"tap-{i}", "behavior_auroc": behavior, "z_auroc": control,
+                 "n_pre": n, "n_post": n} for i in range(taps)]
+
+    def attacks(self, z=40, behavior=30):
+        return [{"scenario": s, "warm": 100, "z_flagged": z, "behavior_flagged": behavior}
+                for s in load_behavior_verdict.SCENARIOS]
+
+    def benign(self, z=40, behavior=5):
+        return [{"windows": 100, "z_flagged": z, "behavior_flagged": behavior}]
+
+    def test_separate_when_both_claims_hold(self):
+        verdict, _ = load_behavior_verdict.decide(self.bulk(), self.attacks(), self.benign())
+        self.assertEqual(verdict, "separate")
+
+    def test_tag_when_behavior_misses_attacks(self):
+        verdict, reasons = load_behavior_verdict.decide(
+            self.bulk(), self.attacks(z=60, behavior=10), self.benign())
+        self.assertEqual(verdict, "tag")
+        self.assertTrue(any("injection" in r for r in reasons))
+
+    def test_tag_when_behavior_is_not_quieter_on_benign(self):
+        verdict, _ = load_behavior_verdict.decide(
+            self.bulk(), self.attacks(), self.benign(z=10, behavior=10))
+        self.assertEqual(verdict, "tag")
+
+    def test_drop_when_behavior_sees_the_regime_change(self):
+        verdict, _ = load_behavior_verdict.decide(
+            self.bulk(behavior=0.9), self.attacks(), self.benign())
+        self.assertEqual(verdict, "drop")
+
+    def test_blind_control_sets_a_tap_aside(self):
+        rows = self.bulk(taps=2) + self.bulk(control=0.55, behavior=0.95, taps=1)
+        verdict, _ = load_behavior_verdict.claim_a(rows)
+        self.assertEqual(verdict, "pass")
+
+    def test_undecidable_with_too_few_bulk_taps(self):
+        verdict, _ = load_behavior_verdict.decide(
+            self.bulk(taps=1), self.attacks(), self.benign())
+        self.assertEqual(verdict, "undecidable")
+
+    def test_undecidable_scenario_with_too_few_windows(self):
+        attacks = self.attacks()
+        attacks[0]["warm"] = 5
+        verdict, _ = load_behavior_verdict.claim_b(attacks, self.benign())
+        self.assertEqual(verdict, "undecidable")
 
 
 class RootVerdictChecks(unittest.TestCase):
