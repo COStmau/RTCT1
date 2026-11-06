@@ -297,6 +297,27 @@ def frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds=None,
     return scores
 
 
+def warm_from(forget_seconds=FORGET_SECONDS):
+    """First window of a cold-started capture whose clock has run a full `forget_seconds`.
+
+    A windowed scorer starts with an empty clock, so its first seconds understate the
+    traffic; anything compared to a warm reference has to skip them.
+    """
+    return int(np.ceil(forget_seconds / WINDOW_SIZE))
+
+
+def held_out_scores(model, flows, holdout, t0, n_windows, forget_seconds=FORGET_SECONDS,
+                    train_counts=TRAIN_COUNTS):
+    """Held-out benign window scores on a warm clock, as story.build_story calibrates.
+
+    Every benign flow is scored in order, training flows first, and only the windows after
+    the one the train/holdout split falls in are kept; NaN where no trace ended.
+    """
+    first_held = int((float(holdout["start_ts"].iloc[0]) - t0) // WINDOW_SIZE)
+    warm = frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds, train_counts)
+    return warm[first_held + 1:]
+
+
 def frequency_cutoff(holdout_scores, quantile=BENIGN_QUANTILE):
     """Frequency-score cutoff flagging the top `quantile` of held-out benign; NaN ignored.
 

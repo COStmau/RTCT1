@@ -29,30 +29,14 @@ from detectors import flag_stats
 from evaluation import BULK_LABELS
 from features import WINDOW_SIZE
 from flag_scores import auroc
-from statemachine import (FORGET_SECONDS, TRAIN_COUNTS, fit_model, frequency_cutoff,
-                          frequency_scores_by_window, load_flow_packets, make_flows,
-                          n_windows_for, segment_flows, split_flows, state_train_counts)
+from methods.scores import (FORGET_SECONDS, TRAIN_COUNTS, held_out_scores, warm_from)
+from statemachine import (fit_model, frequency_cutoff, frequency_scores_by_window,
+                          load_flow_packets, make_flows, n_windows_for, segment_flows,
+                          split_flows, state_train_counts)
 
 WINDOWED_CSV = "windowed_sweep.csv"
 VARIANTS = ("visits", "entries")
 FLAG_FIELDS = ("windows", "flagged", "flagged_fraction", "persistent", "persistent_fraction")
-
-
-def held_out_scores(model, flows, holdout, t0, n_windows, forget_seconds=FORGET_SECONDS,
-                    train_counts=TRAIN_COUNTS):
-    """Held-out benign window scores on a warm clock, as story.build_story calibrates.
-
-    Every benign flow is scored in order, training flows first, and only the windows after
-    the one the train/holdout split falls in are kept; NaN where no trace ended.
-    """
-    first_held = int((float(holdout["start_ts"].iloc[0]) - t0) // WINDOW_SIZE)
-    warm = frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds, train_counts)
-    return warm[first_held + 1:]
-
-
-def warm_from(forget_seconds=FORGET_SECONDS):
-    """First window of a cold-started capture whose clock has run a full `forget_seconds`."""
-    return int(np.ceil(forget_seconds / WINDOW_SIZE))
 
 
 def _flags(scores, cutoff):
