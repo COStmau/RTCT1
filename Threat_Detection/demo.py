@@ -356,20 +356,20 @@ def _run(*args):
 
 
 def sweep_captures():
-    _run("sweep.py")
+    _run("experiments/sweep.py")
 
 
 def ablation():
-    _run("sweep.py", "--groups", "volume,size_timing,diversity,flags,protocol",
+    _run("experiments/sweep.py", "--groups", "volume,size_timing,diversity,flags,protocol",
          "--out", "ablation_results.csv")
 
 
 def comparison():
-    _run("compare.py")
+    _run("experiments/compare.py")
 
 
 def feature_value():
-    _run("feature_value.py")
+    _run("experiments/feature_value.py")
 
 
 def run_tests():
@@ -380,7 +380,7 @@ def run_tests():
 
 def story_page():
     """The state machine learned and replayed, as one self-contained interactive page."""
-    import story
+    from story import page as story
     story.main([])
 
 
@@ -389,7 +389,7 @@ def story_page():
 def pcap_diff():
     """The last pcap_diff.py run, summarized. The run itself reads every capture file, so
     it is started by hand: .venv/bin/python pcap_diff.py"""
-    _run("pcap_diff.py", "--report")
+    _run("convert/diff.py", "--report")
 
 
 # --- 8. Everything ---------------------------------------------------------------
