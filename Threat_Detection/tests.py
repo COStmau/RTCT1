@@ -23,6 +23,7 @@ from core.reporting import plot_detection_gap, threshold_table, to_events, write
 
 from experiments import feature_value, flag_scores, metrics, sweep, windowed_scores
 from verdicts import cv as cv_verdict
+from verdicts import feature_set as feature_set_verdict
 from verdicts import flag as flag_verdict
 from verdicts import load_behavior as load_behavior_verdict
 from verdicts import root_count as root_verdict
@@ -1510,6 +1511,47 @@ class FlagVerdictChecks(unittest.TestCase):
         verdict, reasons = flag_verdict.decide(rows)
         self.assertEqual(verdict, "undecidable")
         self.assertTrue(any("node-child4" in reason for reason in reasons))
+
+
+class FeatureSetVerdictChecks(unittest.TestCase):
+    """The eight-feature rule, fixed before the experiment that judges it."""
+
+    def summary(self, alerts=(20, 5), auroc=(0.65, 0.65), detection=(0.2, 0.2), windows=200):
+        method = {"benign_windows": windows,
+                  "persistent": {"all": alerts[0], "candidate": alerts[1]}}
+        for scenario in feature_set_verdict.SCENARIOS:
+            method[scenario] = {"auroc": {"all": auroc[0], "candidate": auroc[1]},
+                                "detection": {"all": detection[0], "candidate": detection[1]}}
+        return {m: {k: (dict(v) if isinstance(v, dict) else v) for k, v in method.items()}
+                for m in feature_set_verdict.METHODS}
+
+    def test_keep_when_alerts_fall_and_attacks_hold(self):
+        self.assertEqual(feature_set_verdict.decide(self.summary())[0], "keep")
+
+    def test_drop_when_alerts_barely_fall(self):
+        verdict, reasons = feature_set_verdict.decide(self.summary(alerts=(20, 15)))
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("persistent alerts" in r for r in reasons))
+
+    def test_drop_when_one_scenario_loses_ranking(self):
+        summary = self.summary()
+        summary["tcp"]["lidar attack"]["auroc"]["candidate"] = 0.50
+        verdict, reasons = feature_set_verdict.decide(summary)
+        self.assertEqual(verdict, "drop")
+        self.assertTrue(any("tcp/lidar attack" in r for r in reasons))
+
+    def test_drop_when_one_method_fails(self):
+        summary = self.summary()
+        summary["ptcp"]["nginx attack"]["detection"]["candidate"] = 0.0
+        self.assertEqual(feature_set_verdict.decide(summary)[0], "drop")
+
+    def test_loss_at_the_limit_is_allowed(self):
+        summary = self.summary(auroc=(0.70, 0.60))
+        self.assertEqual(feature_set_verdict.decide(summary)[0], "keep")
+
+    def test_undecidable_without_windows_or_baseline_alerts(self):
+        self.assertEqual(feature_set_verdict.decide(self.summary(windows=10))[0], "undecidable")
+        self.assertEqual(feature_set_verdict.decide(self.summary(alerts=(0, 0)))[0], "undecidable")
 
 
 class LoadBehaviorVerdictChecks(unittest.TestCase):
