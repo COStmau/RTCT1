@@ -1,6 +1,6 @@
 # Rearchitecting plan: Subsystem 2 (threat detection)
 
-Status: **P0 and P1 applied** (2026-11-05); P2–P4 are still proposal.
+Status: **P0, P1 and P2 applied** (2026-11-05); P3–P4 are still proposal.
 Every number below was measured against the working tree, not recalled.
 
 | Package | Status |
@@ -12,14 +12,25 @@ Every number below was measured against the working tree, not recalled.
 | P0-3 feature_value on median/MAD | **open** — changes published numbers; needs a decision |
 | P1-1 split `statemachine.py` | **done** — 789 lines/50 names → 3 modules + 33-line shim |
 | P1-5 matplotlib out of module scope | **done** — `import reporting` 0.86 s → 0.32 s |
-| P1-4 shared scorer helpers | **done** — `warm_from`/`held_out_scores` moved to `methods.scores` |
-| P1-2 `core/` package, P1-3 regrouping | **open** |
-| P2, P3, P4 | **open** |
+| P1-4 shared scorer helpers | **done** — `warm_from`/`held_out_scores` moved to `methods/` |
+| P1-2 `core/` package, P1-3 regrouping | **done** — see below, with one deviation |
+| P1-6 role packages | **done** — `experiments/`, `verdicts/`, `story/`, `convert/` |
+| P1-7 boundaries enforced by tests | **done** — 4 new tests; the map cannot drift |
+| P2 front door | **done** — the menu is the only entry surface a person needs |
+| P3, P4 | **open** |
+
+**Deviation from P1-2 as written:** `core/` landed as a package with the five modules keeping
+their names (`data_io`, `features`, `detectors`, `evaluation`, `reporting`) rather than being
+renamed to `io`/`windows`/`detect`/`policy`/`report`. The package already delivers the front
+door the rename was for, and the current names are the vocabulary every other document uses;
+the rename would have cost a ~20-file sweep for no behavioural gain.
 
 Baseline before any change: `python -m unittest tests` → **259 tests, OK, 12.5 s**.
 After P0: **271 tests, OK, 13.6 s**, and the four regenerated experiment CSVs
 (`sweep_results`, `detector_comparison`, `feature_value`, `feature_value_wide`) are
 **byte-identical** to the pre-change snapshot.
+After P1: **277 tests, OK, 13.7 s**, all tracked CSVs still byte-identical, and every
+experiment runs both as `python experiments/X.py` and as `python -m experiments.X`.
 
 ---
 

@@ -9,6 +9,23 @@ Started 2026-10-09 for the TA checkpoint. Numbers in it were measured at a 3.0 s
 cutoff; commit d4c73a1 lowered `THRESHOLD` to 2.5, so the figures below are the ones
 re-derived at 2.5. Quote this file for reasoning and `outputs/SHOWCASE.md` for values.
 
+## Where the files below live now
+
+This file is a record, so it names modules the way they were named when each decision was
+made. The code has since been sorted by role; nothing changed behaviour, only the path.
+
+`data_io` `features` `detectors` `evaluation` `reporting` → `core/<same name>.py`
+`statemachine` (the method) → `methods/pdfa.py` + `methods/scores.py`; `statemachine.py` at
+the top level is now a re-export shim, so older references to it stay valid.
+`sweep` `compare` `feature_value` `flag_scores` `windowed_scores` `cv_calibration` `metrics`
+→ `experiments/<same name>.py`
+`flag_verdict` → `verdicts/flag.py`; `root_verdict` → `verdicts/root_count.py`;
+`cv_verdict` → `verdicts/cv.py`
+`story` → `story/page.py`; `cluster` `layout` → `story/<same name>.py`
+`pcap_read` `pcap_rows` `pcap_diff` → `convert/read.py` `convert/rows.py` `convert/diff.py`
+
+See `README.md` for the map with descriptions.
+
 ## The correction that still stands
 
 Earlier drafts called the high flag rates on a few capture points a calibration problem.
