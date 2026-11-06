@@ -24,6 +24,7 @@ from core.reporting import plot_detection_gap, threshold_table, to_events, write
 from experiments import feature_value, flag_scores, metrics, sweep, windowed_scores
 from verdicts import cv as cv_verdict
 from verdicts import feature_set as feature_set_verdict
+from verdicts import feature_set_hybrid as hybrid_verdict
 from verdicts import flag as flag_verdict
 from verdicts import load_behavior as load_behavior_verdict
 from verdicts import root_count as root_verdict
@@ -1511,6 +1512,26 @@ class FlagVerdictChecks(unittest.TestCase):
         verdict, reasons = flag_verdict.decide(rows)
         self.assertEqual(verdict, "undecidable")
         self.assertTrue(any("node-child4" in reason for reason in reasons))
+
+
+class HybridFeatureSetChecks(unittest.TestCase):
+    """The hybrid candidate and the guarantee that it is judged by the same rule."""
+
+    def test_candidate_is_the_eight_plus_packet_count(self):
+        self.assertEqual(set(hybrid_verdict.CANDIDATE),
+                         set(hybrid_verdict.PREVIOUS_CANDIDATE) | {"packet_count"})
+        self.assertEqual(len(hybrid_verdict.CANDIDATE), len(set(hybrid_verdict.CANDIDATE)))
+
+    def test_candidate_columns_are_real_features(self):
+        from core.features import FEATURE_GROUPS
+        known = {f for group in FEATURE_GROUPS.values() for f in group}
+        self.assertLessEqual(set(hybrid_verdict.CANDIDATE), known)
+
+    def test_thresholds_are_the_previous_rules(self):
+        for name in ("MIN_ALERT_REDUCTION", "MAX_AUROC_LOSS", "MAX_DETECTION_LOSS",
+                     "MIN_BENIGN_WINDOWS"):
+            self.assertIs(getattr(hybrid_verdict, name), getattr(feature_set_verdict, name))
+        self.assertIs(hybrid_verdict.decide, feature_set_verdict.decide)
 
 
 class FeatureSetVerdictChecks(unittest.TestCase):
