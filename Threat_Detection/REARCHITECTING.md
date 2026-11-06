@@ -1,6 +1,6 @@
 # Rearchitecting plan: Subsystem 2 (threat detection)
 
-Status: **P0 applied** (2026-11-05); P1–P4 are still proposals.
+Status: **P0 and P1-1/P1-5 applied** (2026-11-05); the rest is still proposal.
 Every number below was measured against the working tree, not recalled.
 
 | Package | Status |
@@ -10,7 +10,11 @@ Every number below was measured against the working tree, not recalled.
 | P0-4 layering test | **done** — 4 tests, verified to fail on a deliberate violation |
 | P0-5 window spread beside every mean | **done** — `statemachine.py`, `reporting.py` |
 | P0-3 feature_value on median/MAD | **open** — changes published numbers; needs a decision |
-| P1–P4 | **open** |
+| P1-1 split `statemachine.py` | **done** — 789 lines/50 names → 3 modules + 33-line shim |
+| P1-5 matplotlib out of module scope | **done** — `import reporting` 0.86 s → 0.32 s |
+| P1-4 shared scorer helpers | **done** — `warm_from`/`held_out_scores` moved to `methods.scores` |
+| P1-2 `core/` package, P1-3 regrouping | **open** |
+| P2, P3, P4 | **open** |
 
 Baseline before any change: `python -m unittest tests` → **259 tests, OK, 12.5 s**.
 After P0: **271 tests, OK, 13.6 s**, and the four regenerated experiment CSVs
