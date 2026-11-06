@@ -381,6 +381,25 @@ class LayeringChecks(unittest.TestCase):
         self.assertEqual(out.stdout.strip(), "False")
 
 
+class EntryPointChecks(unittest.TestCase):
+    """A script run by path has its own directory as sys.path[0], so every entry point
+    that lives in a subpackage has to put the project root back."""
+
+    ENTRY_POINTS = ["experiments/compare.py", "experiments/cv_calibration.py",
+                    "experiments/feature_value.py", "experiments/flag_scores.py",
+                    "experiments/sweep.py", "experiments/windowed_scores.py",
+                    "convert/diff.py", "story/page.py"]
+
+    BOOTSTRAP = "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))"
+
+    def test_each_entry_point_bootstraps_the_project_root(self):
+        for path in self.ENTRY_POINTS:
+            with self.subTest(path=path):
+                source = Path(path).read_text(encoding="utf-8")
+                self.assertIn(self.BOOTSTRAP, source,
+                              f"{path} cannot run as 'python {path}': add the bootstrap")
+
+
 class FeatureLayerChecks(unittest.TestCase):
     def test_features_module_does_not_import_local_paths(self):
         script = "import sys; sys.path.insert(0, '.'); import core.features as f; print(f.WINDOW_SIZE)"
