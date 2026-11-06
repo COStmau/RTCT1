@@ -12,11 +12,18 @@ capture method, so a feature is never credited for a vantage effect.
 
 Run it with:  .venv/bin/python feature_value.py
 """
+import sys
+from pathlib import Path
+
+# A script run as `python experiments/feature_value.py` gets experiments/ as sys.path[0], so
+# the project root has to go back on the path before any project import.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import argparse
 
 import pandas as pd
 
-import metrics
+from experiments import metrics
 
 import local_paths
 from core.data_io import load_manifest, resolve_output

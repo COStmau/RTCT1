@@ -5,12 +5,19 @@ only difference between them is the symbol alphabet. Scores are oriented so high
 means more anomalous: the likelihood path negates the mean log probability, which is lower
 for unlikely traces.
 """
+import sys
+from pathlib import Path
+
+# A script run as `python experiments/flag_scores.py` gets experiments/ as sys.path[0], so
+# the project root has to go back on the path before any project import.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import argparse
 
 import numpy as np
 import pandas as pd
 
-import metrics
+from experiments import metrics
 
 from core.data_io import MANIFEST_NAME, describe_captures, load_manifest, resolve_output
 from core.features import WINDOW_SIZE

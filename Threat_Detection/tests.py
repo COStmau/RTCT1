@@ -9,27 +9,26 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-import cluster
+import demo
+import statemachine
+
 import core.data_io as data_io
 import core.detectors as detectors
 import core.evaluation as evaluation
 import core.features as features
 import core.reporting as reporting
-from verdicts import cv as cv_verdict
-import demo
-import feature_value
-import flag_scores
-from verdicts import flag as flag_verdict
-import layout
-import metrics
-from verdicts import root_count as root_verdict
-import statemachine
-import story
-import sweep
-import windowed_scores
 from core.detectors import build
 from core.features import make_windows, split_reference
 from core.reporting import plot_detection_gap, threshold_table, to_events, write_events
+
+from experiments import feature_value, flag_scores, metrics, sweep, windowed_scores
+from verdicts import cv as cv_verdict
+from verdicts import flag as flag_verdict
+from verdicts import root_count as root_verdict
+
+import cluster
+import layout
+import story
 
 # The pre-refactor function names, mapped onto their layer homes. The old
 # DetectorChecks class pins behavior through these aliases so the assertions read the same
@@ -291,7 +290,7 @@ class LayeringChecks(unittest.TestCase):
     LAYERS = ["data_io", "evaluation", "features", "detectors", "reporting"]
 
     def path_of(self, name):
-        root = Path("core") if name in self.LAYERS else Path(".")
+        root = Path("core") if name in self.LAYERS else Path("experiments")
         return root / f"{name}.py"
 
     def imported_modules(self, name):
@@ -326,8 +325,10 @@ class LayeringChecks(unittest.TestCase):
                              f"{layer}.py must not import local_paths")
 
     def test_metrics_imports_nothing_from_the_project(self):
-        # metrics is shared by every layer and every experiment; it must stay a leaf.
-        project = {p.stem for p in Path(".").glob("*.py")} | {p.stem for p in Path("core").glob("*.py")}
+        # metrics is shared by every experiment; it must stay a leaf.
+        project = ({p.stem for p in Path(".").glob("*.py")}
+                   | {p.stem for p in Path("core").glob("*.py")}
+                   | {p.stem for p in Path("experiments").glob("*.py")})
         self.assertEqual(self.imported_modules("metrics") & project, set())
 
     def test_core_imports_nothing_from_the_outer_packages(self):
@@ -373,7 +374,7 @@ class LayeringChecks(unittest.TestCase):
         # reporting pins Agg and imports pyplot; importing it must not be required to use
         # the rest of the core. This guards the P1-5 move of matplotlib out of module scope.
         script = ("import sys; sys.path.insert(0, '.'); "
-                  "import core.data_io, core.features, core.detectors, metrics; "
+                  "import core.data_io, core.features, core.detectors, experiments.metrics; "
                   "print('matplotlib' in sys.modules)")
         out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -647,7 +648,7 @@ class SweepChecks(unittest.TestCase):
 
 class FeatureValueChecks(unittest.TestCase):
     def test_auc_and_budget_detection_behave(self):
-        import feature_value
+        from experiments import feature_value
         self.assertEqual(feature_value.separation_auc([1, 2, 3], [4, 5, 6]), 1.0)
         self.assertEqual(feature_value.separation_auc([4, 5, 6], [1, 2, 3]), 0.0)
         self.assertEqual(feature_value.separation_auc([1, 2, 3], [1, 2, 3]), 0.5)
@@ -679,7 +680,7 @@ class DetectorComparisonChecks(unittest.TestCase):
 
     @unittest.skipUnless(importlib.util.find_spec("sklearn"), "scikit-learn not installed")
     def test_compare_detectors_scores_every_detector_on_the_same_windows(self):
-        import compare
+        from experiments import compare
         comparison = compare.compare_detectors(described_from(fake_stratum(active=40)))
         self.assertEqual(set(comparison["detector"]),
                          {"z_score", "isolation_forest", "one_class_svm"})
@@ -720,7 +721,7 @@ class DetectorComparisonChecks(unittest.TestCase):
     def test_plot_comparison_writes_a_chart(self):
         import tempfile
         from pathlib import Path
-        import compare
+        from experiments import compare
         rows = [{"detector": detector, "scenario": scenario, "label": "pod-nginx", "method": "tcp",
                  "windows": 10, "flagged": 3, "flagged_fraction": 0.3,
                  "persistent": 1, "persistent_fraction": 0.1}
@@ -2597,7 +2598,7 @@ class CvCalibrationChecks(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import cv_calibration
+        from experiments import cv_calibration
         cls.cv = cv_calibration
         cls.benign = flow_capture(vary=True)
         cls.t0 = cls.benign["ts"].min()

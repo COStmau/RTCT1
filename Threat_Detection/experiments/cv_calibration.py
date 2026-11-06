@@ -21,13 +21,20 @@ What the verdict reads, per tap:
 
 Run it with:  .venv/bin/python cv_calibration.py
 """
+import sys
+from pathlib import Path
+
+# A script run as `python experiments/cv_calibration.py` gets experiments/ as sys.path[0], so
+# the project root has to go back on the path before any project import.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import argparse
 
 import numpy as np
 import pandas as pd
 
 from verdicts import cv as cv_verdict
-import windowed_scores
+from experiments import windowed_scores
 from core.data_io import MANIFEST_NAME, load_manifest, resolve_output
 from core.evaluation import BULK_LABELS
 from core.features import WINDOW_SIZE

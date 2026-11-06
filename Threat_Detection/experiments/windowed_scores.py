@@ -18,6 +18,13 @@ cutoff, so its rows carry an AUROC and no flag, detection or benign rate, in gro
 
 Run it with:  .venv/bin/python windowed_scores.py
 """
+import sys
+from pathlib import Path
+
+# A script run as `python experiments/windowed_scores.py` gets experiments/ as sys.path[0], so
+# the project root has to go back on the path before any project import.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import argparse
 
 import numpy as np
@@ -28,7 +35,8 @@ from core.data_io import MANIFEST_NAME, describe_captures, load_manifest, resolv
 from core.detectors import flag_stats
 from core.evaluation import BULK_LABELS
 from core.features import WINDOW_SIZE
-from flag_scores import auroc
+from experiments import flag_scores
+from experiments.flag_scores import auroc
 from methods.scores import (FORGET_SECONDS, TRAIN_COUNTS, held_out_scores, warm_from)
 from statemachine import (fit_model, frequency_cutoff, frequency_scores_by_window,
                           load_flow_packets, make_flows, n_windows_for, segment_flows,
