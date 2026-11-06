@@ -61,6 +61,7 @@ also run on their own, as a script or with `-m`.
 | `experiments/flag_scores.py` | Per-window anomaly scores under the plain and flag alphabets, plus AUROC and matched-rate detection per stratum. Prints the pre-registered verdict. |
 | `experiments/windowed_scores.py` | The visualization page's detector, the windowed SEQUENT score, on every stratum, calibrated exactly as the page is. Quotes the windows each cutoff rests on and the realised benign rate beside every number. Prints the root-count verdict. |
 | `experiments/cv_calibration.py` | Cross-validated calibration of the windowed score (every benign window scored out of fold) against the split. Prints the pre-registered verdict: drop, so the split stays. |
+| `experiments/feature_set.py` | All 13 features against the eight without volume and size/timing: persistent alerts, AUROC and detection at a 5% benign budget per scenario. Prints the pre-registered verdict: drop. |
 | `experiments/load_behavior.py` | Load channel (z-score) against behavior channel (windowed SEQUENT): does the second gate the first on the bulk taps and the attacks. Prints the pre-registered verdict: drop. |
 | `experiments/metrics.py` | One `auroc`, one `detection_at_rate`, one `detection_at_budget`, with the two missing-data policies stated rather than accidental. Imports nothing from the project, so any experiment can use it. |
 
@@ -73,6 +74,7 @@ applying it. They exist so a verdict cannot be chosen after seeing the numbers.
 |---|---|
 | `verdicts/flag.py` | The flag-alphabet rule. |
 | `verdicts/root_count.py` | The start-state training-count rule (kept: entries). |
+| `verdicts/feature_set.py` | The eight-feature rule (dropped). |
 | `verdicts/load_behavior.py` | The load-versus-behavior alert rule (dropped). |
 | `verdicts/cv.py` | The cross-validated calibration rule (dropped). |
 

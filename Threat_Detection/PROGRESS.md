@@ -442,3 +442,30 @@ so behavior is competitive on lidar and worse elsewhere. Behavior ranks better b
 injection and lidar (0.74 / 0.63 against 0.69 / 0.52) and at chance on nginx. ptcp is worse
 on every number. Outcome: no gating; the "tag each alert load-only or behavior-involved"
 fallback is still available but rests on a channel that is blank on about half the windows.
+
+## Eight-feature set: dropped by its own rule (2026-11-06)
+
+Candidate: the z-score on `unique_dst_ips`, `unique_dst_ports`, `syn_count`, `rst_count`,
+`http_count`, `dns_count`, `https_count`, `http_frac` (no `volume`, no `size_timing`) against
+all 13. The rule is `verdicts/feature_set.py`, committed in `d5891e8`; it says in its
+docstring that it is not blind (the candidate came from the group ablation and an exploratory
+run preceded the rule, and the benign side is optimistic for that reason). Measured by
+`experiments/feature_set.py` into `outputs/feature_set.csv`.
+
+**Verdict: drop. Stay on all 13.** One condition fails: `ptcp/injection attack` AUROC fell
+0.152 (0.738 to 0.586), above the 0.10 limit. Everything else passed:
+
+| | tcp, all 13 | tcp, 8 features | ptcp, all 13 | ptcp, 8 features |
+|---|---|---|---|---|
+| persistent alerts on 151 / 141 steady held-out windows | 22 | 3 | 18 | 6 |
+| held-out benign windows flagged, steady | 0.424 | 0.185 | 0.454 | 0.234 |
+| held-out benign windows flagged, bulk | 0.918 | 0.443 | 0.946 | 0.589 |
+
+Lidar and nginx improve under the candidate in both methods on detection at 5% (tcp lidar
+0.076 to 0.206, nginx 0.174 to 0.283); injection loses 0.07 / 0.05 and AUROC 0.07 / 0.15.
+The ptcp injection loss comes from two strata of 6 and 11 windows (`node-child1` 0.98 to
+0.39, `pod-lidar` 0.98 to 0.35), so it is real under the rule and also thin evidence. A
+candidate that keeps one volume feature for injection would be a new candidate and needs a
+new rule committed first. `mean_packet_size` and the count-over-packets ratios were tried
+exploratorily and did worse on benign flags (0.29 and 0.31 tcp steady), so they are not
+candidates.
