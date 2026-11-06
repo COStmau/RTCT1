@@ -2718,12 +2718,12 @@ def _pcapng_bytes(*blocks):
 
 class PcapReadChecks(unittest.TestCase):
     def frames(self, blob, name="capture.pcapng"):
-        import pcap_read
+        from convert import read as pcap_read
         reader = pcap_read.CaptureReader(_capture_file(blob, name))
         return list(reader.frames()), reader
 
     def test_detect_format_by_magic_not_extension(self):
-        import pcap_read
+        from convert import read as pcap_read
         path = _capture_file(_pcap_bytes([(1, 0, b"x" * 20, 20)]), "pod-nginx-tcp.pcapng")
         self.assertEqual(pcap_read.detect_format(path), "pcap")
         self.assertEqual(pcap_read.detect_format(_capture_file(_pcapng_bytes(_pcapng_idb()))),
@@ -2768,7 +2768,7 @@ class PcapReadChecks(unittest.TestCase):
                          (2, 9, 2, 1))
 
     def test_long_frame_is_cut_to_head_bytes(self):
-        import pcap_read
+        from convert import read as pcap_read
         big = bytes(65535)
         frames, _ = self.frames(_pcap_bytes([(1, 0, big, 65549), (2, 0, b"next" * 10, 40)]))
         self.assertEqual(len(frames[0].data), pcap_read.HEAD_BYTES)
@@ -2813,7 +2813,7 @@ class PcapReadChecks(unittest.TestCase):
 
     def test_malformed_pcapng_blocks_raise_naming_the_file(self):
         import struct
-        import pcap_read
+        from convert import read as pcap_read
         short_epb = _pcapng_block(6, b"")
         bad_idb = _pcapng_block(1, b"")
         overlong = _pcapng_epb(0, 1, b"a" * 16)
@@ -2831,19 +2831,19 @@ class PcapReadChecks(unittest.TestCase):
 
     def test_unsupported_linktype_raises_with_path(self):
         path = _capture_file(_pcap_bytes([(1, 0, b"x" * 20, 20)], linktype=101))
-        import pcap_read
+        from convert import read as pcap_read
         with self.assertRaisesRegex(ValueError, "unsupported linktype 101") as caught:
             list(pcap_read.CaptureReader(path).frames())
         self.assertIn(str(path), str(caught.exception))
 
     def test_simple_packet_block_is_refused(self):
-        import pcap_read
+        from convert import read as pcap_read
         path = _capture_file(_pcapng_bytes(_pcapng_idb(), _pcapng_block(3, b"\0" * 8)))
         with self.assertRaisesRegex(ValueError, "unsupported pcapng block type 3"):
             list(pcap_read.CaptureReader(path).frames())
 
     def test_reader_imports_without_local_paths(self):
-        script = "import sys; sys.path.insert(0, '.'); import pcap_read; print(pcap_read.HEAD_BYTES)"
+        script = "import sys; sys.path.insert(0, '.'); from convert import read as pcap_read; print(pcap_read.HEAD_BYTES)"
         out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
 
@@ -2906,14 +2906,14 @@ def _arp(op, sender_mac, sender_ip, target_mac, target_ip):
 
 
 def _frame(data, linktype=1, orig_len=None, number=1, sec=1771545908, frac=877129, digits=6):
-    import pcap_read
+    from convert import read as pcap_read
     return pcap_read.Frame(number, sec, frac, digits, orig_len or len(data),
                            data[:pcap_read.HEAD_BYTES], linktype)
 
 
 class PcapRowChecks(unittest.TestCase):
     def row(self, data, linktype=1, orig_len=None):
-        import pcap_rows
+        from convert import rows as pcap_rows
         return pcap_rows.frame_row(_frame(data, linktype, orig_len))
 
     def test_sll2_ipv6_udp_matches_sponsor_row1(self):
@@ -2929,7 +2929,7 @@ class PcapRowChecks(unittest.TestCase):
                           row["icmp_type"]), (17, None, 0, None))
 
     def test_row_has_every_column_but_the_three_capture_wide_ones(self):
-        import pcap_rows
+        from convert import rows as pcap_rows
         row = self.row(_ether(_ipv4(_udp(1, 2), 17), 0x0800))
         self.assertEqual(list(row), pcap_rows.COLUMNS[3:])
 
@@ -3050,14 +3050,14 @@ class PcapRowChecks(unittest.TestCase):
         self.assertEqual((row["src_ip"], row["dst_ip"], row["dst_port"]), (None, None, None))
 
     def test_short_frame_leaves_missing_fields_blank(self):
-        import pcap_rows
+        from convert import rows as pcap_rows
         data = _ether(_ipv4(_tcp(1, 2), 6), 0x0800)[:30]       # IPv4 header cut mid-way
         row, complete = pcap_rows.dissect(_frame(data, orig_len=54))
         self.assertFalse(complete)
         self.assertEqual((row["eth_type"], row["src_ip"], row["frame_len"]), ("0x0800", None, 54))
 
     def test_iat_first_row_int_zero_then_signed_float(self):
-        import pcap_rows
+        from convert import rows as pcap_rows
         packet = _sll2(_ipv4(_udp(1, 2), 17), 0x0800)
         path = _capture_file(_pcap_bytes([(100, 500000, packet, len(packet)),
                                           (100, 750000, packet, len(packet)),
@@ -3072,7 +3072,7 @@ class PcapRowChecks(unittest.TestCase):
         self.assertEqual(iats[2], rows[2][1] - rows[1][1])
 
     def test_ts_seconds_rules_differ_only_in_last_ulp(self):
-        import pcap_rows
+        from convert import rows as pcap_rows
         add = pcap_rows.ts_seconds(1771545910, 906831167, 9, rule="add")
         div = pcap_rows.ts_seconds(1771545910, 906831167, 9, rule="div")
         self.assertLessEqual(abs(add - div), 2.4e-7)
@@ -3080,13 +3080,13 @@ class PcapRowChecks(unittest.TestCase):
             pcap_rows.ts_seconds(1, 0, 6, rule="other")
 
     def test_format_cell(self):
-        import pcap_rows
+        from convert import rows as pcap_rows
         self.assertEqual([pcap_rows.format_cell(v) for v in (None, 0, 17, "udp", 8.58306884765625e-06)],
                          ["", "0", "17", "udp", "8.58306884765625e-06"])
 
     def test_written_csv_loads_through_data_io(self):
         import tempfile
-        import pcap_rows
+        from convert import rows as pcap_rows
         packet = _ether(_ipv4(_tcp(40000, 8080, flags=0x02, payload=b"x" * 10), 6), 0x0800)
         source = _capture_file(_pcap_bytes([(100, 1, packet, len(packet)),
                                             (100, 2, packet, len(packet))], linktype=1))
@@ -3102,7 +3102,7 @@ class PcapRowChecks(unittest.TestCase):
 
     def test_reader_warnings_reach_the_writer(self):
         import tempfile
-        import pcap_rows
+        from convert import rows as pcap_rows
         packet = _sll2(_ipv4(_udp(1, 2, bytes(50)), 17), 0x0800)
         blob = _pcap_bytes([(1, 0, packet, len(packet)), (2, 0, packet, len(packet))])
         target = Path(tempfile.mkdtemp()) / "x.csv"
@@ -3122,13 +3122,13 @@ class PcapDiffChecks(unittest.TestCase):
         return root, flat, nested
 
     def test_locate_pcap_flat_and_nested(self):
-        import pcap_diff
+        from convert import diff as pcap_diff
         root, flat, nested = self.tree()
         self.assertEqual(pcap_diff.locate_pcap(root, "benign", "pod-nginx", "tcp"), flat)
         self.assertEqual(pcap_diff.locate_pcap(root, "nginx attack", "pod-nginx", "ptcp"), nested)
 
     def test_locate_pcap_missing_or_duplicate_raises(self):
-        import pcap_diff
+        from convert import diff as pcap_diff
         root, flat, _ = self.tree()
         with self.assertRaisesRegex(ValueError, "benign/pod-lidar/tcp: 0 capture files"):
             pcap_diff.locate_pcap(root, "benign", "pod-lidar", "tcp")
@@ -3142,7 +3142,7 @@ class PcapDiffChecks(unittest.TestCase):
         """A two-frame capture and its regenerated CSV, with one CSV cell optionally edited."""
         import csv
         import tempfile
-        import pcap_rows
+        from convert import rows as pcap_rows
         packet = _ether(_ipv4(_tcp(40000, 8080, flags=0x02, payload=b"x" * 10), 6), 0x0800)
         blob = _pcap_bytes([(100, 1, packet, len(packet)), (101, 2, packet, len(packet))], linktype=1)
         pcap = _capture_file(blob[:len(blob) - cut])
@@ -3158,7 +3158,7 @@ class PcapDiffChecks(unittest.TestCase):
         return pcap, csv_path
 
     def test_compare_capture_counts_and_names_mismatch(self):
-        import pcap_diff
+        from convert import diff as pcap_diff
         result = pcap_diff.compare_capture(*self.pair(edit=("dst_port", "9999")))
         self.assertEqual((result["rows_sponsor"], result["rows_regen"]), (2, 2))
         self.assertEqual((result["tier_a_exact"], result["mismatch_cells"],
@@ -3166,26 +3166,26 @@ class PcapDiffChecks(unittest.TestCase):
         self.assertEqual(result["first_mismatch"], "frame 1 dst_port 8080|9999")
 
     def test_compare_capture_tier_b_only_is_still_tier_a_exact(self):
-        import pcap_diff
+        from convert import diff as pcap_diff
         result = pcap_diff.compare_capture(*self.pair(edit=("eth_src", "aa:aa:aa:aa:aa:aa")))
         self.assertEqual((result["tier_a_exact"], result["differing_columns"], result["windows"]),
                          (True, "eth_src:1", "equal"))
 
     def test_identical_capture_is_exact_with_equal_windows(self):
-        import pcap_diff
+        from convert import diff as pcap_diff
         result = pcap_diff.compare_capture(*self.pair())
         self.assertEqual((result["tier_a_exact"], result["mismatch_cells"], result["windows"],
                           result["warnings"]), (True, 0, "equal", ""))
 
     def test_truncation_warning_blocks_exact(self):
-        import pcap_diff
+        from convert import diff as pcap_diff
         result = pcap_diff.compare_capture(*self.pair(cut=10))
         self.assertEqual((result["rows_regen"], result["mismatch_cells"]), (1, 0))
         self.assertEqual((result["tier_a_exact"], result["warnings"]),
                          (False, "truncated after frame 1"))
 
     def test_row_count_difference_blocks_exact(self):
-        import pcap_diff
+        from convert import diff as pcap_diff
         pcap, csv_path = self.pair()
         with open(csv_path, "a", newline="") as handle:
             handle.write("3" + "," * 33 + "\r\n")
@@ -3195,7 +3195,7 @@ class PcapDiffChecks(unittest.TestCase):
 
     def test_one_bad_capture_is_recorded_and_the_run_continues(self):
         import tempfile
-        import pcap_diff
+        from convert import diff as pcap_diff
         root = Path(tempfile.mkdtemp())
         good_pcap, good_csv = self.pair()
         rows = []
@@ -3214,7 +3214,7 @@ class PcapDiffChecks(unittest.TestCase):
         self.assertIn("1 failed", pcap_diff.summarize(results))
 
     def test_summary_names_captures_cut_short_at_the_source(self):
-        import pcap_diff
+        from convert import diff as pcap_diff
         results = pd.DataFrame([
             {"tier_a_exact": False, "mismatch_cells": 0, "rows_sponsor": 5, "rows_regen": 5,
              "windows": "equal", "differing_columns": "", "warnings": "truncated after frame 5",
@@ -3242,7 +3242,7 @@ class PcapDiffChecks(unittest.TestCase):
                        "tier_a_exact": False, "windows": "differ", "differing_columns": "eth_src:2;ts:1",
                        "mismatch_cells": 3, "rows_sponsor": 4, "rows_regen": 4, "warnings": "",
                        "note": ""}]).to_csv(out, index=False)
-        run = subprocess.run([sys.executable, "pcap_diff.py", "--report", "--out", str(out)],
+        run = subprocess.run([sys.executable, "convert/diff.py", "--report", "--out", str(out)],
                              capture_output=True, text=True)
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIn("1 of 2 Tier-A exact; windows equal on 1", run.stdout)
@@ -3276,7 +3276,7 @@ def _sponsor_pair(scenario, name):
 class PcapCorpusChecks(unittest.TestCase):
     def test_small_capture_matches_sponsor_csv(self):
         import csv
-        import pcap_rows
+        from convert import rows as pcap_rows
         for scenario, name in SMALL_CAPTURES:
             with self.subTest(capture=f"{scenario}/{name}"):
                 pcap, csv_path = _sponsor_pair(scenario, name)
@@ -3294,7 +3294,7 @@ class PcapCorpusChecks(unittest.TestCase):
 
     def test_small_capture_windows_match(self):
         import tempfile
-        import pcap_rows
+        from convert import rows as pcap_rows
         for scenario, name in SMALL_CAPTURES:
             with self.subTest(capture=f"{scenario}/{name}"):
                 pcap, csv_path = _sponsor_pair(scenario, name)

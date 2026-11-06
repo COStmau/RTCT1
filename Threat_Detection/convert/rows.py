@@ -24,7 +24,8 @@ import csv
 import ipaddress
 import struct
 
-from pcap_read import CaptureReader
+from convert import read as pcap_read
+from convert.read import CaptureReader
 
 COLUMNS = ["frame_number", "ts", "iat", "frame_len", "eth_src", "eth_dst", "eth_type",
            "ip_version", "src_ip", "dst_ip", "proto", "ttl_or_hlim", "src_port", "dst_port",

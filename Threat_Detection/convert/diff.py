@@ -18,12 +18,17 @@ import tempfile
 import time
 from pathlib import Path
 
+# A script run as `python convert/diff.py` gets convert/ as sys.path[0], so the
+# project root has to go back on the path before any project import.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import pandas as pd
 
 from core.data_io import (MANIFEST_NAME, PACKET_COLUMNS, load_capture, load_manifest, resolve_output,
                      timebase_issues)
 from core.features import make_windows
-from pcap_rows import COLUMNS, capture_rows, format_cell
+from convert import rows as pcap_rows
+from convert.rows import COLUMNS, capture_rows, format_cell
 
 TIER_A = {"frame_number", *PACKET_COLUMNS}
 MIN_FREE_BYTES = 20e9              # --regen-out stops before the disk drops below this
