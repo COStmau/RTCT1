@@ -780,8 +780,12 @@ def main():
     print(f"Wrote {out_file} | rows={len(rows)} | method={args.method} "
           f"| encoding={args.encoding} | flags={args.flags}")
     for scenario, group in rows.groupby("scenario"):
+        # A mean over strata weights a 3-window capture the same as an 80-window one, so
+        # state the window spread beside it rather than letting the reader assume a pool.
+        windows = group["windows"]
         print(f"  {scenario:<16} flagged fraction {group['flagged_fraction'].mean():.3f} "
-              f"(mean over {len(group)} strata) | {int(group['windows'].sum())} windows")
+              f"(mean over {len(group)} strata, {int(windows.sum())} windows: "
+              f"{int(windows.min())}-{int(windows.max())} per stratum)")
     print(f"Windows are {WINDOW_SIZE:g}s. Flags are deviations, not confirmed attacks.")
 
 

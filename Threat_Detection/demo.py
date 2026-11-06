@@ -19,7 +19,7 @@ import pandas as pd
 
 # reporting pins matplotlib to Agg before it imports pyplot, so importing it first gives
 # this module the same headless backend instead of opening a window.
-from reporting import plot_detection, summarize_flags, write_report
+from reporting import plot_detection, summarize_flags, to_events, write_events, write_report
 import matplotlib.pyplot as plt
 
 from evaluation import BULK_LABELS
@@ -66,6 +66,13 @@ def resolve_reference(benign_windows):
     return reference, held_out, note
 
 
+def _label_of(path):
+    """The capture label a packet CSV belongs to, e.g. pod-nginx from pod-nginx-tcp.csv."""
+    from data_io import parse_capture
+    from pathlib import Path
+    return parse_capture(Path(path).name)[0]
+
+
 def pair_demo():
     """Two captures in, one report and one chart out."""
     import local_paths
@@ -83,7 +90,14 @@ def pair_demo():
     results.to_csv(resolve_output("results.csv"))
     benign_results.to_csv(resolve_output("benign_results.csv"))
 
+    # The detection -> response handoff (EVENT_LOG.md). Only flagged attack windows are
+    # emitted, each carrying its second inside the capture so the response side can order
+    # and expire them.
+    events = to_events(results, detector=DETECTOR, pods=[_label_of(local_paths.ATTACK_CSV)])
+    write_events(events)
+
     summarize_flags(results, benign_results, len(reference), note)
+    print(f"   {len(events)} events written to outputs/events.jsonl ({events[0]['version'] if events else 'no flags'})")
     plot_detection(results, benign_results, detector.mean, detector.std, len(reference))
 
 

@@ -71,7 +71,7 @@ these as documented; they also run on their own.
 | `local_paths.py` | Your local dataset paths. Not committed; copy `local_paths.example.py` and fill it in. Only the entry points read it. |
 | `requirements.txt` | The pinned runtime: Python 3.11 with numpy, pandas, matplotlib and scikit-learn at the versions the numbers were measured under. |
 | `PROGRESS.md` | Why the design is what it is: decisions, retractions, what is not claimed, what is next. |
-| `EVENT_LOG.md` | The detection → response event contract (`LogV0`). |
+| `EVENT_LOG.md` | The detection → response event contract (`LogV1`, carries the capture-relative second). |
 | `outputs/` | Everything generated. Safe to delete; `demo.py` item 8 rebuilds it. `outputs/SHOWCASE.md` is every measured result as one file. |
 
 ## Run it

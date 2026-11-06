@@ -24,7 +24,9 @@ __all__ = ["flag_stats", "persistent_mask", "summarize_flags", "threshold_table"
            "plot_comparison", "print_comparison", "plot_regime_split", "plot_snaplen",
            "write_report", "to_events", "write_events"]
 
-EVENT_VERSION = "LogV0"
+# LogV1 adds `t`, the capture-relative second, so a consumer can order and expire events.
+# LogV0 carried no time at all: 51 events on one capture were indistinguishable.
+EVENT_VERSION = "LogV1"
 
 # Incident lifetime: consecutive clean windows before a flag may clear. Nothing enforces it
 # yet; the rule belongs to the event stream this module writes, not to the detector.
@@ -191,12 +193,20 @@ def _severity(score):
 
 
 def to_events(results, *, detector, pods):
-    """One dict per flagged window: version, detector, severity, locations."""
+    """One dict per flagged window: version, detector, time, severity, locations.
+
+    `t` is the window's second inside its capture -- the index of the windowed table, which
+    annotate() builds from the capture's first packet. Without it a consumer can tell which
+    windows flagged but not in what order or how far apart, so it cannot dedupe or expire
+    an incident. It is capture-relative, not wall-clock: the manifest carries the capture's
+    own start time for that.
+    """
     events = []
     flagged = results[results["anomaly"].fillna(False)].sort_index()
-    for _, row in flagged.iterrows():
+    for t, row in flagged.iterrows():
         events.append({"version": EVENT_VERSION,
                        "detector": detector,
+                       "t": int(t),
                        "severity": _severity(row.get("anomaly_score")),
                        "locations": {"pods": list(pods)}})
     return events
@@ -349,9 +359,14 @@ def print_comparison(comparison):
         print(f"\n{detector}: held-out benign flagged fraction {benign:.2f}")
         for scenario in [s for s in view["scenario"].unique() if s != "benign"]:
             attacks = view[view["scenario"].eq(scenario)]
+            # A mean over captures weights a 3-window capture like an 80-window one, so the
+            # window spread is printed beside it; the mean is not over a common pool.
+            windows = attacks["windows"]
             print(f"   {scenario:<18} mean {attacks['flagged_fraction'].mean():.2f}"
                   f" | persistent {attacks['persistent_fraction'].mean():.2f}"
-                  f" | captures {len(attacks)}")
+                  f" | captures {len(attacks)}"
+                  f" | windows {int(windows.sum())} ({int(windows.min())}-{int(windows.max())}"
+                  f" each)")
 
 
 def plot_comparison(comparison, path=None):
@@ -378,8 +393,10 @@ def plot_comparison(comparison, path=None):
         ax.legend(fontsize=8)
     # Strata count from the data, not a number typed in by hand.
     strata = comparison.groupby(["label", "method"]).ngroups
+    windows = comparison["windows"]
     fig.suptitle(f"Same windows and matched benign reference per capture stratum"
-                 f" | {WINDOW_SIZE:g}s windows | mean over {strata} strata\n"
+                 f" | {WINDOW_SIZE:g}s windows | mean over {strata} strata,"
+                 f" {int(windows.min())}-{int(windows.max())} windows each\n"
                  f"forest and SVM cutoffs = {BENIGN_QUANTILE:.0%} of held-out benign"
                  f" | z-score alert > {THRESHOLD:g} sigma"
                  f" | {PERSISTENCE_WINDOW}-window persistence", fontsize=10)

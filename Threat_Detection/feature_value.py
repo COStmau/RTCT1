@@ -16,6 +16,8 @@ import argparse
 
 import pandas as pd
 
+import metrics
+
 import local_paths
 from data_io import load_manifest, resolve_output
 from features import load_all_windows, split_reference
@@ -25,28 +27,17 @@ STRONG_AUC = 0.75
 
 
 def separation_auc(benign, attack):
-    """Probability that a random attack window ranks above a random benign window."""
-    benign = pd.Series(benign).dropna()
-    attack = pd.Series(attack).dropna()
-    if len(benign) < 2 or len(attack) < 2:
-        return float("nan")
-    n_b, n_a = len(benign), len(attack)
-    ranks = pd.concat([benign, attack]).rank()
-    rank_sum = ranks.iloc[n_b:].sum()
-    return (rank_sum - n_a * (n_a + 1) / 2) / (n_b * n_a)
+    """Probability that a random attack window ranks above a random benign window.
+
+    Delegates to metrics.auroc_ranked, which returns NaN when a stratum has fewer than two
+    finite windows on either side -- a 1-vs-1 stratum would otherwise score 1.0 by chance.
+    """
+    return metrics.auroc_ranked(benign, attack)
 
 
 def detection_at_budget(benign_train, benign_holdout, attack, budget=BUDGET):
     """Attack-window flag rate when the cutoff flags `budget` of held-out benign windows."""
-    train = pd.Series(benign_train).dropna()
-    holdout = pd.Series(benign_holdout).dropna()
-    target = pd.Series(attack).dropna()
-    mean, std = train.mean(), train.std()
-    if not len(train) or not len(holdout) or not len(target) or not std or pd.isna(std):
-        return float("nan")
-    deviation = lambda values: (values - mean).abs() / std
-    cutoff = deviation(holdout).quantile(1 - budget)
-    return float((deviation(target) >= cutoff).mean())
+    return metrics.detection_at_budget(benign_train, benign_holdout, attack, budget)
 
 
 def rank_features(manifest):

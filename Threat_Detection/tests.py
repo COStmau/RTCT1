@@ -14,10 +14,12 @@ import cv_verdict
 import data_io
 import demo
 import evaluation
+import feature_value
 import features
 import flag_scores
 import flag_verdict
 import layout
+import metrics
 import reporting
 import root_verdict
 import statemachine
@@ -274,6 +276,61 @@ class DetectorProtocolChecks(unittest.TestCase):
         for name in detectors.REGISTRY:
             with self.subTest(detector=name), self.assertRaisesRegex(ValueError, "Insufficient"):
                 detectors.build(name).fit(pd.DataFrame({"packet_count": [1]}))
+
+
+class LayeringChecks(unittest.TestCase):
+    """The four pipeline layers depend one way, and the core never reaches outward.
+
+    data_io -> features -> detectors -> reporting. Nothing downstream reaches back upstream.
+    Enforced by reading the import statements, so a new import that breaks the rule fails
+    here rather than surfacing as a surprise circular dependency later.
+    """
+
+    # The pipeline layers, in dependency order: a layer may import only earlier ones.
+    LAYERS = ["data_io", "evaluation", "features", "detectors", "reporting"]
+
+    def imported_modules(self, name):
+        import ast
+        tree = ast.parse(Path(f"{name}.py").read_text(encoding="utf-8"))
+        found = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                found.add(node.module.split(".")[0])
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    found.add(alias.name.split(".")[0])
+        return found
+
+    def test_a_layer_imports_only_layers_below_it(self):
+        local = set(self.LAYERS)
+        for position, layer in enumerate(self.LAYERS):
+            allowed = set(self.LAYERS[:position])
+            used = self.imported_modules(layer) & local
+            self.assertLessEqual(used, allowed,
+                                 f"{layer}.py imports {sorted(used - allowed)}, "
+                                 f"which sit above it in {self.LAYERS}")
+
+    def test_no_layer_imports_local_paths(self):
+        # local_paths is the machine's own dataset location; only entry points read it, so
+        # the layers stay portable and testable on any machine.
+        for layer in self.LAYERS:
+            self.assertNotIn("local_paths", self.imported_modules(layer),
+                             f"{layer}.py must not import local_paths")
+
+    def test_metrics_imports_nothing_from_the_project(self):
+        # metrics is shared by every layer and every experiment; it must stay a leaf.
+        project = {p.stem for p in Path(".").glob("*.py")}
+        self.assertEqual(self.imported_modules("metrics") & project, set())
+
+    def test_the_layers_import_without_matplotlib(self):
+        # reporting pins Agg and imports pyplot; importing it must not be required to use
+        # the rest of the core. This guards the P1-5 move of matplotlib out of module scope.
+        script = ("import sys; sys.path.insert(0, '.'); "
+                  "import data_io, features, detectors, metrics; "
+                  "print('matplotlib' in sys.modules)")
+        out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(), "False")
 
 
 class FeatureLayerChecks(unittest.TestCase):
@@ -1222,11 +1279,27 @@ class EventLogChecks(unittest.TestCase):
         events = to_events(self.flagged_frame(), detector="z_score", pods=["pod-nginx"])
         self.assertEqual([e["severity"] for e in events], ["low", "med", "high"])
         for event in events:
-            self.assertEqual(set(event), {"version", "detector", "severity", "locations"})
+            self.assertEqual(set(event), {"version", "detector", "t", "severity", "locations"})
         first = events[0]
-        self.assertEqual(first["version"], "LogV0")
+        self.assertEqual(first["version"], "LogV1")
         self.assertEqual(first["detector"], "z_score")
         self.assertEqual(first["locations"], {"pods": ["pod-nginx"]})
+
+    def test_events_carry_the_window_second_so_they_can_be_ordered(self):
+        # LogV0 had no time, so a consumer could not order, dedupe or expire an incident.
+        events = to_events(self.flagged_frame(), detector="z_score", pods=["pod-nginx"])
+        self.assertEqual([e["t"] for e in events], [3, 5, 6])
+        for event in events:
+            self.assertIsInstance(event["t"], int)
+        self.assertEqual([e["t"] for e in events], sorted(e["t"] for e in events))
+
+    def test_the_pair_demo_actually_writes_the_event_stream(self):
+        # to_events/write_events were tested but never called: the contract was documented
+        # and consumed downstream while nothing produced it, so outputs/events.jsonl went
+        # stale. Pin the call site, not just the functions.
+        source = Path("demo.py").read_text(encoding="utf-8")
+        self.assertIn("write_events(", source)
+        self.assertIn("to_events(", source)
 
     def test_event_lines_are_valid_json(self):
         import json
@@ -1237,6 +1310,49 @@ class EventLogChecks(unittest.TestCase):
         path = Path(tempfile.mkdtemp()) / "events.jsonl"
         write_events(events, path=str(path))
         self.assertEqual(len(path.read_text().strip().split("\n")), 3)
+
+
+class MetricsChecks(unittest.TestCase):
+    """One statistic, one implementation, and an explicit policy for thin strata."""
+
+    def test_both_policies_agree_wherever_both_accept(self):
+        # The old copies drifted only on thin input; everywhere else they must be identical.
+        rng = np.random.default_rng(3)
+        for benign, attack in ((rng.normal(0, 1, 60), rng.normal(1, 1, 45)),
+                               (np.round(rng.normal(0, 1, 40), 0), np.round(rng.normal(1, 1, 30), 0)),
+                               ([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])):
+            self.assertAlmostEqual(metrics.auroc(benign, attack),
+                                   metrics.auroc_ranked(benign, attack), places=12)
+
+    def test_ranked_returns_nan_on_a_thin_stratum(self):
+        # One attack point against one benign point ranks 1.0 by construction, which would
+        # flatter a mean over strata. The feature ranking wants NaN here.
+        self.assertTrue(np.isnan(metrics.auroc_ranked([1.0], [2.0])))
+        self.assertEqual(metrics.auroc([1.0], [2.0]), 1.0)
+
+    def test_pairwise_raises_when_a_side_is_empty(self):
+        with self.assertRaises(ValueError):
+            metrics.auroc([], [1.0])
+        with self.assertRaises(ValueError):
+            metrics.auroc([1.0], [])
+
+    def test_auroc_ignores_unscored_windows(self):
+        self.assertEqual(metrics.auroc([np.nan, 0.0], [1.0, np.inf]), 1.0)
+        self.assertTrue(np.isnan(metrics.auroc_ranked([np.nan], [np.inf, 1.0])))
+
+    def test_detection_reports_the_rate_it_actually_cost(self):
+        detection, realised = metrics.detection_at_rate([0.0, 1.0, 2.0, 3.0, 4.0], [4.0, 5.0], 0.2)
+        self.assertEqual(realised, 0.2)
+        self.assertEqual(detection, 1.0)
+
+    def test_the_old_public_names_delegate_to_the_one_implementation(self):
+        # feature_value and flag_scores keep their names for their callers, but there is
+        # now exactly one implementation behind each policy.
+        for benign, attack in (([1.0, 2.0, 3.0], [4.0, 5.0]), ([1.0, 2.0, 3.0], [0.0, 1.0])):
+            self.assertEqual(feature_value.separation_auc(benign, attack),
+                             metrics.auroc_ranked(benign, attack))
+            self.assertEqual(flag_scores.auroc(benign, attack), metrics.auroc(benign, attack))
+        self.assertTrue(np.isnan(feature_value.separation_auc([1.0], [2.0])))
 
 
 class BoundaryChecks(unittest.TestCase):
