@@ -1,12 +1,12 @@
-// The state-machine story renderer. It owns no data: everything comes from window.STORY,
-// the bundle story.py builds from the pipeline. Positions come from the bundle's computed
+// The state-machine page renderer. It owns no data: everything comes from window.VIZ,
+// the bundle viz/page.py builds from the pipeline. Positions come from the bundle's computed
 // layouts or from layout rules below that read only the bundle; colors are CSS roles.
 // Vendored D3: d3js.org v7.9.0, sha256 f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539
 (() => {
 "use strict";
 // the page carries several vantages around one shared cluster; S is the selected one, laid
-// out as a single-vantage story (meta, learning, playback, cluster) so every act reads it alike
-const B = window.STORY;
+// out as a single-vantage block (meta, learning, playback, cluster) so every act reads it alike
+const B = window.VIZ;
 const VANTAGES = Object.keys(B.vantages);
 let S = null;
 const svg = d3.select("#svg");
@@ -288,8 +288,8 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     tg.append("circle").attr("class", "tap-hit").attr("r", compact ? 8 : 12);
     if (isFocus && !compact) tg.append("text").attr("class", "t-small halo").attr("x", 10).attr("y", -8).text(`listening: ${v.label}`);
     hover(tg, d => `<div class="tt-title">capture tap: ${d.label}</div><div class="tt-row">${d.level}-level recording</div>
-      <div class="tt-row">${d.label === focus ? "the tap this story replays"
-        : B.vantages[d.label] ? "click to replay the story from this tap"
+      <div class="tt-row">${d.label === focus ? "the tap this page replays"
+        : B.vantages[d.label] ? "click to replay from this tap"
         : absentWhy(d.label)}</div>`);
     if (onTap && onPage && !isFocus) tg.on("click", (event, d) => { hideTip(); onTap(d.label); });
     if (isFocus) pos.set("__focus__", { x: tx, y: ty });
@@ -305,7 +305,7 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
   }
 }
 
-// why a tap on the map has no story on this page: bulk transfer is policy, anything else
+// why a tap on the map has no block on this page: bulk transfer is policy, anything else
 // was just not chosen when the page was built
 function absentWhy(label) {
   return (B.absent || {})[label] === "bulk transfer"
@@ -352,7 +352,7 @@ function actCluster() {
       recordings</b>: pod addresses live in the cluster's pod range, one /24 per node; each node
       capture claims the address it carries most; services live in the service range.</p>
     ${cp ? `<p>The control plane is <b>${cp.name}</b> (${cp.ip}): it serves the API server${cp.roles.includes("nfs") ? " and the shared NFS storage" : ""}, so every node talks to it.</p>` : ""}
-    <h2>Where this story listens</h2>
+    <h2>Where this page listens</h2>
     <p><span class="mono">${S.meta.vantage}</span> is ${where}</p>
     <p>This page carries <b>${VANTAGES.length} taps</b>. Click any other tap on the map, or pick one
       at the top, and the learning and detection acts replay from there.${absent.length
@@ -368,7 +368,7 @@ function actCluster() {
       <span><i class="disc" style="background:color-mix(in srgb,var(--accent) 16%,var(--surface));border:1.5px solid var(--accent)"></i>pod named by its own capture</span>
       <span><i class="disc" style="background:color-mix(in srgb,var(--s7) 14%,var(--surface));border:1.5px solid var(--s7)"></i>host-network pod (no address of its own)</span>
       <span><i class="disc" style="background:var(--surface-2);border:1px solid var(--axis)"></i>pod seen only in traffic</span>
-      <span><i class="disc" style="background:var(--accent)"></i>the tap this story replays · hollow taps switch to theirs</span>
+      <span><i class="disc" style="background:var(--accent)"></i>the tap this page replays · hollow taps switch to theirs</span>
       <span><i style="background:var(--muted);height:4px"></i>conversation, width by packets (log)</span>
     </div>
     <p style="margin-top:12px">Hover anything for its addresses, ports and packet counts.</p>`);
@@ -472,7 +472,7 @@ function drawLearning() {
   const current = k >= 1 && k <= total ? L.steps[k - 1] : null;
   const final = k > total;
 
-  // a bar takes its state's colour once it belongs to a kept state at this step. story.py
+  // a bar takes its state's colour once it belongs to a kept state at this step. viz/page.py
   // replays the folds: a merged candidate's children fold into the kept state's children,
   // which may still be candidates, so they settle later, never before their state exists
   const kept = new Set([0, ...done.filter(s => s.kind === "promote").map(s => s.blue)]);
@@ -675,7 +675,7 @@ function hoeffdingRows(step) {
     || (a.symbol === "#") - (b.symbol === "#")
     || d3.descending(Math.max(a.p_red, a.p_blue), Math.max(b.p_red, b.p_blue))).slice(0, 12);
 }
-window.STORY_CHECKS = { hoeffdingRows };
+window.VIZ_CHECKS = { hoeffdingRows };
 
 function drawHoeffding(step) {
   const tests = hoeffdingRows(step);
@@ -1401,7 +1401,7 @@ function show(act) {
   hideTip();
   defs();
   ACTS[act]();
-  try { localStorage.setItem("story-act", act); } catch (e) { /* storage may be blocked */ }
+  try { localStorage.setItem("viz-act", act); } catch (e) { /* storage may be blocked */ }
 }
 
 // Point every act at one vantage. The replay keeps its scenario and, through the taps'
@@ -1427,7 +1427,7 @@ function selectVantage(label) {
 }
 
 // the remembered tap is keyed to the build, so a page rebuilt with --vantage opens there
-const TAP_KEY = `story-vantage:${B.vantages[B.selected].meta.generated}:${B.selected}`;
+const TAP_KEY = `viz-vantage:${B.vantages[B.selected].meta.generated}:${B.selected}`;
 
 function switchTo(label) {
   if (!B.vantages[label] || label === S.meta.vantage) return;
@@ -1436,7 +1436,7 @@ function switchTo(label) {
   selectVantage(label);
   show(currentAct);
 }
-window.STORY_SWITCH = switchTo;
+window.VIZ_SWITCH = switchTo;
 
 d3.select("#vantage").html(VANTAGES.map(label =>
   `<option value="${label}">${label}${B.vantages[label].meta.calibration_warning ? " (inspection only)" : ""}</option>`).join(""))
@@ -1456,7 +1456,7 @@ window.addEventListener("resize", () => {
 let start = "cluster", tap = B.selected;
 try {
   const query = new URLSearchParams(location.search);
-  start = query.get("act") || localStorage.getItem("story-act") || start;
+  start = query.get("act") || localStorage.getItem("viz-act") || start;
   // a remembered tap belongs to this build: a rebuilt page opens where --vantage says
   tap = query.get("vantage") || localStorage.getItem(TAP_KEY) || tap;
 } catch (e) { /* ignore */ }

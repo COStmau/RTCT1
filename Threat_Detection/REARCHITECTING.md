@@ -14,7 +14,7 @@ Every number below was measured against the working tree, not recalled.
 | P1-5 matplotlib out of module scope | **done** — `import reporting` 0.86 s → 0.32 s |
 | P1-4 shared scorer helpers | **done** — `warm_from`/`held_out_scores` moved to `methods/` |
 | P1-2 `core/` package, P1-3 regrouping | **done** — see below, with one deviation |
-| P1-6 role packages | **done** — `experiments/`, `verdicts/`, `story/`, `convert/` |
+| P1-6 role packages | **done** — `experiments/`, `verdicts/`, `viz/`, `convert/` |
 | P1-7 boundaries enforced by tests | **done** — 4 new tests; the map cannot drift |
 | P2 front door | **done** — the menu is the only entry surface a person needs |
 | P3, P4 | **open** |
@@ -81,7 +81,7 @@ once (`tests.py` 3,144 and `demo.py` 460 are excluded as harness/entry, not arch
 |---|---|---:|---:|
 | Core (io, windows, detect, policy, report) | data_io, features, detectors, evaluation, reporting | 1,261 | 26.1% |
 | Second method | statemachine | 789 | 16.3% |
-| Presentation | story, cluster, layout | 1,025 | 21.2% |
+| Presentation | page, cluster, layout | 1,030 | 21.2% |
 | Experiments | sweep, compare, feature_value, flag_scores, windowed_scores, cv_calibration | 977 | 20.2% |
 | Verdict rules | flag_verdict, root_verdict, cv_verdict | 202 | 4.2% |
 | Conversion | pcap_read, pcap_rows, pcap_diff | 572 | 11.9% |
@@ -124,7 +124,7 @@ of pre-registered verdicts (`flag_verdict` 47, `root_verdict` 57, `cv_verdict` 9
 
 ### Presentation — one user-facing surface
 
-`story.py` (545) + `cluster.py` (325) + `layout.py` (155) + `story_template/` = **1,025 lines**
+`page.py` + `cluster.py` + `layout.py` + `template/` = **1,030 lines**
 to render one page. `demo.py` (460) is a menu that mostly shells out.
 
 ### Conversion — independent, already well-isolated
@@ -154,7 +154,7 @@ Threat_Detection/
 │   ├── flag_alphabet.py  windowed.py  cv_calibration.py
 ├── verdicts/                  # pre-registered rules, unchanged in behaviour
 │   ├── flag.py  root_count.py  cv.py
-├── story/                     # presentation (optional install)
+├── viz/                       # presentation (optional install)
 │   ├── build.py  cluster.py  layout.py  template/
 ├── convert/                   # pcap → packet rows (unchanged)
 │   ├── read.py  rows.py  diff.py
@@ -164,8 +164,8 @@ Threat_Detection/
 ```
 
 **The rule that makes this work:** `core/` may import `core/` and the standard library
-only. Not numpy-of-the-moment, not `metrics`, not `story`. `metrics.py` may import nothing
-from the project. Experiments import `core` + `metrics` + `verdicts`. `story/` imports
+only. Not numpy-of-the-moment, not `metrics`, not `viz`. `metrics.py` may import nothing
+from the project. Experiments import `core` + `metrics` + `verdicts`. `viz/` imports
 `core` + `methods`. That is checkable in a test (see §6, P0-4).
 
 ### Why a package, not flat files
@@ -204,7 +204,7 @@ they are cheap; the move (P1) is mechanical and can be reverted in isolation.
 |---|---|---|
 | **P1-1** | Split `statemachine.py` (789, 50 names) into `methods/pdfa.py` + `methods/scores.py` + `methods/sweep.py`. | The seam is exact, not approximate: **lines 47–328 are learning** (flows → symbols → PTA → ALERGIA → PDFA), **331–673 are scoring** (trace likelihood + both SEQUENT scorers + cutoffs), **676–789 are the sweep CLI**. `fit_model`/`fit_segments` (440–467) bridge the two and go with `pdfa.py`. |
 | **P1-2** | Create `core/` package; move the five core modules; re-export a front door in `__init__.py`. | Pure moves + import rewrites. Do it in one commit so `git log` shows a clean rename. |
-| **P1-3** | Group experiments under `experiments/`; verdicts under `verdicts/`; story under `story/`; conversion under `convert/`. | Keeps `demo.py` and `local_paths.py` at the top as the entry surface. |
+| **P1-3** | Group experiments under `experiments/`; verdicts under `verdicts/`; the page under `viz/`; conversion under `convert/`. | Keeps `demo.py` and `local_paths.py` at the top as the entry surface. |
 | **P1-4** | Replace the duplicated `warm_from` / `held_out_scores` / `_flags` helpers by importing from `methods.scores`. | `windowed_scores.py:41-62` reimplements what `statemachine` already does. |
 | **P1-5** | Move `matplotlib` import out of module scope in `reporting` (keep `Agg`, but import inside the plotting functions). | `import reporting` costs **0.86 s** vs **0.31 s** for the whole core, because it drags in matplotlib. Pure-Python users never need it. |
 
@@ -222,7 +222,7 @@ they are cheap; the move (P1) is mechanical and can be reverted in isolation.
 |---|---|---|---|
 | **P3-1** | Load captures lazily / cache parsed windows per `(label, method)`. | A full `load_all_windows` pass over the 88-capture corpus takes **12.3 s** (measured). `sweep`, `compare` and `feature_value` each call it once → **~37 s of redundant parsing** per full run, and the ablation re-parses again per group. | `sweep.py:47`, `compare.py:27`, `feature_value.py:54` |
 | **P3-2** | Replace `iterrows()` in `to_events` / `summary_row` with vectorised construction. | small but on the hot path | `reporting.py:197` |
-| **P3-3** | `story.py` writes a 3 MB page; the per-trace detail dominates. Make trimming the default, not a fallback. | 3 MB → ~0.7 MB observed when trimmed | `outputs/statemachine_story.html` (3.0 MB) vs a trimmed build (0.7 MB) |
+| **P3-3** | `viz/page.py` writes a 3 MB page; the per-trace detail dominates. Make trimming the default, not a fallback. | 3 MB → ~0.7 MB observed when trimmed | `outputs/state_machine.html` (3.0 MB) vs a trimmed build (0.7 MB) |
 
 ### P4 — Features worth adding (after the above, not before)
 
@@ -239,7 +239,7 @@ These are additive and each is one small module. Listed in order of value-per-ri
 4. **A `--sensitivity` flag** exposing `THRESHOLD` (2.5) instead of a constant that
    silently changes published numbers — PROGRESS records exactly that failure once already.
 5. **Calibration honesty:** report the realised benign rate next to every cutoff (the
-   story page already does; the sweeps do not).
+   visualization page already does; the sweeps do not).
 
 ---
 

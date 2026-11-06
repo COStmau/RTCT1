@@ -1,16 +1,16 @@
-"""The state machine's story as one interactive page: the cluster, the learning, the replay.
+"""The state machine as one interactive page: the cluster, the learning, the replay.
 
-build_story() runs the same pipeline the detector runs, through the instrumentation hooks in
-statemachine.py, and returns a plain dict (the "bundle") for one vantage. build_stories()
+build_page() runs the same pipeline the detector runs, through the instrumentation hooks in
+methods/scores.py, and returns a plain dict (the "bundle") for one vantage. build_pages()
 composes one bundle per vantage around a single shared cluster, so the page can switch taps
 without re-running Python. write_html() inlines that bundle and the renderer in
 template/ into one self-contained page in outputs/. The page draws only what the bundle
 says: the cluster is inferred from traffic (cluster.py), positions are computed (layout.py),
 and every score is the scorer's own number.
 
-Run it with:  .venv/bin/python story.py                       (every steady tap, every attack)
-              .venv/bin/python story.py --vantage pod-nginx   (open on pod-nginx)
-              .venv/bin/python story.py --vantages pod-lidar pod-nginx
+Run it with:  .venv/bin/python viz/page.py                       (every steady tap, every attack)
+              .venv/bin/python viz/page.py --vantage pod-nginx   (open on pod-nginx)
+              .venv/bin/python viz/page.py --vantages pod-lidar pod-nginx
 """
 import html
 import json
@@ -20,15 +20,15 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-# A script run as `python story/page.py` gets story/ as sys.path[0], so the
+# A script run as `python viz/page.py` gets viz/ as sys.path[0], so the
 # project root has to go back on the path before any project import.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import pandas as pd
 
-from story import cluster as topology
-from story import layout
+from viz import cluster as topology
+from viz import layout
 from core.data_io import (MANIFEST_NAME, level_from_label, load_manifest, resolve_output,
                      timebase_issues)
 from core.detectors import BENIGN_QUANTILE, PERSISTENCE_WINDOW, persistent_mask
@@ -48,7 +48,7 @@ WINDOW_STATUSES = ("alert", "flagged", "unseen", "nodata", "warmup", "released",
 RELEASE_SHOWN = 2           # windows after a release that still say "released"
 MAX_STEP_DETAIL = 400       # merge steps drawn one by one; the rest are counted
 MAX_STREAM = 2000           # training flows shown in the symbol stream
-STORY_HTML = "statemachine_story.html"
+PAGE_HTML = "state_machine.html"
 PAGE_LIMIT = 15 * 1024 * 1024   # bytes; past it, trace detail of the other vantages is dropped
 VANTAGE_PARTS = ("meta", "learning", "playback")   # what each vantage carries; the cluster is shared
 TRIMMED_KEYS = ("terms", "expired")                # per-trace detail only the side panel reads
@@ -56,9 +56,9 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "template"
 D3_FILE = "vendor/d3.v7.9.0.min.js"
 
 
-def build_story(benign, targets, cluster_captures, vantage, forget_seconds=FORGET_SECONDS,
+def build_page(benign, targets, cluster_captures, vantage, forget_seconds=FORGET_SECONDS,
                 found=None):
-    """The story bundle for one vantage.
+    """The bundle for one vantage.
 
     `benign` and each `targets[scenario]` are packet frames for `vantage` (flow columns, as
     statemachine.load_flow_packets reads them). `cluster_captures` maps every capture label
@@ -134,35 +134,35 @@ def build_story(benign, targets, cluster_captures, vantage, forget_seconds=FORGE
     }
 
 
-def build_stories(inputs, cluster_captures, forget_seconds=FORGET_SECONDS, selected=None):
-    """One page's bundle for several vantages: the cluster once, then each vantage's story.
+def build_pages(inputs, cluster_captures, forget_seconds=FORGET_SECONDS, selected=None):
+    """One page's bundle for several vantages: the cluster once, then each vantage's block.
 
     `inputs` maps a vantage label to its (benign packets, {scenario: attack packets}), as
-    story_inputs returns them. Each vantage block is build_story for that vantage alone;
+    page_inputs returns them. Each vantage block is build_page for that vantage alone;
     the cluster is inferred once from `cluster_captures` and shared. `selected` is the
     vantage the page opens on (default: the first).
     """
     found = topology.infer_cluster(cluster_captures)
-    stories = {vantage: build_story(benign, targets, cluster_captures, vantage, forget_seconds,
-                                    found=found)
-               for vantage, (benign, targets) in inputs.items()}
-    return compose(stories, found, selected)
+    pages = {vantage: build_page(benign, targets, cluster_captures, vantage, forget_seconds,
+                                 found=found)
+             for vantage, (benign, targets) in inputs.items()}
+    return compose(pages, found, selected)
 
 
-def compose(stories, cluster, selected=None):
-    """{vantage: build_story bundle} as the page bundle: a shared cluster, one block each.
+def compose(pages, cluster, selected=None):
+    """{vantage: build_page bundle} as the page bundle: a shared cluster, one block each.
 
     `absent` names every tap on the map that has no block and why: a bulk-transfer tap is
     left out by policy, any other was simply not chosen for this page.
     """
-    if not stories:
+    if not pages:
         raise ValueError("No vantage to draw.")
-    selected = selected if selected in stories else next(iter(stories))
+    selected = selected if selected in pages else next(iter(pages))
     absent = {v["label"]: "bulk transfer" if v["label"] in BULK_LABELS else "not chosen"
-              for v in cluster["vantages"] if v["label"] not in stories}
+              for v in cluster["vantages"] if v["label"] not in pages}
     return {"selected": selected, "cluster": cluster, "trimmed": [], "absent": absent,
-            "vantages": {vantage: {part: story[part] for part in VANTAGE_PARTS}
-                         for vantage, story in stories.items()}}
+            "vantages": {vantage: {part: block[part] for part in VANTAGE_PARTS}
+                         for vantage, block in pages.items()}}
 
 
 def trim(bundle, keep):
@@ -397,20 +397,20 @@ def _clean(value):
     return value
 
 
-def to_json(story):
+def to_json(bundle):
     """The bundle as compact JSON that JSON.parse accepts (no NaN, no Infinity)."""
-    return json.dumps(_clean(story), allow_nan=False, separators=(",", ":"))
+    return json.dumps(_clean(bundle), allow_nan=False, separators=(",", ":"))
 
 
 def page_html(bundle):
     """The page as text: template, styles, D3, renderer and bundle all inlined."""
     page = (TEMPLATE_DIR / "index.html").read_text(encoding="utf-8")
     # "</" inside an inline script would close it early; "<\/" is the same string to JSON
-    script = "window.STORY = " + to_json(bundle).replace("</", "<\\/") + ";\n"
-    for marker, text in (("/*__CSS__*/", (TEMPLATE_DIR / "story.css").read_text(encoding="utf-8")),
+    script = "window.VIZ = " + to_json(bundle).replace("</", "<\\/") + ";\n"
+    for marker, text in (("/*__CSS__*/", (TEMPLATE_DIR / "page.css").read_text(encoding="utf-8")),
                          ("/*__D3__*/", (TEMPLATE_DIR / D3_FILE).read_text(encoding="utf-8")),
-                         ("/*__JS__*/", (TEMPLATE_DIR / "story.js").read_text(encoding="utf-8")),
-                         ("/*__STORY__*/", script)):
+                         ("/*__JS__*/", (TEMPLATE_DIR / "page.js").read_text(encoding="utf-8")),
+                         ("/*__VIZ__*/", script)):
         head, found, tail = page.partition(marker)
         if not found:
             raise ValueError(f"Template is missing {marker}")
@@ -418,15 +418,15 @@ def page_html(bundle):
     return page
 
 
-def write_html(story, path=None, limit=PAGE_LIMIT):
+def write_html(bundle, path=None, limit=PAGE_LIMIT):
     """One self-contained page, kept under `limit` bytes.
 
-    `story` is a build_stories bundle, or one build_story bundle (drawn as a one-tap page).
+    `bundle` is a build_pages bundle, or one build_page bundle (drawn as a one-tap page).
     A page over the limit drops trace detail from every vantage but the selected one (see
     trim); one still over it is refused rather than written.
     """
-    bundle = story if "vantages" in story else compose(
-        {story["meta"]["vantage"]: story}, story["cluster"])
+    if "vantages" not in bundle:
+        bundle = compose({bundle["meta"]["vantage"]: bundle}, bundle["cluster"])
     page = page_html(bundle)
     if len(page.encode("utf-8")) > limit:
         bundle = trim(bundle, bundle["selected"])
@@ -437,7 +437,7 @@ def write_html(story, path=None, limit=PAGE_LIMIT):
     if size > limit:
         raise ValueError(f"The page is {size / 1e6:.1f} MB even trimmed, over the "
                          f"{limit / 1e6:.1f} MB limit; pass fewer --vantages.")
-    out = resolve_output(path or STORY_HTML)
+    out = resolve_output(path or PAGE_HTML)
     out.write_text(page, encoding="utf-8")
     return out
 
@@ -467,7 +467,7 @@ def steady_vantages(cluster_captures, allow_bulk=False):
     return sorted(label for label in cluster_captures if allow_bulk or label not in BULK_LABELS)
 
 
-def story_inputs(manifest, vantage, method="tcp", scenarios=None, allow_bulk=False,
+def page_inputs(manifest, vantage, method="tcp", scenarios=None, allow_bulk=False,
                  cluster_captures=None):
     """(benign packets, {scenario: attack packets}, {label: benign packets}) for one vantage.
 
@@ -500,7 +500,7 @@ def story_inputs(manifest, vantage, method="tcp", scenarios=None, allow_bulk=Fal
 
 
 def main(argv=None, manifest=None):
-    """Build the story for several vantages and write one page; returns its path."""
+    """Build one page over several vantages and write it; returns its path."""
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -517,7 +517,7 @@ def main(argv=None, manifest=None):
                         help="anomaly clock, seconds (default: %(default)s)")
     parser.add_argument("--allow-bulk", action="store_true",
                         help="draw bulk-transfer vantages too; their cutoffs are not trusted")
-    parser.add_argument("--out", default=STORY_HTML)
+    parser.add_argument("--out", default=PAGE_HTML)
     parser.add_argument("--manifest", default=MANIFEST_NAME)
     args = parser.parse_args(argv)
 
@@ -530,10 +530,10 @@ def main(argv=None, manifest=None):
         vantages.append(args.vantage)
     inputs = {}
     for vantage in vantages:
-        benign, targets, _ = story_inputs(manifest, vantage, args.method, args.scenarios,
+        benign, targets, _ = page_inputs(manifest, vantage, args.method, args.scenarios,
                                           args.allow_bulk, cluster_captures)
         inputs[vantage] = (benign, targets)
-    built = build_stories(inputs, cluster_captures, args.forget,
+    built = build_pages(inputs, cluster_captures, args.forget,
                           selected=args.vantage or DEFAULT_VANTAGE)
     out = write_html(built, args.out)
     for vantage, size in vantage_sizes(built).items():

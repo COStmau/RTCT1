@@ -16,7 +16,7 @@ packet CSVs ──► data_io ──► features ──► detectors ──► r
 `core/data_io.py` → `core/features.py` → `core/detectors.py` → `core/reporting.py`. Nothing
 downstream reaches back upstream, and none of the four import `local_paths.py`, so they are
 portable and testable on their own. That one-way arrow is enforced by a test, not by
-convention: `core/` may not import `methods/`, `experiments/`, `verdicts/`, `story/`,
+convention: `core/` may not import `methods/`, `experiments/`, `verdicts/`, `viz/`,
 `convert/`, `demo`, `metrics`, `statemachine` or `local_paths`.
 
 ```
@@ -24,7 +24,7 @@ core/          the subsystem. This is what goes into the project.
 methods/       the second detection method, a learned automaton.
 experiments/   one measurement per module. The evidence.
 verdicts/      keep-or-drop rules, committed before the measurement they judge.
-story/         the interactive page.
+viz/           the interactive visualization page.
 convert/       capture files -> the sponsor's packet CSVs.
 ```
 
@@ -59,7 +59,7 @@ also run on their own, as a script or with `-m`.
 | `experiments/compare.py` | Every registered detector on the same windows, reference, and split. |
 | `experiments/feature_value.py` | Per-feature value: threshold-free separation (auc) and detection at a 5% benign budget. |
 | `experiments/flag_scores.py` | Per-window anomaly scores under the plain and flag alphabets, plus AUROC and matched-rate detection per stratum. Prints the pre-registered verdict. |
-| `experiments/windowed_scores.py` | The story page's detector, the windowed SEQUENT score, on every stratum, calibrated exactly as the page is. Quotes the windows each cutoff rests on and the realised benign rate beside every number. Prints the root-count verdict. |
+| `experiments/windowed_scores.py` | The visualization page's detector, the windowed SEQUENT score, on every stratum, calibrated exactly as the page is. Quotes the windows each cutoff rests on and the realised benign rate beside every number. Prints the root-count verdict. |
 | `experiments/cv_calibration.py` | Cross-validated calibration of the windowed score (every benign window scored out of fold) against the split. Prints the pre-registered verdict: drop, so the split stays. |
 | `experiments/metrics.py` | One `auroc`, one `detection_at_rate`, one `detection_at_budget`, with the two missing-data policies stated rather than accidental. Imports nothing from the project, so any experiment can use it. |
 
@@ -78,9 +78,9 @@ applying it. They exist so a verdict cannot be chosen after seeing the numbers.
 
 | File | What it does |
 |---|---|
-| `story/page.py` | The state machine as one interactive page, `outputs/statemachine_story.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). One page carries every steady capture tap (`--vantages` to choose; `--vantage` picks the one it opens on): click a tap on the map or use the header picker to switch the learning and detection acts, and Act 3's *Across taps* view lines one scenario up at every tap on a shared capture-time axis. Self-contained (about 3 MB for the 8 steady taps; past 15 MB the other taps' per-trace breakdown is dropped); opens offline. `demo.py` item 10. The renderer is `story/template/`. Bulk-transfer vantages (`core/evaluation.BULK_LABELS`) never set a cutoff, so they are left out unless `--allow-bulk`, and the page then marks their verdicts as inspection only. Each cutoff shows how many held-out windows it rests on and how often it actually flags them; capture text is HTML-escaped in the bundle. |
-| `story/cluster.py` | The k3s cluster's shape inferred from benign traffic: nodes, pods (including host-network ones), services, conversations and where each capture listened. |
-| `story/layout.py` | Computed positions for the story page: the prefix tree as an icicle, the learned machine in columns. |
+| `viz/page.py` | The state machine as one interactive page, `outputs/state_machine.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). One page carries every steady capture tap (`--vantages` to choose; `--vantage` picks the one it opens on): click a tap on the map or use the header picker to switch the learning and detection acts, and Act 3's *Across taps* view lines one scenario up at every tap on a shared capture-time axis. Self-contained (about 3 MB for the 8 steady taps; past 15 MB the other taps' per-trace breakdown is dropped); opens offline. `demo.py` item 10. The renderer is `viz/template/`. Bulk-transfer vantages (`core/evaluation.BULK_LABELS`) never set a cutoff, so they are left out unless `--allow-bulk`, and the page then marks their verdicts as inspection only. Each cutoff shows how many held-out windows it rests on and how often it actually flags them; capture text is HTML-escaped in the bundle. |
+| `viz/cluster.py` | The k3s cluster's shape inferred from benign traffic: nodes, pods (including host-network ones), services, conversations and where each capture listened. |
+| `viz/layout.py` | Computed positions for the page: the prefix tree as an icicle, the learned machine in columns. |
 
 ### Capture conversion
 
@@ -97,7 +97,7 @@ independent of it; see "Capture to packet rows" below.
 
 | File | What it does |
 |---|---|
-| `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 are the experiments above; 8 regenerates every artifact; 9 runs the tests; 10 builds the interactive state-machine story page; 11 summarizes the last capture-conversion diff. |
+| `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 are the experiments above; 8 regenerates every artifact; 9 runs the tests; 10 builds the interactive state-machine visualization page; 11 summarizes the last capture-conversion diff. |
 | `statemachine.py` | **A compatibility re-export, not a module with logic.** It exists so the name `statemachine` keeps resolving for older callers; the code is `methods/pdfa.py` and `methods/scores.py`. New code imports those. |
 | `tests.py` | All unit tests. |
 | `local_paths.py` | Your local dataset paths. Not committed; copy `local_paths.example.py` and fill it in. Only the entry points and experiments read it, never `core/`. |
@@ -131,7 +131,7 @@ The menu, in order:
  7  Feature value   what each measurement is worth on its own
  8  Everything      all of the above, in the order the report needs it
  9  Tests           the unit suite
-10  Story           the state machine learned and replayed, as an interactive page
+10  Visualization   the state machine learned and replayed, as an interactive page
 11  Pcap diff       regenerated packet rows against the sponsor CSVs (last run's summary)
 ```
 
@@ -148,7 +148,7 @@ Underneath the menu, the same commands run directly:
 .venv/bin/python experiments/flag_scores.py                     # both alphabets' window scores, AUROC, verdict chart
 .venv/bin/python experiments/windowed_scores.py                 # the windowed SEQUENT score on every stratum
 .venv/bin/python experiments/cv_calibration.py                  # cross-validated calibration and its verdict
-.venv/bin/python story/page.py                                  # interactive page, every steady tap; --vantage pod-nginx opens on it
+.venv/bin/python viz/page.py                                    # interactive page, every steady tap; --vantage pod-nginx opens on it
 
 .venv/bin/python convert/diff.py                                # all 88 captures regenerated and diffed
 .venv/bin/python convert/diff.py --max-gb 0.2                   # only the 64 captures under 0.2 GB, for quick checks

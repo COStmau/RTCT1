@@ -21,7 +21,7 @@ the top level is now a re-export shim, so older references to it stay valid.
 → `experiments/<same name>.py`
 `flag_verdict` → `verdicts/flag.py`; `root_verdict` → `verdicts/root_count.py`;
 `cv_verdict` → `verdicts/cv.py`
-`story` → `story/page.py`; `cluster` `layout` → `story/<same name>.py`
+the old page module → `viz/page.py`; `cluster` `layout` → `viz/<same name>.py`
 `pcap_read` `pcap_rows` `pcap_diff` → `convert/read.py` `convert/rows.py` `convert/diff.py`
 
 See `README.md` for the map with descriptions.
@@ -176,8 +176,8 @@ test of whether detection survives without the length features is
   3-window capture the same as an 80-window one. Per-scenario window counts belong beside every
   such number, and the injection column is not comparable to the others.
 
-- **`evaluation.py` names three policies the sweeps do not enforce yet.** The story page
-  (`story.py`) now enforces two of them for the windowed scorer: a `BULK_LABELS` vantage is
+- **`evaluation.py` names three policies the sweeps do not enforce yet.** The visualization page
+  (`viz/page.py`) now enforces two of them for the windowed scorer: a `BULK_LABELS` vantage is
   refused unless `--allow-bulk` and then marked inspection only, and an alert is released only
   after `CLEAR_WINDOWS` scored clean windows. Its cold-clock warm-up is the forgetting window
   itself (8 s), not `WARMUP_WINDOWS`, which still has no consumer. The sweeps (`sweep.py`,
@@ -190,7 +190,7 @@ test of whether detection survives without the length features is
   trace is no evidence, and the first held-out window, which mixes in training traces, is
   left out), so the 95th-percentile cutoff sits next to the held-out maximum. On those same
   windows it flags between 0% and 33% (router-flannel 1 of 3, node-child2 and node-gchild9
-  1 of 8, pod-robot-hardware 0 of 9) against a nominal 5%. The story page prints the count and the realised rate beside each
+  1 of 8, pod-robot-hardware 0 of 9) against a nominal 5%. The visualization page prints the count and the realised rate beside each
   cutoff. The fix is more benign recording per vantage, the same blocker as calibration in
   general.
 
@@ -274,7 +274,7 @@ number.
 
 ## The windowed score, measured on every stratum (2026-11-03)
 
-`story.py` presents the windowed SEQUENT frequency score (the 8 s `FORGET_SECONDS` clock) as
+`viz/page.py` presents the windowed SEQUENT frequency score (the 8 s `FORGET_SECONDS` clock) as
 its detector, but until now only the likelihood detector had a sweep. `windowed_scores.py`
 writes `outputs/windowed_sweep.csv`: 174 rows, one per (label, scenario, method, training
 count source), every label in both capture methods. One stratum is excluded and named:
@@ -336,7 +336,7 @@ Measured: **keep**. 42 paired steady strata, mean AUROC change +0.006, worst −
 rose 0.725 to 0.784 and tcp nginx pooled 0.148 to 0.172, with every tap's realised benign
 rate unchanged between the variants. Bulk-tap AUROCs rose more (tcp median 0.500 to 0.552),
 but bulk strata decide nothing. `statemachine.TRAIN_COUNTS` is now `"entries"`; `"visits"` stays
-selectable and its tests still hold. The story page shows the scorer's own training count
+selectable and its tests still hold. The visualization page shows the scorer's own training count
 per state, so the start state now reads its entries, and the page says the trace starts are
 not counted.
 

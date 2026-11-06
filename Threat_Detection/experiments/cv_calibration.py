@@ -1,6 +1,6 @@
 """Cross-validated calibration of the windowed SEQUENT score, judged by cv_verdict's rule.
 
-The split calibration (story.py, windowed_scores.py) sets the cutoff on the last 30% of one
+The split calibration (viz/page.py, windowed_scores.py) sets the cutoff on the last 30% of one
 benign recording: 3-16 scored windows per steady tap. Here every benign window is held out
 once instead. The recording is cut into cv_verdict.CV_FOLDS contiguous blocks on window
 boundaries; each block is scored, on a warm clock, by a machine learned from the other

@@ -308,7 +308,7 @@ def warm_from(forget_seconds=FORGET_SECONDS):
 
 def held_out_scores(model, flows, holdout, t0, n_windows, forget_seconds=FORGET_SECONDS,
                     train_counts=TRAIN_COUNTS):
-    """Held-out benign window scores on a warm clock, as story.build_story calibrates.
+    """Held-out benign window scores on a warm clock, as viz.build_page calibrates.
 
     Every benign flow is scored in order, training flows first, and only the windows after
     the one the train/holdout split falls in are kept; NaN where no trace ended.

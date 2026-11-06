@@ -26,9 +26,9 @@ from verdicts import cv as cv_verdict
 from verdicts import flag as flag_verdict
 from verdicts import root_count as root_verdict
 
-from story import cluster
-from story import layout
-from story import page as story
+from viz import cluster
+from viz import layout
+from viz import page as viz
 
 # The pre-refactor function names, mapped onto their layer homes. The old
 # DetectorChecks class pins behavior through these aliases so the assertions read the same
@@ -332,12 +332,12 @@ class LayeringChecks(unittest.TestCase):
         self.assertEqual(self.imported_modules("metrics") & project, set())
 
     def test_core_imports_nothing_from_the_outer_packages(self):
-        """core/ is the product; experiments, verdicts, story and convert are evidence.
+        """core/ is the product; experiments, verdicts, viz and convert are evidence.
 
         The dependency arrow points one way. If core ever imports an experiment, the
         "what ships" question stops having an answer.
         """
-        outer = {"experiments", "verdicts", "story", "convert", "demo", "metrics",
+        outer = {"experiments", "verdicts", "viz", "convert", "demo", "metrics",
                  "statemachine", "methods", "local_paths"}
         for layer in self.LAYERS:
             used = self.imported_modules(layer) & outer
@@ -388,7 +388,7 @@ class EntryPointChecks(unittest.TestCase):
     ENTRY_POINTS = ["experiments/compare.py", "experiments/cv_calibration.py",
                     "experiments/feature_value.py", "experiments/flag_scores.py",
                     "experiments/sweep.py", "experiments/windowed_scores.py",
-                    "convert/diff.py", "story/page.py"]
+                    "convert/diff.py", "viz/page.py"]
 
     BOOTSTRAP = "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))"
 
@@ -1935,16 +1935,16 @@ def flow_capture(seconds=60, burst=None, proto="tcp", start=1000.0, vary=False):
     return pd.DataFrame(rows)
 
 
-class StoryBundleChecks(unittest.TestCase):
+class VizBundleChecks(unittest.TestCase):
     """The page shows only what the bundle says, so the bundle must say what the pipeline did."""
 
     @classmethod
     def setUpClass(cls):
         cls.benign = flow_capture()
         cls.attack = flow_capture(burst=(20, 25))
-        cls.story = story.build_story(cls.benign, {"flood": cls.attack},
+        cls.bundle = viz.build_page(cls.benign, {"flood": cls.attack},
                                       {"pod-lidar": cls.benign}, "pod-lidar")
-        cls.captures = {c["scenario"]: c for c in cls.story["playback"]["captures"]}
+        cls.captures = {c["scenario"]: c for c in cls.bundle["playback"]["captures"]}
 
     def model_and_flows(self, packets):
         flows, _ = statemachine.segment_flows(statemachine.make_flows(packets),
@@ -1960,11 +1960,11 @@ class StoryBundleChecks(unittest.TestCase):
         events = []
         traced = statemachine.fit_model(train, trace=events)
         self.assertEqual(traced["pdfa"].n_states, statemachine.fit_model(train)["pdfa"].n_states)
-        self.assertEqual(len(self.story["learning"]["pdfa"]["states"]), traced["pdfa"].n_states)
+        self.assertEqual(len(self.bundle["learning"]["pdfa"]["states"]), traced["pdfa"].n_states)
         self.assertEqual(events[0][0], "pta")
 
     def test_held_out_benign_comes_first(self):
-        names = [c["scenario"] for c in self.story["playback"]["captures"]]
+        names = [c["scenario"] for c in self.bundle["playback"]["captures"]]
         self.assertEqual(names, ["benign (held out)", "flood"])
 
     def test_bundle_scores_match_pipeline(self):
@@ -2024,7 +2024,7 @@ class StoryBundleChecks(unittest.TestCase):
 
     def test_quiet_replay_never_alerts(self):
         """Control: the benign pattern replayed with no burst must not alert."""
-        built = story.build_story(self.benign, {"quiet": flow_capture()}, {}, "pod-lidar")
+        built = viz.build_page(self.benign, {"quiet": flow_capture()}, {}, "pod-lidar")
         windows = built["playback"]["captures"][1]["windows"]
         self.assertFalse(any(w["alert"] for w in windows))
         self.assertFalse(any(w["forgetting_shown"] for w in windows))
@@ -2043,10 +2043,10 @@ class StoryBundleChecks(unittest.TestCase):
         statuses = {w["status"] for w in self.captures["flood"]["windows"]}
         self.assertIn("alert", statuses)
         self.assertIn("released", statuses)
-        unseen = story.build_story(self.benign, {"udp": flow_capture(seconds=20, proto="udp")},
+        unseen = viz.build_page(self.benign, {"udp": flow_capture(seconds=20, proto="udp")},
                                    {}, "pod-lidar")["playback"]["captures"][1]["windows"]
         self.assertIn("unseen", {w["status"] for w in unseen})
-        self.assertTrue(all(w["status"] in story.WINDOW_STATUSES for w in unseen))
+        self.assertTrue(all(w["status"] in viz.WINDOW_STATUSES for w in unseen))
 
     def test_forgetting_is_shown_only_after_an_alert(self):
         windows = self.captures["flood"]["windows"]
@@ -2058,9 +2058,9 @@ class StoryBundleChecks(unittest.TestCase):
 
     def test_template_is_read_as_utf8_whatever_the_locale(self):
         code = ("import warnings, tempfile, pathlib, tests; "
-                "import story.page as story; "
+                "import viz.page as viz; "
                 "warnings.simplefilter('error', EncodingWarning); "
-                "story.write_html(story.build_story(tests.flow_capture(), {}, {}, 'pod-lidar'), "
+                "viz.write_html(viz.build_page(tests.flow_capture(), {}, {}, 'pod-lidar'), "
                 "pathlib.Path(tempfile.mkdtemp()) / 'p.html')")
         result = subprocess.run([sys.executable, "-X", "warn_default_encoding", "-c", code],
                                 cwd=Path(__file__).resolve().parent, capture_output=True, text=True)
@@ -2082,7 +2082,7 @@ class StoryBundleChecks(unittest.TestCase):
 
     def test_quiet_replay_stays_under_its_age_matched_reference(self):
         """Capture length alone must not lift the cumulative score over its reference."""
-        built = story.build_story(self.benign, {"quiet": flow_capture()}, {}, "pod-lidar")
+        built = viz.build_page(self.benign, {"quiet": flow_capture()}, {}, "pod-lidar")
         quiet = built["playback"]["captures"][1]
         reference = np.array(quiet["cutoffs"]["cumulative_reference"], dtype=float)
         for trace in quiet["traces"]:
@@ -2095,7 +2095,7 @@ class StoryBundleChecks(unittest.TestCase):
         first = int((holdout["start_ts"].iloc[0] - self.benign["ts"].min()) // features.WINDOW_SIZE)
         expected = statemachine.frequency_cutoff(scores[first + 1:])
         self.assertAlmostEqual(self.captures["flood"]["cutoffs"]["windowed"], expected)
-        held = self.captures[story.HELD_OUT]["windows"]
+        held = self.captures[viz.HELD_OUT]["windows"]
         peaks = np.array([w["peak"] for w in held[first + 1:]], dtype=float)
         np.testing.assert_allclose(peaks, scores[first + 1:], equal_nan=True)
 
@@ -2121,7 +2121,7 @@ class StoryBundleChecks(unittest.TestCase):
             self.assertEqual(capture["scored_windows"],
                              sum(w["status"] != "nodata" for w in capture["windows"]))
         # one second holds two flows, fewer than a trace needs
-        empty = story.build_story(self.benign, {"silent": flow_capture(seconds=1)}, {}, "pod-lidar")
+        empty = viz.build_page(self.benign, {"silent": flow_capture(seconds=1)}, {}, "pod-lidar")
         self.assertEqual(empty["playback"]["captures"][1]["scored_windows"], 0)
 
     def test_capture_text_cannot_become_markup(self):
@@ -2131,18 +2131,18 @@ class StoryBundleChecks(unittest.TestCase):
         hostile = "<img src=x onerror=alert(1)>"
         attack = flow_capture(burst=(20, 25))
         attack.loc[attack.index[:40], "proto"] = "<b>tcp</b>"
-        built = story.build_story(self.benign, {hostile: attack}, {}, "pod-lidar")
-        parsed = json.loads(story.to_json(built))
+        built = viz.build_page(self.benign, {hostile: attack}, {}, "pod-lidar")
+        parsed = json.loads(viz.to_json(built))
         self.assertEqual(parsed["playback"]["captures"][1]["scenario"],
                          "&lt;img src=x onerror=alert(1)&gt;")
-        page = story.write_html(built, Path(tempfile.mkdtemp()) / "p.html").read_text()
+        page = viz.write_html(built, Path(tempfile.mkdtemp()) / "p.html").read_text()
         self.assertNotIn("<img", page)
         self.assertNotIn("<b>tcp", page)
 
     def test_windows_without_traces_say_no_data(self):
         gap = flow_capture()
         gap = gap[~gap["ts"].between(gap["ts"].min() + 30, gap["ts"].min() + 40)]
-        built = story.build_story(self.benign, {"gap": gap}, {}, "pod-lidar")
+        built = viz.build_page(self.benign, {"gap": gap}, {}, "pod-lidar")
         windows = built["playback"]["captures"][1]["windows"]
         self.assertTrue(all(windows[w]["status"] == "nodata" for w in range(31, 40)))
 
@@ -2151,7 +2151,7 @@ class StoryBundleChecks(unittest.TestCase):
         for w in self.captures["flood"]["windows"][:warm]:
             self.assertIn(w["status"], {"warmup", "nodata", "flagged", "alert", "unseen"})
         self.assertEqual(self.captures["flood"]["warmup_s"], statemachine.FORGET_SECONDS)
-        self.assertEqual(self.captures[story.HELD_OUT]["warmup_s"], 0.0)
+        self.assertEqual(self.captures[viz.HELD_OUT]["warmup_s"], 0.0)
 
     def test_release_needs_clear_scored_windows(self):
         windows = self.captures["flood"]["windows"]
@@ -2166,7 +2166,7 @@ class StoryBundleChecks(unittest.TestCase):
         # a gap straight after the alert is not a release, and does not hurry one
         gap = flow_capture(burst=(20, 25))
         gap = gap[~gap["ts"].between(gap["ts"].min() + 25, gap["ts"].min() + 27)]
-        built = story.build_story(self.benign, {"gap": gap}, {}, "pod-lidar")
+        built = viz.build_page(self.benign, {"gap": gap}, {}, "pod-lidar")
         windows = built["playback"]["captures"][1]["windows"]
         self.assertFalse(any(w["released"] for w in windows[25:28]))
         self.assertTrue(any(w["released"] for w in windows[28:]))
@@ -2177,7 +2177,7 @@ class StoryBundleChecks(unittest.TestCase):
         # the training count the page shows is the one the scorer uses, whatever its source
         counts = statemachine.state_train_counts(pdfa)
         visits = [counts[id(n)] for n in statemachine.pdfa_states_in_order(pdfa)]
-        parsed = json.loads(story.to_json(self.story))
+        parsed = json.loads(viz.to_json(self.bundle))
         for trace in parsed["playback"]["captures"][1]["traces"]:
             self.assertEqual(len(trace["visits"]), len(trace["states"]))
             for (clock, trained), state in zip(trace["visits"], trace["states"]):
@@ -2185,20 +2185,20 @@ class StoryBundleChecks(unittest.TestCase):
                 self.assertEqual(trained, visits[state])
 
     def test_states_carry_training_entries(self):
-        states = self.story["learning"]["pdfa"]["states"]
-        edges = self.story["learning"]["pdfa"]["edges"]
+        states = self.bundle["learning"]["pdfa"]["states"]
+        edges = self.bundle["learning"]["pdfa"]["edges"]
         for state in states:
             entered = sum(e["count"] for e in edges if e["dst"] == state["id"])
             self.assertEqual(state["entries"], entered)
         root = states[0]
-        self.assertEqual(root["visits"] - root["entries"], self.story["learning"]["traces"])
+        self.assertEqual(root["visits"] - root["entries"], self.bundle["learning"]["traces"])
 
     def test_capture_shows_conversations_benign_never_had(self):
         attack = flow_capture(burst=(20, 25))
         rows = attack[attack["src_ip"].eq("10.42.3.4")].head(4).copy()
         rows["dst_ip"] = "10.42.3.99"
         attack = pd.concat([attack, rows]).sort_values("ts")
-        built = story.build_story(self.benign, {"lateral": attack},
+        built = viz.build_page(self.benign, {"lateral": attack},
                                   {"pod-lidar": self.benign}, "pod-lidar")
         capture = built["playback"]["captures"][1]
         self.assertIn("pod:10.42.3.99", {e["id"] for e in capture["new_elements"]})
@@ -2207,9 +2207,9 @@ class StoryBundleChecks(unittest.TestCase):
         self.assertIn(["pod:10.42.3.4", "pod:10.42.3.99"], capture["flow_edges"])
 
     def test_dropped_flows_are_reported_per_capture(self):
-        for capture in self.story["playback"]["captures"]:
+        for capture in self.bundle["playback"]["captures"]:
             self.assertIsInstance(capture["dropped_flows"], int)
-        self.assertGreater(self.story["meta"]["holdout_span_s"], 0)
+        self.assertGreater(self.bundle["meta"]["holdout_span_s"], 0)
 
     def test_trace_flows_map_to_cluster_elements(self):
         capture = self.captures["flood"]
@@ -2219,49 +2219,49 @@ class StoryBundleChecks(unittest.TestCase):
     def test_json_has_no_nonfinite(self):
         def refuse(constant):
             raise ValueError(constant)
-        parsed = json.loads(story.to_json(self.story), parse_constant=refuse)
+        parsed = json.loads(viz.to_json(self.bundle), parse_constant=refuse)
         self.assertEqual(parsed["meta"]["vantage"], "pod-lidar")
         self.assertEqual(parsed["meta"]["forget_seconds"], statemachine.FORGET_SECONDS)
 
     def test_all_unseen_attack_falls_off_first_symbol(self):
         unseen = flow_capture(seconds=20, proto="udp")
-        built = story.build_story(self.benign, {"udp": unseen}, {}, "pod-lidar")
+        built = viz.build_page(self.benign, {"udp": unseen}, {}, "pod-lidar")
         traces = built["playback"]["captures"][1]["traces"]
         self.assertTrue(traces)
         self.assertTrue(all(t["fell_off_at"] == 0 and t["states"] == [] for t in traces))
         self.assertTrue(all(np.isfinite(t["likelihood"]) for t in traces))
 
     def test_step_detail_is_capped(self):
-        original = story.MAX_STEP_DETAIL
-        story.MAX_STEP_DETAIL = 2
+        original = viz.MAX_STEP_DETAIL
+        viz.MAX_STEP_DETAIL = 2
         try:
-            built = story.build_story(flow_capture(vary=True), {}, {}, "pod-lidar")
+            built = viz.build_page(flow_capture(vary=True), {}, {}, "pod-lidar")
         finally:
-            story.MAX_STEP_DETAIL = original
+            viz.MAX_STEP_DETAIL = original
         self.assertEqual(len(built["learning"]["steps"]), 2)
         self.assertGreater(built["learning"]["steps_total"], 2)
 
     def test_html_is_self_contained(self):
         import re
         import tempfile
-        out = story.write_html(self.story, Path(tempfile.mkdtemp()) / "page.html")
+        out = viz.write_html(self.bundle, Path(tempfile.mkdtemp()) / "page.html")
         page = out.read_text()
         self.assertNotRegex(page, r'(src|href)="https?:')
-        self.assertIn("window.STORY = ", page)
+        self.assertIn("window.VIZ = ", page)
         self.assertIn("d3js.org v7.9.0", page)
         self.assertLess(out.stat().st_size, 15 * 1024 * 1024)
         # the bundle is inlined inside a script, so a "</" in it would end the script early
-        bundle = re.search(r"window\.STORY = (.*?);\n", page, re.S).group(1)
+        bundle = re.search(r"window\.VIZ = (.*?);\n", page, re.S).group(1)
         self.assertNotIn("</", bundle)
         self.assertNotRegex(page, r"/\*__[A-Z0-9]+__\*/")
 
     def test_meta_carries_train_span(self):
         train, _ = statemachine.split_flows(self.model_and_flows(self.benign))
-        self.assertAlmostEqual(self.story["meta"]["train_span_s"],
+        self.assertAlmostEqual(self.bundle["meta"]["train_span_s"],
                                train["start_ts"].max() - train["start_ts"].min())
 
     def test_steps_point_at_pta_nodes(self):
-        learning = self.story["learning"]
+        learning = self.bundle["learning"]
         ids = {node["id"] for node in learning["pta"]}
         for step in learning["steps"]:
             self.assertIn(step["blue"], ids)
@@ -2274,25 +2274,25 @@ class StoryBundleChecks(unittest.TestCase):
         inputs = {"pod-lidar": (self.benign, {"flood": self.attack}),
                   "pod-nginx": (other, {"flood": flow_capture(burst=(30, 35), start=1002.0)})}
         captures = {"pod-lidar": self.benign, "pod-nginx": other}
-        return story.build_stories(inputs, captures, selected="pod-nginx"), inputs, captures
+        return viz.build_pages(inputs, captures, selected="pod-nginx"), inputs, captures
 
-    def test_vantage_block_is_build_story_for_that_vantage(self):
+    def test_vantage_block_is_build_page_for_that_vantage(self):
         bundle, inputs, captures = self.two_vantages()
         self.assertEqual(list(bundle["vantages"]), ["pod-lidar", "pod-nginx"])
         for vantage, (benign, targets) in inputs.items():
-            alone = story.build_story(benign, targets, captures, vantage)
+            alone = viz.build_page(benign, targets, captures, vantage)
             block = bundle["vantages"][vantage]
-            self.assertEqual(set(block), set(story.VANTAGE_PARTS))
-            for part in story.VANTAGE_PARTS:
-                got, expected = json.loads(story.to_json(block[part])), json.loads(story.to_json(alone[part]))
+            self.assertEqual(set(block), set(viz.VANTAGE_PARTS))
+            for part in viz.VANTAGE_PARTS:
+                got, expected = json.loads(viz.to_json(block[part])), json.loads(viz.to_json(alone[part]))
                 if part == "meta":
                     got.pop("generated"), expected.pop("generated")
                 self.assertEqual(got, expected, f"{vantage} {part}")
 
     def test_cluster_is_shared_once(self):
         bundle, _, captures = self.two_vantages()
-        self.assertEqual(json.loads(story.to_json(bundle["cluster"])),
-                         json.loads(story.to_json(cluster.infer_cluster(captures))))
+        self.assertEqual(json.loads(viz.to_json(bundle["cluster"])),
+                         json.loads(viz.to_json(cluster.infer_cluster(captures))))
         self.assertTrue(all("cluster" not in block for block in bundle["vantages"].values()))
         self.assertEqual(bundle["selected"], "pod-nginx")
         self.assertEqual(bundle["trimmed"], [])
@@ -2303,7 +2303,7 @@ class StoryBundleChecks(unittest.TestCase):
         bulk = next(iter(evaluation.BULK_LABELS))
         captures = {"pod-lidar": self.benign, "pod-nginx": self.benign, bulk: self.benign}
         inputs = {"pod-lidar": (self.benign, {"flood": self.attack})}
-        bundle = story.build_stories(inputs, captures)
+        bundle = viz.build_pages(inputs, captures)
         self.assertEqual(bundle["absent"], {"pod-nginx": "not chosen", bulk: "bulk transfer"})
 
     def test_captures_carry_their_first_packet_time(self):
@@ -2316,7 +2316,7 @@ class StoryBundleChecks(unittest.TestCase):
 
     def test_trim_drops_detail_only_from_other_vantages(self):
         bundle, _, _ = self.two_vantages()
-        trimmed = story.trim(bundle, "pod-nginx")
+        trimmed = viz.trim(bundle, "pod-nginx")
         self.assertEqual(trimmed["trimmed"], ["pod-lidar"])
         for vantage, block in trimmed["vantages"].items():
             for capture, original in zip(block["playback"]["captures"],
@@ -2326,24 +2326,24 @@ class StoryBundleChecks(unittest.TestCase):
                     self.assertEqual("terms" in trace, not dropped)
                     self.assertEqual("expired" in trace, not dropped)
                     # scores, states and visits stay, so every verdict still reads the same
-                    self.assertEqual({k: v for k, v in full.items() if k not in story.TRIMMED_KEYS},
-                                     {k: v for k, v in trace.items() if k not in story.TRIMMED_KEYS})
+                    self.assertEqual({k: v for k, v in full.items() if k not in viz.TRIMMED_KEYS},
+                                     {k: v for k, v in trace.items() if k not in viz.TRIMMED_KEYS})
                 self.assertEqual(capture["windows"], original["windows"])
         self.assertIn("terms", bundle["vantages"]["pod-lidar"]["playback"]["captures"][0]["traces"][0])
 
     def test_page_over_the_limit_is_trimmed_then_refused(self):
         import tempfile
         bundle, _, _ = self.two_vantages()
-        full = len(story.page_html(bundle).encode("utf-8"))
-        out = story.write_html(bundle, Path(tempfile.mkdtemp()) / "page.html", limit=full - 1)
+        full = len(viz.page_html(bundle).encode("utf-8"))
+        out = viz.write_html(bundle, Path(tempfile.mkdtemp()) / "page.html", limit=full - 1)
         self.assertLess(out.stat().st_size, full)
         self.assertEqual(page_bundle(out)["trimmed"], ["pod-lidar"])
         with self.assertRaisesRegex(ValueError, "fewer --vantages"):
-            story.write_html(bundle, Path(tempfile.mkdtemp()) / "page.html", limit=1000)
+            viz.write_html(bundle, Path(tempfile.mkdtemp()) / "page.html", limit=1000)
 
-    def test_one_vantage_story_is_drawn_as_a_one_tap_page(self):
+    def test_one_vantage_page_is_drawn_as_a_one_tap_page(self):
         import tempfile
-        out = story.write_html(self.story, Path(tempfile.mkdtemp()) / "page.html")
+        out = viz.write_html(self.bundle, Path(tempfile.mkdtemp()) / "page.html")
         parsed = page_bundle(out)
         self.assertEqual(list(parsed["vantages"]), ["pod-lidar"])
         self.assertEqual(parsed["selected"], "pod-lidar")
@@ -2353,10 +2353,10 @@ def page_bundle(path):
     """The bundle a written page carries, parsed back from its inline script."""
     import re
     page = Path(path).read_text(encoding="utf-8")
-    return json.loads(re.search(r"window\.STORY = (.*?);\n", page, re.S).group(1))
+    return json.loads(re.search(r"window\.VIZ = (.*?);\n", page, re.S).group(1))
 
 
-class StoryEntryChecks(unittest.TestCase):
+class VizEntryChecks(unittest.TestCase):
     """The page is reachable from the menu and the CLI, from the manifest alone."""
 
     def manifest(self):
@@ -2375,84 +2375,84 @@ class StoryEntryChecks(unittest.TestCase):
                          "path": str(path), "usable": usable})
         return pd.DataFrame(rows)
 
-    def test_story_is_menu_item_10(self):
+    def test_viz_is_menu_item_10(self):
         names = [name for name, _, _ in demo.ITEMS]
         self.assertEqual(names[:9], ["Pair demo", "Walkthrough", "State machine", "Sweep",
                                      "Ablation", "Compare", "Feature value", "Everything",
                                      "Tests"])
-        self.assertEqual(names[9], "Story")
+        self.assertEqual(names[9], "Visualization")
 
     def test_inputs_pick_the_vantage_and_every_attack(self):
-        benign, targets, cluster_captures = story.story_inputs(self.manifest(), "pod-lidar")
+        benign, targets, cluster_captures = viz.page_inputs(self.manifest(), "pod-lidar")
         self.assertEqual(sorted(targets), ["lidar attack", "nginx attack"])
         self.assertEqual(sorted(cluster_captures), ["pod-lidar", "pod-nginx"])   # unusable skipped
         self.assertTrue(benign.equals(cluster_captures["pod-lidar"]))
 
     def test_inputs_filter_scenarios(self):
-        _, targets, _ = story.story_inputs(self.manifest(), "pod-lidar", scenarios=["nginx attack"])
+        _, targets, _ = viz.page_inputs(self.manifest(), "pod-lidar", scenarios=["nginx attack"])
         self.assertEqual(list(targets), ["nginx attack"])
 
     def test_unknown_vantage_says_which_exist(self):
         with self.assertRaisesRegex(ValueError, "pod-lidar"):
-            story.story_inputs(self.manifest(), "pod-nowhere")
+            viz.page_inputs(self.manifest(), "pod-nowhere")
 
     def test_bulk_vantage_needs_explicit_consent(self):
         bulk = next(iter(evaluation.BULK_LABELS))
         manifest = self.manifest()
         manifest.loc[manifest["label"].eq("pod-nginx"), "label"] = bulk
         with self.assertRaisesRegex(ValueError, "bulk"):
-            story.story_inputs(manifest, bulk)
-        benign, _, _ = story.story_inputs(manifest, bulk, allow_bulk=True)
-        built = story.build_story(benign, {}, {}, bulk)
+            viz.page_inputs(manifest, bulk)
+        benign, _, _ = viz.page_inputs(manifest, bulk, allow_bulk=True)
+        built = viz.build_page(benign, {}, {}, bulk)
         self.assertIn("bulk", built["meta"]["calibration_warning"])
-        self.assertIsNone(story.build_story(benign, {}, {}, "pod-lidar")["meta"]["calibration_warning"])
+        self.assertIsNone(viz.build_page(benign, {}, {}, "pod-lidar")["meta"]["calibration_warning"])
 
     def test_bad_timebase_is_skipped_without_a_usable_column(self):
         manifest = self.manifest().drop(columns="usable")
         broken = pd.read_csv(manifest.loc[3, "path"])
         broken.loc[:5, "ts"] = 0.0
         broken.to_csv(manifest.loc[3, "path"], index=False)
-        _, targets, captures = story.story_inputs(manifest, "pod-lidar")
+        _, targets, captures = viz.page_inputs(manifest, "pod-lidar")
         self.assertNotIn("lidar attack", targets)
         self.assertIn("pod-camera", captures)          # no usable column: judged by timebase
 
     def test_main_writes_the_page(self):
         import tempfile
-        out = Path(tempfile.mkdtemp()) / "story.html"
-        written = story.main(["--vantage", "pod-lidar", "--out", str(out)], manifest=self.manifest())
+        out = Path(tempfile.mkdtemp()) / "viz.html"
+        written = viz.main(["--vantage", "pod-lidar", "--out", str(out)], manifest=self.manifest())
         self.assertEqual(written, out)
-        self.assertIn("window.STORY = ", out.read_text())
+        self.assertIn("window.VIZ = ", out.read_text())
 
     def test_main_draws_every_steady_vantage_by_default(self):
         import tempfile
-        out = story.main(["--out", str(Path(tempfile.mkdtemp()) / "story.html")],
+        out = viz.main(["--out", str(Path(tempfile.mkdtemp()) / "viz.html")],
                          manifest=self.manifest())
         bundle = page_bundle(out)
         self.assertEqual(list(bundle["vantages"]), ["pod-lidar", "pod-nginx"])   # camera unusable
-        self.assertEqual(bundle["selected"], story.DEFAULT_VANTAGE)
+        self.assertEqual(bundle["selected"], viz.DEFAULT_VANTAGE)
         scenarios = lambda v: [c["scenario"] for c in bundle["vantages"][v]["playback"]["captures"]]
-        self.assertEqual(scenarios("pod-nginx"), [story.HELD_OUT, "lidar attack"])
-        self.assertLess(out.stat().st_size, story.PAGE_LIMIT)
+        self.assertEqual(scenarios("pod-nginx"), [viz.HELD_OUT, "lidar attack"])
+        self.assertLess(out.stat().st_size, viz.PAGE_LIMIT)
 
     def test_bulk_vantages_are_left_out_by_default(self):
         import tempfile
         bulk = sorted(evaluation.BULK_LABELS)[0]
         manifest = self.manifest()
         manifest.loc[manifest["label"].eq("pod-nginx"), "label"] = bulk
-        captures = story.benign_captures(manifest)
-        self.assertEqual(story.steady_vantages(captures), ["pod-lidar"])
-        self.assertEqual(story.steady_vantages(captures, allow_bulk=True), sorted(["pod-lidar", bulk]))
-        out = Path(tempfile.mkdtemp()) / "story.html"
-        self.assertEqual(list(page_bundle(story.main(["--out", str(out)], manifest=manifest))["vantages"]),
+        captures = viz.benign_captures(manifest)
+        self.assertEqual(viz.steady_vantages(captures), ["pod-lidar"])
+        self.assertEqual(viz.steady_vantages(captures, allow_bulk=True), sorted(["pod-lidar", bulk]))
+        out = Path(tempfile.mkdtemp()) / "viz.html"
+        self.assertEqual(list(page_bundle(viz.main(["--out", str(out)], manifest=manifest))["vantages"]),
                          ["pod-lidar"])
-        with_bulk = page_bundle(story.main(["--out", str(out), "--allow-bulk"], manifest=manifest))
+        with_bulk = page_bundle(viz.main(["--out", str(out), "--allow-bulk"], manifest=manifest))
         self.assertIn("bulk", with_bulk["vantages"][bulk]["meta"]["calibration_warning"])
         with self.assertRaisesRegex(ValueError, "bulk"):
-            story.main(["--out", str(out), "--vantages", "pod-lidar", bulk], manifest=manifest)
+            viz.main(["--out", str(out), "--vantages", "pod-lidar", bulk], manifest=manifest)
 
     def test_opening_vantage_joins_an_explicit_list(self):
         import tempfile
-        out = story.main(["--out", str(Path(tempfile.mkdtemp()) / "story.html"),
+        out = viz.main(["--out", str(Path(tempfile.mkdtemp()) / "viz.html"),
                           "--vantages", "pod-lidar", "--vantage", "pod-nginx"],
                          manifest=self.manifest())
         bundle = page_bundle(out)
@@ -2460,14 +2460,14 @@ class StoryEntryChecks(unittest.TestCase):
         self.assertEqual(bundle["selected"], "pod-nginx")
 
     def test_cluster_captures_are_loaded_once_for_every_vantage(self):
-        captures = story.benign_captures(self.manifest())
-        benign, _, shared = story.story_inputs(self.manifest(), "pod-nginx", cluster_captures=captures)
+        captures = viz.benign_captures(self.manifest())
+        benign, _, shared = viz.page_inputs(self.manifest(), "pod-nginx", cluster_captures=captures)
         self.assertIs(shared, captures)
         self.assertIs(benign, captures["pod-nginx"])
 
 
 class WindowedSweepChecks(unittest.TestCase):
-    """The windowed score's sweep: story.py's calibration, and missing windows kept missing."""
+    """The windowed score's sweep: viz.py's calibration, and missing windows kept missing."""
 
     @classmethod
     def setUpClass(cls):
@@ -2482,8 +2482,8 @@ class WindowedSweepChecks(unittest.TestCase):
         self.assertEqual(len(match), 1)
         return match[0]
 
-    def test_cutoff_is_the_story_pages_cutoff(self):
-        bundle = story.build_story(self.benign, {"flood": self.attack},
+    def test_cutoff_is_the_pages_cutoff(self):
+        bundle = viz.build_page(self.benign, {"flood": self.attack},
                                    {"pod-lidar": self.benign}, "pod-lidar")
         expected = bundle["playback"]["captures"][0]["cutoffs"]["windowed"]
         page_counts = bundle["meta"]["train_counts"]
@@ -3266,7 +3266,7 @@ class PcapDiffChecks(unittest.TestCase):
     def test_menu_adds_pcap_diff_without_renumbering(self):
         names = [name for name, _, _ in demo.ITEMS]
         self.assertEqual((names[7], names[8], names[9], names[10]),
-                         ("Everything", "Tests", "Story", "Pcap diff"))
+                         ("Everything", "Tests", "Visualization", "Pcap diff"))
         # The full diff reads ~178 GB; "Everything" must not start it.
         self.assertNotIn("pcap_diff", demo.everything.__code__.co_names)
 

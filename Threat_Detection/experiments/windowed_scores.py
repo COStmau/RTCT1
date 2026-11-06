@@ -1,10 +1,10 @@
-"""The windowed SEQUENT score measured on every stratum, calibrated the way story.py draws it.
+"""The windowed SEQUENT score measured on every stratum, calibrated the way viz/page.py draws it.
 
-story.py presents the windowed frequency score (the FORGET_SECONDS clock) as the page's
+viz/page.py presents the windowed frequency score (the FORGET_SECONDS clock) as the page's
 detector, but only the likelihood detector had a sweep (`statemachine.py main()`). This is
 that sweep for the windowed score: one row per (label, scenario, method, training counts).
 
-Calibration is story.build_story's, exactly: the whole benign recording runs through one
+Calibration is viz.build_page's, exactly: the whole benign recording runs through one
 windowed scorer so the clock is warm, and the cutoff is the top BENIGN_QUANTILE of the
 held-out windows after the one the split falls in. There is one benign recording per tap,
 so the realised benign rate is measured on the windows that set the cutoff; with 4-17 of
@@ -187,7 +187,7 @@ def sweep(manifest, methods=("tcp", "ptcp"), forget_seconds=FORGET_SECONDS, rows
 def main():
     parser = argparse.ArgumentParser(
         description="Measure the windowed SEQUENT score on every stratum, calibrated as the "
-                    "story page is, under both start-state training counts.")
+                    "visualization is, under both start-state training counts.")
     parser.add_argument("--methods", nargs="+", default=["tcp", "ptcp"],
                         choices=("tcp", "ptcp"))
     parser.add_argument("--forget", type=float, default=FORGET_SECONDS)
