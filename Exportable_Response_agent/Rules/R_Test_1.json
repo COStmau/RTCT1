@@ -1,0 +1,56 @@
+
+{
+  "rule_id": "R_TEST_001",
+  "name": "Pod Traffic Flood Test",
+  "description": "Tests dummy execution and validation before escalating to baseline communication restrictions.",
+  "enabled": true,
+  "priority": 50,
+
+  "conditions": {
+    "issue_type": "traffic_flood",
+    "location_type": "pod",
+    "minimum_severity": "low"
+  },
+
+  "required_Actions": [
+    "dummy_action",
+    "restrict_ingress_egress_baseline"
+  ],
+
+  "required_Validations": [
+    "dummy_validation",
+    "network_policy_check"
+  ],
+
+  "tiers": {
+    "1": {
+      "name": "Dummy Response Test",
+      "action": "dummy_action",
+      "parameters": {},
+
+      "validation": "dummy_validation",
+      "validation_parameters": {},
+      "verification_delay_seconds": 0,
+
+      "escalation": "manual_escalation",
+      "escalation_parameters": {}
+    },
+
+    
+    "2": {
+    "name": "Restrict Communications to Baseline",
+    "action": "restrict_ingress_egress_baseline",
+    "parameters": {},
+    "validation": "Network_Policy_Check",
+    "validation_parameters": {},
+    "verification_delay_seconds": 0,
+    "escalation": "manual_escalation",
+    "escalation_parameters": {}
+    }
+
+  },
+
+  "on_execution_failure": "manual_review",
+  "on_resolution": "begin_recovery",
+  "on_max_escalation": "manual_review"
+}

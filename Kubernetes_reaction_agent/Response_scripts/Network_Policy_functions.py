@@ -23,9 +23,7 @@ def define_network_policy(name, namespace, pod_labels, policy_types, ingress_rul
         },
         "spec": {
             "podSelector": { #Labels to select the pods to which this policy applies
-                "matchLabels": {
-                    "app": pod_labels
-                }
+                "matchLabels": pod_labels
             },
             "policyTypes": policy_types,
             "ingress": ingress_rules if ingress_rules is not None else [],
@@ -34,7 +32,7 @@ def define_network_policy(name, namespace, pod_labels, policy_types, ingress_rul
     }   
     return body
 
-def apply_bandwidth_limit(vi, pod_name, namespace, bandwidth_limit):
+def request_bandwidth_limit(vi, pod_name, namespace, bandwidth_limit):
     """
     Apply a bandwidth limit to a specific pod.
 

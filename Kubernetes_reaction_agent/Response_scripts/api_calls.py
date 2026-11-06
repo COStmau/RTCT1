@@ -1,5 +1,5 @@
 from kubernetes import client, config
-from Error_Wraper import safe_api_call
+from Response_scripts.Error_Wraper import safe_api_call
 
 def list_namespace_pods(vi,namespace="default"): #List pods in a specific namespace
 
@@ -15,6 +15,10 @@ def get_pod_names(vi,namespace="default"): #Get the names of all pods in a speci
 def read_namespace_pod(vi,name, namespace="default"): #inspects a specific pod
 
     return safe_api_call(vi.read_namespaced_pod, name=name, namespace=namespace) #Retrieves the details of a specific pod in the specified namespace and returns the result of the inspection operation
+
+def patch_namespace_pod(vi, name, body, namespace="default"): # Modifies an existing pod
+
+    return safe_api_call(vi.patch_namespaced_pod, name=name, namespace=namespace, body=body)
 
 def read_namespaced_pod_status(vi,name, namespace="default"): #Reads the status of a specific pod.
     
@@ -60,6 +64,15 @@ def read_network_policy(vi, name, namespace="default"): #Reads a specific networ
     
     return safe_api_call(vi.read_namespaced_network_policy, name=name, namespace=namespace) #Retrieves the details of a specific network policy in the specified namespace and returns the result of the inspection operation
 
+def patch_network_policy(vi, name, body, namespace="default"):  # Modifies an existing NetworkPolicy
+
+    return safe_api_call(
+        vi.patch_namespaced_network_policy,
+        name=name,
+        namespace=namespace,
+        body=body
+    )  # Updates the specified NetworkPolicy using the provided patch body
+
 def list_events(vi, namespace="default"): #List events in a specific namespace
     
     return safe_api_call(vi.list_namespaced_event, namespace=namespace, watch=False) #Retrieves a list of all events in the specified namespace and returns the result of the listing operation
@@ -93,6 +106,7 @@ def get_pod_labels(vi, pod_name, namespace="default"): #Retrieves the labels of 
     return pod[0].metadata.labels, None #Returns the labels of the specified pod
 
 def add_pod_label(vi, pod_name, namespace, label_key, label_value): #Adds a label to a specific pod in a specific namespace
+
     """
     Add a label to a specific pod.
 
@@ -123,3 +137,4 @@ def add_pod_label(vi, pod_name, namespace, label_key, label_value): #Adds a labe
     updated_pod = safe_api_call(vi.patch_namespaced_pod, name=pod_name, namespace=namespace, body=body)
     
     return updated_pod
+

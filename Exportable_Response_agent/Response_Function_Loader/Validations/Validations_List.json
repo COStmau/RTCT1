@@ -1,0 +1,12 @@
+{
+    "Network_Policy_Check":{
+        "module": "Exportable_Response_agent.Response_Function_Loader.Validations.Network_Policy_Check",
+        "function": "validate_baseline_policy",
+        "Description":"validates new policy is created"
+    },
+    "dummy_validation": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Validations.Dummy_Validation",
+        "function": "dummy_validation",
+        "Description": "test validaiton"
+    }
+}

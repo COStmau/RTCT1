@@ -1,0 +1,15 @@
+
+{
+    
+    "restrict_ingress_egress_baseline": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Actions.Restrict_Communications_To_Baseline",
+        "function": "restrict_ingress_egress_baseline",
+        "description": "Restricts pod ingress and egress to baseline communication."
+    },
+    
+    "dummy_action": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Actions.Dummy_Action",
+        "function": "dummy_action",
+        "description": "Test Action"
+    }
+}

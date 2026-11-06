@@ -1,0 +1,6 @@
+{
+    "manual_escalation": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Escalations.Manual_Escalation",
+        "function": "manual_escalation"
+    }
+}
