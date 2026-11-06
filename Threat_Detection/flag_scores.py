@@ -55,7 +55,7 @@ def anomaly_scores(model, flows, t0, n_windows):
 
 def verdict_rows(summary):
     """The summary rows the pre-registered rule reads, in the rule's own order."""
-    import flag_verdict
+    from verdicts import flag as flag_verdict
     rows = []
     for label, scenario in flag_verdict.STRATA:
         match = summary[(summary["label"] == label) & (summary["scenario"] == scenario)]
@@ -79,7 +79,7 @@ def plot_alphabet_slope(summary, path=None):
     matplotlib.use("Agg")   # renders to a file; nothing here opens a window
     import matplotlib.pyplot as plt
 
-    import flag_verdict
+    from verdicts import flag as flag_verdict
 
     path = resolve_output(path or "alphabet_verdict.png")
     verdict, _ = flag_verdict.decide(verdict_rows(summary))
@@ -238,7 +238,7 @@ def main():
     print(f"Wrote {windows_path} | rows={len(windows)}")
     print(f"Wrote {summary_path} | strata={len(rows)}")
 
-    import flag_verdict
+    from verdicts import flag as flag_verdict
     rule_rows = verdict_rows(rows)
     verdict, reasons = flag_verdict.decide(rule_rows)
     print(f"\nverdict: {verdict}")

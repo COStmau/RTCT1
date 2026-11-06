@@ -15,14 +15,14 @@ import core.detectors as detectors
 import core.evaluation as evaluation
 import core.features as features
 import core.reporting as reporting
-import cv_verdict
+from verdicts import cv as cv_verdict
 import demo
 import feature_value
 import flag_scores
-import flag_verdict
+from verdicts import flag as flag_verdict
 import layout
 import metrics
-import root_verdict
+from verdicts import root_count as root_verdict
 import statemachine
 import story
 import sweep

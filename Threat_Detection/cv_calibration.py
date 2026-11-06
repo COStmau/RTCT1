@@ -26,7 +26,7 @@ import argparse
 import numpy as np
 import pandas as pd
 
-import cv_verdict
+from verdicts import cv as cv_verdict
 import windowed_scores
 from core.data_io import MANIFEST_NAME, load_manifest, resolve_output
 from core.evaluation import BULK_LABELS

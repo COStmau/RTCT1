@@ -23,7 +23,7 @@ import argparse
 import numpy as np
 import pandas as pd
 
-import root_verdict
+from verdicts import root_count as root_verdict
 from core.data_io import MANIFEST_NAME, describe_captures, load_manifest, resolve_output, timebase_issues
 from core.detectors import flag_stats
 from core.evaluation import BULK_LABELS
