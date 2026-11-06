@@ -330,6 +330,26 @@ class LayeringChecks(unittest.TestCase):
         project = {p.stem for p in Path(".").glob("*.py")} | {p.stem for p in Path("core").glob("*.py")}
         self.assertEqual(self.imported_modules("metrics") & project, set())
 
+    def test_core_imports_nothing_from_the_outer_packages(self):
+        """core/ is the product; experiments, verdicts, story and convert are evidence.
+
+        The dependency arrow points one way. If core ever imports an experiment, the
+        "what ships" question stops having an answer.
+        """
+        outer = {"experiments", "verdicts", "story", "convert", "demo", "metrics",
+                 "statemachine", "methods", "local_paths"}
+        for layer in self.LAYERS:
+            used = self.imported_modules(layer) & outer
+            self.assertEqual(used, set(), f"core/{layer}.py imports {sorted(used)}")
+
+    def test_core_exports_a_resolvable_front_door(self):
+        """`from core import X` is the documented way in; every advertised name must work."""
+        import core
+        missing = [name for name in core.__all__ if not hasattr(core, name)]
+        self.assertEqual(missing, [], f"core.__all__ advertises undefined names: {missing}")
+        self.assertIn("make_windows", core.__all__)
+        self.assertIn("build_detector", core.__all__)
+
     def test_importing_reporting_does_not_load_matplotlib(self):
         # reporting carries console tables and the event stream; only its plotting needs
         # matplotlib. Loading it eagerly cost ~0.5 s on every import of the core.
