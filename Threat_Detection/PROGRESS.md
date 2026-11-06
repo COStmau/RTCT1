@@ -469,3 +469,33 @@ candidate that keeps one volume feature for injection would be a new candidate a
 new rule committed first. `mean_packet_size` and the count-over-packets ratios were tried
 exploratorily and did worse on benign flags (0.29 and 0.31 tcp steady), so they are not
 candidates.
+
+## Hybrid feature set: kept by its rule (2026-11-06)
+
+After the eight-feature set was dropped on ptcp injection, one more candidate was fixed before
+it ran (`7196852`, `verdicts/feature_set_hybrid.py`): the same eight plus `packet_count`, judged
+by the previous rule with thresholds imported, not copied. It is the second candidate on the
+same recordings and the last one; the module says the false-alarm side is more optimistic than
+before. Measured by `experiments/feature_set.py --rule hybrid` into
+`outputs/feature_set_hybrid.csv`.
+
+**Verdict: keep.** Every condition passed under both capture methods.
+
+| | tcp, all 13 | tcp, hybrid | ptcp, all 13 | ptcp, hybrid |
+|---|---|---|---|---|
+| persistent alerts, steady held-out benign (151 / 141 windows) | 22 | 9 | 18 | 9 |
+| steady benign windows flagged | 0.424 | 0.272 | 0.454 | 0.312 |
+| bulk benign windows flagged | 0.918 | 0.885 | 0.946 | 0.857 |
+
+AUROC / detection at 5% (all 13 to hybrid): tcp injection 0.677 / 0.319 to 0.719 / 0.373, lidar
+0.541 / 0.076 to 0.603 / 0.198, nginx 0.620 / 0.174 to 0.657 / 0.275; ptcp injection 0.738 /
+0.389 to 0.730 / 0.413, lidar 0.516 / 0.117 to 0.521 / 0.196, nginx 0.620 / 0.217 to 0.643 /
+0.292. No scenario loses, and injection, the scenario that sank the eight-feature set, now holds.
+
+What the pass does and does not say. ptcp alerts fall by exactly 0.50, the minimum, so that
+condition passes on the line. The bulk taps still flag 0.86-0.89: `packet_count` brings the
+regime change back, so this is a steady-tap improvement and not a fix for drift. And the two
+candidates were both tried on the same benign recordings, so the benign gain is optimistic;
+the attack-side gains are the more trustworthy half. The detector still runs on all 13 in
+`core/`; adopting the nine is a separate change that moves every number in `SHOWCASE.md` and
+the visualization.

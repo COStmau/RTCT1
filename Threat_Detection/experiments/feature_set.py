@@ -9,7 +9,10 @@ AUROC against the held-out benign scores and the detection at a 5% benign budget
 realised benign rate is stored beside it: on 15-20 windows it is not 5%). Bulk taps are
 scored and reported but decide nothing.
 
-Run it with:  .venv/bin/python experiments/feature_set.py
+`--rule hybrid` swaps in the nine-feature candidate of verdicts/feature_set_hybrid.py, which
+is judged by the same decide(); each rule writes its own CSV.
+
+Run it with:  .venv/bin/python experiments/feature_set.py [--rule eight|hybrid]
 """
 import sys
 from pathlib import Path
@@ -28,6 +31,7 @@ from core.data_io import MANIFEST_NAME
 from core.features import load_all_windows
 from experiments import metrics
 from verdicts import feature_set as verdict
+from verdicts import feature_set_hybrid as hybrid
 
 FEATURE_SET_CSV = "feature_set.csv"
 BUDGET = 0.05
@@ -63,7 +67,7 @@ def rows_for(label, method, benign, attacks, columns, name):
     return rows
 
 
-def sweep(manifest):
+def sweep(manifest, candidate=CANDIDATE):
     windows, notes = load_all_windows(manifest)
     every = None
     rows = []
@@ -74,7 +78,7 @@ def sweep(manifest):
             every = list(benign.columns)
         attacks = {s: windows[(s, label, method)] for s in sorted({k[0] for k in windows})
                    if s != "benign" and windows.get((s, label, method)) is not None}
-        for name, columns in (("all", every), ("candidate", CANDIDATE)):
+        for name, columns in (("all", every), ("candidate", candidate)):
             try:
                 rows += rows_for(label, method, benign, attacks, columns, name)
             except ValueError:
@@ -104,13 +108,16 @@ def summarize(frame):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--manifest", default=MANIFEST_NAME)
+    parser.add_argument("--rule", choices=("eight", "hybrid"), default="eight")
     args = parser.parse_args()
+    candidate, out = ((CANDIDATE, FEATURE_SET_CSV) if args.rule == "eight"
+                      else (hybrid.CANDIDATE, "feature_set_hybrid.csv"))
 
     import local_paths
-    frame = sweep(load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest))
-    frame.to_csv(resolve_output(FEATURE_SET_CSV), index=False)
+    frame = sweep(load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest), candidate)
+    frame.to_csv(resolve_output(out), index=False)
     summary = summarize(frame)
-    print(f"Wrote {FEATURE_SET_CSV} | rows={len(frame)} | candidate: {', '.join(CANDIDATE)}")
+    print(f"Wrote {out} | rows={len(frame)} | candidate: {', '.join(candidate)}")
     for method, s in summary.items():
         print(f"\n{method} | steady held-out benign windows {s['benign_windows']} | "
               f"persistent alerts all {s['persistent']['all']} -> candidate "
