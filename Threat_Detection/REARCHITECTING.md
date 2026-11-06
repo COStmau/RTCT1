@@ -1,6 +1,6 @@
 # Rearchitecting plan: Subsystem 2 (threat detection)
 
-Status: **P0 and P1-1/P1-5 applied** (2026-11-05); the rest is still proposal.
+Status: **P0 and P1 applied** (2026-11-05); P2–P4 are still proposal.
 Every number below was measured against the working tree, not recalled.
 
 | Package | Status |
