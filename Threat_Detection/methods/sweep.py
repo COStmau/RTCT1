@@ -5,8 +5,8 @@ Run with:  .venv/bin/python -m methods.sweep
 """
 import numpy as np
 
-from data_io import MANIFEST_NAME, load_manifest, resolve_output
-from features import WINDOW_SIZE
+from core.data_io import MANIFEST_NAME, load_manifest, resolve_output
+from core.features import WINDOW_SIZE
 from methods.pdfa import encode, fit_model, load_flow_packets, make_flows, segment_flows, split_flows
 from methods.scores import (FORGET_SECONDS, flags_for_windows, n_windows_for, score_cutoff,
                             score_flows, statemachine_rows)

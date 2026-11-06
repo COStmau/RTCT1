@@ -14,8 +14,8 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 
-from data_io import load_capture, timebase_issues
-from features import BENIGN_TRAIN_FRACTION, WINDOW_SIZE
+from core.data_io import load_capture, timebase_issues
+from core.features import BENIGN_TRAIN_FRACTION, WINDOW_SIZE
 
 FLOW_COLUMNS = ["ts", "frame_len", "src_ip", "dst_ip", "src_port",
                 "dst_port", "proto"]

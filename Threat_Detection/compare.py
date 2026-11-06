@@ -9,10 +9,10 @@ import argparse
 import pandas as pd
 
 import local_paths
-from data_io import MANIFEST_NAME, load_manifest, resolve_output
-from detectors import REGISTRY, build, flag_stats
-from features import load_all_windows, split_reference
-from reporting import plot_comparison, print_comparison
+from core.data_io import MANIFEST_NAME, load_manifest, resolve_output
+from core.detectors import REGISTRY, build, flag_stats
+from core.features import load_all_windows, split_reference
+from core.reporting import plot_comparison, print_comparison
 
 # Every registered detector gets compared. Adding one here is the whole change.
 DETECTORS = list(REGISTRY)

@@ -6,8 +6,8 @@ feature set, and nothing about what counts as an anomaly.
 import numpy as np
 import pandas as pd
 
-import evaluation
-from data_io import load_capture, timebase_issues
+import core.evaluation as evaluation
+from core.data_io import load_capture, timebase_issues
 
 WINDOW_SIZE = 1.0
 

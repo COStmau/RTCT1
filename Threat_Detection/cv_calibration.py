@@ -28,9 +28,9 @@ import pandas as pd
 
 import cv_verdict
 import windowed_scores
-from data_io import MANIFEST_NAME, load_manifest, resolve_output
-from evaluation import BULK_LABELS
-from features import WINDOW_SIZE
+from core.data_io import MANIFEST_NAME, load_manifest, resolve_output
+from core.evaluation import BULK_LABELS
+from core.features import WINDOW_SIZE
 from statemachine import (FORGET_SECONDS, fit_model, fit_segments, frequency_cutoff,
                           frequency_scores_by_window, make_flows, n_windows_for,
                           segment_flows)

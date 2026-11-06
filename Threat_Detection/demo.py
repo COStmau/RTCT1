@@ -19,14 +19,14 @@ import pandas as pd
 
 # reporting pins matplotlib to Agg before it imports pyplot, so importing it first gives
 # this module the same headless backend instead of opening a window.
-from reporting import plot_detection, summarize_flags, to_events, write_events, write_report
+from core.reporting import plot_detection, summarize_flags, to_events, write_events, write_report
 import matplotlib.pyplot as plt
 
-from evaluation import BULK_LABELS
+from core.evaluation import BULK_LABELS
 
-from data_io import load_capture, resolve_output
-from detectors import PERSISTENCE_WINDOW, THRESHOLD, build
-from features import FEATURE_LABELS, WINDOW_SIZE, make_windows, split_reference
+from core.data_io import load_capture, resolve_output
+from core.detectors import PERSISTENCE_WINDOW, THRESHOLD, build
+from core.features import FEATURE_LABELS, WINDOW_SIZE, make_windows, split_reference
 from statemachine import (encode, fit_model, flags_for_windows, load_flow_packets,
                           make_flows, n_windows_for, plot_pdfa, score_cutoff,
                           score_flows, segment_flows, split_flows, write_pair)
@@ -68,7 +68,7 @@ def resolve_reference(benign_windows):
 
 def _label_of(path):
     """The capture label a packet CSV belongs to, e.g. pod-nginx from pod-nginx-tcp.csv."""
-    from data_io import parse_capture
+    from core.data_io import parse_capture
     from pathlib import Path
     return parse_capture(Path(path).name)[0]
 

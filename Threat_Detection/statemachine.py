@@ -27,7 +27,7 @@ from methods.scores import (FORGET_SECONDS, PAIR_CSV, TRAIN_COUNTS, FrequencySco
 from methods.sweep import SWEEP_CSV, main
 
 # Re-exported because the original module imported it: callers and tests read it here.
-from detectors import BENIGN_QUANTILE  # noqa: E402,F401
+from core.detectors import BENIGN_QUANTILE  # noqa: E402,F401
 
 if __name__ == "__main__":
     main()

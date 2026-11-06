@@ -10,25 +10,26 @@ import numpy as np
 import pandas as pd
 
 import cluster
+import core.data_io as data_io
+import core.detectors as detectors
+import core.evaluation as evaluation
+import core.features as features
+import core.reporting as reporting
 import cv_verdict
-import data_io
 import demo
-import evaluation
 import feature_value
-import features
 import flag_scores
 import flag_verdict
 import layout
 import metrics
-import reporting
 import root_verdict
 import statemachine
 import story
 import sweep
 import windowed_scores
-from detectors import build
-from features import make_windows, split_reference
-from reporting import plot_detection_gap, threshold_table, to_events, write_events
+from core.detectors import build
+from core.features import make_windows, split_reference
+from core.reporting import plot_detection_gap, threshold_table, to_events, write_events
 
 # The pre-refactor function names, mapped onto their layer homes. The old
 # DetectorChecks class pins behavior through these aliases so the assertions read the same
@@ -170,11 +171,11 @@ class DetectorProtocolChecks(unittest.TestCase):
         self.shifted = pd.DataFrame({"packet_count": [900, 950, 1000, 920, 880, 970, 910, 990, 930]})
 
     def test_registry_covers_the_three_documented_detectors(self):
-        import detectors
+        import core.detectors
         self.assertEqual(set(detectors.REGISTRY), {"z_score", "isolation_forest", "one_class_svm"})
 
     def test_every_detector_flags_a_shift_and_spares_held_out_benign(self):
-        import detectors
+        import core.detectors
         for name, make in detectors.REGISTRY.items():
             with self.subTest(detector=name):
                 det = make().fit(self.train).calibrate(self.holdout)
@@ -185,7 +186,7 @@ class DetectorProtocolChecks(unittest.TestCase):
 
     def test_higher_score_means_more_anomalous_for_every_detector(self):
         """sklearn's decision_function runs the other way; the protocol must normalize it."""
-        import detectors
+        import core.detectors
         for name, make in detectors.REGISTRY.items():
             with self.subTest(detector=name):
                 det = make().fit(self.train).calibrate(self.holdout)
@@ -194,7 +195,7 @@ class DetectorProtocolChecks(unittest.TestCase):
                                    f"{name} scores the attack lower than benign")
 
     def test_flagging_before_calibration_is_an_error(self):
-        import detectors
+        import core.detectors
         for name, make in detectors.REGISTRY.items():
             with self.subTest(detector=name):
                 with self.assertRaises(RuntimeError):
@@ -208,7 +209,7 @@ class DetectorProtocolChecks(unittest.TestCase):
         lands outside the cutoff and a third of held-out benign traffic flags. Median/MAD
         ignores them. This is the router-any shape.
         """
-        import detectors
+        import core.detectors
         # 40 quiet windows at 50, one 146 MB window, 6 held-out windows near the quiet mode.
         reference = pd.DataFrame({"payload_bytes": [50.0] * 40 + [146_000_000.0] + [50.0] * 6})
         detector = detectors.build("z_score").fit(reference).calibrate(reference)
@@ -221,7 +222,7 @@ class DetectorProtocolChecks(unittest.TestCase):
 
     def test_constant_feature_is_marked_degenerate_and_does_not_flag_everything(self):
         """MAD is 0 for a constant feature, and dividing by that 0 would flag every window."""
-        import detectors
+        import core.detectors
         reference = pd.DataFrame({"packet_count": [3.0] * 12})
         detector = detectors.build("z_score").fit(reference).calibrate(reference)
         # A constant feature has no scale, so it IS degenerate -- recorded, not hidden.
@@ -234,7 +235,7 @@ class DetectorProtocolChecks(unittest.TestCase):
                          "movement on a scale-less feature is infinitely far from normal")
 
     def test_only_z_score_explains_which_feature_moved(self):
-        import detectors
+        import core.detectors
         self.assertIsNotNone(detectors.REGISTRY["z_score"]().explain)
         for name in ("isolation_forest", "one_class_svm"):
             with self.subTest(detector=name):
@@ -242,7 +243,7 @@ class DetectorProtocolChecks(unittest.TestCase):
                                   "learned detectors report no attribution by design")
 
     def test_z_score_explain_names_the_feature_and_its_baseline(self):
-        import detectors
+        import core.detectors
         # Real baseline spread, so the strongest feature is decided by magnitude, not by a
         # zero-std tie (a zero std scores infinite the moment its feature moves at all).
         reference = pd.DataFrame({"packet_count": [9, 10, 11, 10],
@@ -262,7 +263,7 @@ class DetectorProtocolChecks(unittest.TestCase):
 
     def test_persistence_needs_consecutive_flags(self):
         """A run of L flags marks its last L-1: the first flag of a run is not yet an alert."""
-        import detectors
+        import core.detectors
         flags = pd.Series([False, True, True, True, True, False])
         self.assertEqual(detectors.persistent_mask(flags).tolist(),
                          [False, False, False, True, True, False])
@@ -272,7 +273,7 @@ class DetectorProtocolChecks(unittest.TestCase):
                          [False, False, True, False, False])
 
     def test_insufficient_baseline_is_rejected(self):
-        import detectors
+        import core.detectors
         for name in detectors.REGISTRY:
             with self.subTest(detector=name), self.assertRaisesRegex(ValueError, "Insufficient"):
                 detectors.build(name).fit(pd.DataFrame({"packet_count": [1]}))
@@ -289,13 +290,20 @@ class LayeringChecks(unittest.TestCase):
     # The pipeline layers, in dependency order: a layer may import only earlier ones.
     LAYERS = ["data_io", "evaluation", "features", "detectors", "reporting"]
 
+    def path_of(self, name):
+        root = Path("core") if name in self.LAYERS else Path(".")
+        return root / f"{name}.py"
+
     def imported_modules(self, name):
         import ast
-        tree = ast.parse(Path(f"{name}.py").read_text(encoding="utf-8"))
+        tree = ast.parse(self.path_of(name).read_text(encoding="utf-8"))
         found = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module:
-                found.add(node.module.split(".")[0])
+                # "from core.features import ..." is an intra-core edge; key it by the
+                # layer name so the ordering rule still applies inside the package.
+                parts = node.module.split(".")
+                found.add(parts[1] if parts[0] == "core" and len(parts) > 1 else parts[0])
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     found.add(alias.name.split(".")[0])
@@ -319,13 +327,13 @@ class LayeringChecks(unittest.TestCase):
 
     def test_metrics_imports_nothing_from_the_project(self):
         # metrics is shared by every layer and every experiment; it must stay a leaf.
-        project = {p.stem for p in Path(".").glob("*.py")}
+        project = {p.stem for p in Path(".").glob("*.py")} | {p.stem for p in Path("core").glob("*.py")}
         self.assertEqual(self.imported_modules("metrics") & project, set())
 
     def test_importing_reporting_does_not_load_matplotlib(self):
         # reporting carries console tables and the event stream; only its plotting needs
         # matplotlib. Loading it eagerly cost ~0.5 s on every import of the core.
-        script = ("import sys; sys.path.insert(0, '.'); import reporting; "
+        script = ("import sys; sys.path.insert(0, '.'); import core.reporting; "
                   "print('matplotlib' in sys.modules)")
         out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -345,7 +353,7 @@ class LayeringChecks(unittest.TestCase):
         # reporting pins Agg and imports pyplot; importing it must not be required to use
         # the rest of the core. This guards the P1-5 move of matplotlib out of module scope.
         script = ("import sys; sys.path.insert(0, '.'); "
-                  "import data_io, features, detectors, metrics; "
+                  "import core.data_io, core.features, core.detectors, metrics; "
                   "print('matplotlib' in sys.modules)")
         out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -354,12 +362,12 @@ class LayeringChecks(unittest.TestCase):
 
 class FeatureLayerChecks(unittest.TestCase):
     def test_features_module_does_not_import_local_paths(self):
-        script = "import sys; sys.path.insert(0, '.'); import features; print(features.WINDOW_SIZE)"
+        script = "import sys; sys.path.insert(0, '.'); import core.features as f; print(f.WINDOW_SIZE)"
         out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
 
     def test_windows_keep_empty_seconds_and_leave_averages_undefined(self):
-        import features
+        import core.features
         packets = pd.DataFrame({"ts": [10.0, 12.0], "frame_len": [100, 200], "iat": [0.0, 2.0],
                                 "dst_ip": ["a", "b"], "dst_port": [80, 443], "tcp_syn": [1, 0]})
         windows = features.make_windows(packets)
@@ -374,7 +382,7 @@ class FeatureLayerChecks(unittest.TestCase):
         self.assertNotIn("rst_count", windows.columns)
 
     def test_flag_features_appear_when_the_columns_are_present(self):
-        import features
+        import core.features
         packets = pd.DataFrame({"ts": [10.0, 10.5], "frame_len": [100, 200], "iat": [0.0, 0.5],
                                 "dst_ip": ["a", "b"], "dst_port": [80, 443],
                                 "tcp_syn": [1, 0], "tcp_rst": [0, 1]})
@@ -384,7 +392,7 @@ class FeatureLayerChecks(unittest.TestCase):
 
     def test_payload_and_protocol_features_are_summed_per_window(self):
         """Payload and app-protocol columns are read on purpose; the 34-column set is a pool."""
-        import features
+        import core.features
         # Two packets inside bin 0 (ts 10.0, 10.5) and one in bin 1 (ts 11.0).
         packets = pd.DataFrame({
             "ts": [10.0, 10.5, 11.0], "frame_len": [100, 200, 300],
@@ -418,12 +426,12 @@ class FeatureLayerChecks(unittest.TestCase):
         self.assertTrue(pd.isna(empty.loc[1, "mean_packet_size"]))
 
     def test_feature_groups_cover_every_feature_exactly_once(self):
-        import features
+        import core.features
         grouped = {f for members in features.FEATURE_GROUPS.values() for f in members}
         self.assertEqual(grouped, set(features.FEATURE_LABELS))
 
     def test_split_reference_holds_out_the_last_thirty_percent(self):
-        import features
+        import core.features
         windows = pd.DataFrame({"packet_count": range(100)})
         reference, holdout = features.split_reference(windows)
         self.assertEqual(len(reference), 70)
@@ -435,13 +443,13 @@ class DataIoChecks(unittest.TestCase):
     def test_io_layer_does_not_need_local_paths(self):
         """data_io must import with no machine-specific path file present."""
         script = ("import sys; sys.path.insert(0, '.');"
-                  " import data_io; print(len(data_io.PACKET_COLUMNS))")
+                  " import core.data_io as d; print(len(d.PACKET_COLUMNS))")
         out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
 
     def test_load_capture_normalizes_headers_and_keeps_needed_columns(self):
         import tempfile
-        import data_io
+        import core.data_io
         path = Path(tempfile.mkdtemp()) / "pod-nginx-tcp.csv"
         path.write_text("TS ,IAT,Frame Len,Dst IP,Dst Port,TCP SYN,TCP RST,tcp_payload_len,is_http\n"
                         "10.0,0.1,100,::1,8080,1,0,40,1\n")
@@ -454,16 +462,17 @@ class DataIoChecks(unittest.TestCase):
 
     def test_load_capture_names_a_missing_column(self):
         import tempfile
-        import data_io
+        import core.data_io
         path = Path(tempfile.mkdtemp()) / "pod-nginx-tcp.csv"
         path.write_text("ts,iat,frame_len,dst_ip,dst_port\n10.0,0.1,100,::1,8080\n")
         with self.assertRaisesRegex(ValueError, "Missing packet columns"):
             data_io.load_capture(str(path))
 
     def test_output_path_is_anchored_to_the_module_not_the_cwd(self):
-        import data_io
+        import core.data_io
         self.assertTrue(data_io.OUTPUT_DIR.is_absolute())
-        self.assertEqual(data_io.OUTPUT_DIR.parent, Path(data_io.__file__).resolve().parent)
+        self.assertEqual(data_io.OUTPUT_DIR.parent,
+                         Path(data_io.__file__).resolve().parent.parent)
 
 
 class ManifestChecks(unittest.TestCase):
@@ -637,7 +646,7 @@ class DetectorComparisonChecks(unittest.TestCase):
 
     @unittest.skipUnless(importlib.util.find_spec("sklearn"), "scikit-learn not installed")
     def test_every_learned_detector_separates_a_shifted_rate_from_held_out_benign(self):
-        import detectors
+        import core.detectors
         learned = [name for name in detectors.REGISTRY if name != "z_score"]
         self.assertEqual(set(learned), {"isolation_forest", "one_class_svm"})
         for name in learned:
@@ -661,9 +670,9 @@ class DetectorComparisonChecks(unittest.TestCase):
 
     def test_chart_name_carries_the_svm_nu(self):
         import inspect
-        import detectors
-        import data_io
-        import reporting
+        import core.detectors
+        import core.data_io
+        import core.reporting
         # the SVM default and the chart filename must both follow the one constant
         self.assertEqual(detectors.SVM_NU,
                          inspect.signature(detectors.OneClassSvmDetector).parameters["nu"].default)
@@ -761,7 +770,7 @@ class ShowcaseReportChecks(unittest.TestCase):
             for scenario in ("benign", "injection attack", "lidar attack", "nginx attack")])
 
     def _write(self, folder, **overrides):
-        from reporting import write_report
+        from core.reporting import write_report
         frames = {"sweep": self._sweep(), "ablation": self._ablation(),
                   "manifest": self._manifest(), "comparison": self._comparison()}
         frames.update(overrides)
@@ -801,7 +810,7 @@ class ShowcaseReportChecks(unittest.TestCase):
 
     def test_report_defaults_to_the_output_directory(self):
         """chart_dir=None must land in outputs/, not on top of a file."""
-        import data_io
+        import core.data_io
         import tempfile
         with tempfile.TemporaryDirectory() as folder:
             original, data_io.OUTPUT_DIR = data_io.OUTPUT_DIR, Path(folder)

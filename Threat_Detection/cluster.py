@@ -27,7 +27,7 @@ import ipaddress
 
 import pandas as pd
 
-from data_io import level_from_label
+from core.data_io import level_from_label
 
 POD_CIDR = ipaddress.ip_network("10.42.0.0/16")
 SERVICE_CIDR = ipaddress.ip_network("10.43.0.0/16")

@@ -10,10 +10,10 @@ import numpy as np
 import pandas as pd
 
 import local_paths
-from data_io import MANIFEST_NAME, load_manifest, resolve_output
-from detectors import build, flag_stats
-from features import FEATURE_GROUPS, WINDOW_SIZE, load_all_windows, split_reference
-from reporting import plot_detection_gap, plot_matrix, print_matrix
+from core.data_io import MANIFEST_NAME, load_manifest, resolve_output
+from core.detectors import build, flag_stats
+from core.features import FEATURE_GROUPS, WINDOW_SIZE, load_all_windows, split_reference
+from core.reporting import plot_detection_gap, plot_matrix, print_matrix
 
 DETECTOR = "z_score"
 

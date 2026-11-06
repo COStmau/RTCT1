@@ -12,8 +12,8 @@ import pandas as pd
 
 import metrics
 
-from data_io import MANIFEST_NAME, describe_captures, load_manifest, resolve_output
-from features import WINDOW_SIZE
+from core.data_io import MANIFEST_NAME, describe_captures, load_manifest, resolve_output
+from core.features import WINDOW_SIZE
 from statemachine import (fit_model, load_flow_packets, make_flows, n_windows_for,
                           score_cutoff, score_flows, segment_flows, split_flows)
 

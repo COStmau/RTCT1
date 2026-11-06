@@ -19,8 +19,8 @@ import pandas as pd
 import metrics
 
 import local_paths
-from data_io import load_manifest, resolve_output
-from features import load_all_windows, split_reference
+from core.data_io import load_manifest, resolve_output
+from core.features import load_all_windows, split_reference
 
 BUDGET = 0.05
 STRONG_AUC = 0.75

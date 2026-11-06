@@ -24,12 +24,12 @@ import pandas as pd
 
 import cluster as topology
 import layout
-from data_io import (MANIFEST_NAME, level_from_label, load_manifest, resolve_output,
+from core.data_io import (MANIFEST_NAME, level_from_label, load_manifest, resolve_output,
                      timebase_issues)
-from detectors import BENIGN_QUANTILE, PERSISTENCE_WINDOW, persistent_mask
-from evaluation import BULK_LABELS
-from reporting import CLEAR_WINDOWS
-from features import WINDOW_SIZE
+from core.detectors import BENIGN_QUANTILE, PERSISTENCE_WINDOW, persistent_mask
+from core.evaluation import BULK_LABELS
+from core.reporting import CLEAR_WINDOWS
+from core.features import WINDOW_SIZE
 from statemachine import (FORGET_SECONDS, TRAIN_COUNTS, FrequencyScorer, WindowedFrequencyScorer, encode,
                           fit_model, frequency_cutoff, frequency_scores_by_window, make_flows,
                           n_windows_for, pdfa_states_in_order, score_cutoff, score_flows,

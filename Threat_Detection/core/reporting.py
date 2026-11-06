@@ -32,11 +32,11 @@ class _LazyPyplot:
 
 plt = _LazyPyplot()
 
-from data_io import SNAPLEN_CEILINGS, SNAPLEN_REPORT_AT, resolve_output
-from evaluation import BULK_LABELS, TRAIN_FRACTION
-from detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, SVM_NU, THRESHOLD,
+from core.data_io import SNAPLEN_CEILINGS, SNAPLEN_REPORT_AT, resolve_output
+from core.evaluation import BULK_LABELS, TRAIN_FRACTION
+from core.detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, SVM_NU, THRESHOLD,
                        flag_stats, persistent_mask)
-from features import FEATURE_LABELS, WINDOW_SIZE
+from core.features import FEATURE_LABELS, WINDOW_SIZE
 
 __all__ = ["flag_stats", "persistent_mask", "summarize_flags", "threshold_table",
            "plot_detection", "print_matrix", "plot_matrix", "plot_detection_gap",

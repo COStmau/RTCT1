@@ -20,9 +20,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from data_io import (MANIFEST_NAME, PACKET_COLUMNS, load_capture, load_manifest, resolve_output,
+from core.data_io import (MANIFEST_NAME, PACKET_COLUMNS, load_capture, load_manifest, resolve_output,
                      timebase_issues)
-from features import make_windows
+from core.features import make_windows
 from pcap_rows import COLUMNS, capture_rows, format_cell
 
 TIER_A = {"frame_number", *PACKET_COLUMNS}

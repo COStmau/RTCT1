@@ -24,10 +24,10 @@ import numpy as np
 import pandas as pd
 
 import root_verdict
-from data_io import MANIFEST_NAME, describe_captures, load_manifest, resolve_output, timebase_issues
-from detectors import flag_stats
-from evaluation import BULK_LABELS
-from features import WINDOW_SIZE
+from core.data_io import MANIFEST_NAME, describe_captures, load_manifest, resolve_output, timebase_issues
+from core.detectors import flag_stats
+from core.evaluation import BULK_LABELS
+from core.features import WINDOW_SIZE
 from flag_scores import auroc
 from methods.scores import (FORGET_SECONDS, TRAIN_COUNTS, held_out_scores, warm_from)
 from statemachine import (fit_model, frequency_cutoff, frequency_scores_by_window,

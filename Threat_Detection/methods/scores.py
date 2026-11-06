@@ -13,9 +13,9 @@ from collections import Counter, deque
 import numpy as np
 import pandas as pd
 
-from data_io import load_capture, resolve_output, timebase_issues
-from detectors import BENIGN_QUANTILE, flag_stats
-from features import WINDOW_SIZE
+from core.data_io import load_capture, resolve_output, timebase_issues
+from core.detectors import BENIGN_QUANTILE, flag_stats
+from core.features import WINDOW_SIZE
 from methods.pdfa import (MISSING_PROB, PDFA, TRACE_LEN, encode, fit_model,
                           load_flow_packets, make_flows, segment_flows, split_flows)
 
