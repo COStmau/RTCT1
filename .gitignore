@@ -12,5 +12,8 @@ __pycache__/
 # Stray outputs from running scripts at the repo root
 /outputs/
 
+# Generated pages (3 MB, rebuilt by demo.py item 10)
+Threat_Detection/outputs/*.html
+
 # macOS
 .DS_Store
