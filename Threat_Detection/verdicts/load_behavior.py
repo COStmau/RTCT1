@@ -36,7 +36,7 @@ MIN_DECIDABLE_TAPS = 2      # decidable bulk taps needed for a verdict on A
 # Claim B
 MIN_DETECTION_RATIO = 0.50  # behavior detection / z-score detection, in every scenario
 MIN_WARM_WINDOWS = 30       # pooled warm attack windows a scenario needs to be judged
-SCENARIOS = ("injection", "lidar", "nginx")
+SCENARIOS = ("injection attack", "lidar attack", "nginx attack")   # the manifest's names
 
 
 def claim_a(bulk):

@@ -412,3 +412,33 @@ Found on the way, each now a rule with a test built from the real frame:
 - `data_io.at_snaplen` counts 64 KB frames (65535 plus the link header), which are offloaded
   super-frames, not snaplen truncation: the tcp captures have a 262144-byte snaplen. The name
   is misleading; the measurement itself is unchanged here.
+
+## Load versus behavior alerts: dropped by its own rule (2026-11-06)
+
+The idea: flag on the z-score ("load"), escalate only when the windowed SEQUENT score
+("behavior") also fires. The rule is `verdicts/load_behavior.py`, committed in `4df7dde`
+before any number existed; `experiments/load_behavior.py` measures it
+(`outputs/load_behavior.csv`, `outputs/load_behavior_bulk.csv`). One fix after the first run,
+disclosed: the rule's scenario names did not match the manifest's ("injection" against
+"injection attack"), which made claim B read undecidable. No threshold moved.
+
+**Claim A fails (tcp).** On the bulk taps the z-score control sees the step (AUROC
+0.97-1.00, onset at second 50-52, found by change point), and the behavior score sees it
+too, in the other direction: post-onset AUROC 0.18 (`node-child4`), 0.12
+(`pod-robot-controller`), 0.37 (`router-any`, inside the band). The score falls after the
+regime change, so it does not flag it, but the rule asked for "quiet", not "does not rise".
+The rule is symmetric and the verdict stands; a one-sided rule would be a new rule, written
+before it is run on this data again.
+
+**Claim B fails (tcp).** Behavior detection is 0.26 / 0.42 / 0.14 of the z-score's on
+injection / lidar / nginx, against the 0.50 bar. It does cost fewer benign windows (0.043
+against 0.453 of 161 held-out), but 75 of those 161 windows have no behavior score at all,
+and 86 / 157 / 211 warm attack windows are missing, counted as not escalated.
+
+Not part of the verdict, but worth knowing: the two channels are compared above at their own
+cutoffs, and the z-score's costs ten times the benign rate. At the benign rate the behavior
+cutoff realised, the z-score detects 0.55 / 0.16 / 0.24 against behavior's 0.15 / 0.22 / 0.10,
+so behavior is competitive on lidar and worse elsewhere. Behavior ranks better by AUROC on
+injection and lidar (0.74 / 0.63 against 0.69 / 0.52) and at chance on nginx. ptcp is worse
+on every number. Outcome: no gating; the "tag each alert load-only or behavior-involved"
+fallback is still available but rests on a channel that is blank on about half the windows.
