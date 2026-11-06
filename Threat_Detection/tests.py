@@ -322,6 +322,25 @@ class LayeringChecks(unittest.TestCase):
         project = {p.stem for p in Path(".").glob("*.py")}
         self.assertEqual(self.imported_modules("metrics") & project, set())
 
+    def test_importing_reporting_does_not_load_matplotlib(self):
+        # reporting carries console tables and the event stream; only its plotting needs
+        # matplotlib. Loading it eagerly cost ~0.5 s on every import of the core.
+        script = ("import sys; sys.path.insert(0, '.'); import reporting; "
+                  "print('matplotlib' in sys.modules)")
+        out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(), "False")
+
+    def test_reporting_still_plots_after_the_lazy_import(self):
+        import tempfile
+        path = Path(tempfile.mkdtemp()) / "gap.png"
+        frame = pd.DataFrame({"group": ["all", "all"], "method": ["tcp", "tcp"],
+                              "label": ["pod-nginx", "pod-nginx"],
+                              "scenario": ["benign", "nginx attack"],
+                              "flagged_fraction": [0.1, 0.6], "windows": [20, 20]})
+        reporting.plot_detection_gap(frame, path=str(path))
+        self.assertGreater(path.stat().st_size, 0)
+
     def test_the_layers_import_without_matplotlib(self):
         # reporting pins Agg and imports pyplot; importing it must not be required to use
         # the rest of the core. This guards the P1-5 move of matplotlib out of module scope.

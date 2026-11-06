@@ -5,13 +5,32 @@ or an image; none of them re-derives a number another module already computed.
 """
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")  # before pyplot: this subsystem renders to files, never a window
 import json
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+# matplotlib is imported on first use, not at module scope: importing this module for its
+# console tables or its event stream should not cost the 0.9 s matplotlib takes to load.
+# `plt` is a module-level name that resolves on access, so the plotting functions below
+# are unchanged.
+_PLT = None
+
+
+class _LazyPyplot:
+    """Resolves to matplotlib.pyplot on first attribute access, with the Agg backend set."""
+
+    def __getattr__(self, name):
+        global _PLT
+        if _PLT is None:
+            import matplotlib
+            matplotlib.use("Agg")   # before pyplot: renders to files, never a window
+            import matplotlib.pyplot as _pyplot
+            _PLT = _pyplot
+        return getattr(_PLT, name)
+
+
+plt = _LazyPyplot()
 
 from data_io import SNAPLEN_CEILINGS, SNAPLEN_REPORT_AT, resolve_output
 from evaluation import BULK_LABELS, TRAIN_FRACTION
