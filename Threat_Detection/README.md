@@ -13,66 +13,99 @@ packet CSVs ──► data_io ──► features ──► detectors ──► r
                 capture     windows     / score / flag    plot
 ```
 
-`data_io` → `features` → `detectors` → `reporting`. Nothing downstream reaches back
-upstream, and none of the four import `local_paths.py`, so they are portable and
-testable on their own.
+`core/data_io.py` → `core/features.py` → `core/detectors.py` → `core/reporting.py`. Nothing
+downstream reaches back upstream, and none of the four import `local_paths.py`, so they are
+portable and testable on their own. That one-way arrow is enforced by a test, not by
+convention: `core/` may not import `methods/`, `experiments/`, `verdicts/`, `story/`,
+`convert/`, `demo`, `metrics`, `statemachine` or `local_paths`.
+
+```
+core/          the subsystem. This is what goes into the project.
+methods/       the second detection method, a learned automaton.
+experiments/   one measurement per module. The evidence.
+verdicts/      keep-or-drop rules, committed before the measurement they judge.
+story/         the interactive page.
+convert/       capture files -> the sponsor's packet CSVs.
+```
 
 ## What each file is
 
-**Layers** — the reusable pipeline. Use these to build something new.
+**`core/` and `methods/` are the subsystem.** They are what goes into the project; everything
+below them is the evidence that it works, the rules it was judged by, and the pages it is
+presented on. `core` imports nothing outside itself.
+
+### The subsystem
 
 | File | What it does |
 |---|---|
-| `data_io.py` | The input format and where output goes. Names every capture, reads the packet columns, checks the timebase and snaplen saturation, builds and caches the manifest, resolves `outputs/`. |
-| `features.py` | Packets → one row per second. The 13 features, the ablation groups, and the temporal train/held-out split. Stateless: no baseline, no thresholds, no detection. |
-| `detectors.py` | Every detection method behind one interface: `fit` → `calibrate` → `score` → `flag`, with optional `explain`. The z-score baseline is median + MAD. Add one by writing a class and adding it to `REGISTRY`. |
-| `reporting.py` | Console reports, charts, the `SHOWCASE.md` handover file, and the event log the response side reads. Takes results, renders them; computes no detection logic. Pins matplotlib to `Agg`, so nothing here opens a window. |
-| `cluster.py` | The k3s cluster's shape inferred from benign traffic: nodes, pods (including host-network ones), services, conversations and where each capture listened. Used by the story page. |
-| `layout.py` | Computed positions for the story page: the prefix tree as an icicle, the learned machine in columns. |
+| `core/__init__.py` | The front door, and the whole subsystem in six calls: `load_capture` → `make_windows` → `split_reference` → `build_detector` → `pipeline` → `annotate`. Its docstring is the shortest correct description of this folder. |
+| `core/data_io.py` | The input format and where output goes. Names every capture, reads the packet columns, checks the timebase and snaplen saturation, builds and caches the manifest, resolves `outputs/`. |
+| `core/features.py` | Packets → one row per second. The 13 features, the ablation groups, and the temporal train/held-out split. Stateless: no baseline, no thresholds, no detection. |
+| `core/detectors.py` | Every detection method behind one interface: `fit` → `calibrate` → `score` → `flag`, with optional `explain`. The z-score baseline is median + MAD. Add one by writing a class and adding it to `REGISTRY`. |
+| `core/evaluation.py` | How a result is judged, in one place: the 70/30 split, the six bulk-transfer files that never calibrate, and the warm-up window. |
+| `core/reporting.py` | Console reports, charts, the `SHOWCASE.md` handover file, and the event log the response side reads. Takes results, renders them; computes no detection logic. Pins matplotlib to `Agg`, so nothing here opens a window. |
+| `methods/pdfa.py` | PDFA anomaly detection after Cao et al. (ARES 2022), learning half: packet flows to symbols, the prefix tree, ALERGIA state merging, the automaton. |
+| `methods/scores.py` | The scoring half of the same method: trace likelihood, and SEQUENT's cumulative and windowed frequency scores with their cutoffs. |
+| `methods/sweep.py` | The PDFA experiment CLI, one `flag_stats` row per capture stratum. `--flags` adds TCP SYN/RST presence to the symbol; default is the old alphabet. |
 
-**Capture conversion** — capture files to the packet CSVs `data_io` reads. Upstream of
-the layers above and independent of them; see "Capture to packet rows" below.
+### The evidence
 
-| File | What it does |
-|---|---|
-| `pcap_read.py` | The two capture containers (pcap, pcapng) to raw frames. Format from the magic number, never the extension. Reads at most 256 bytes of each frame. |
-| `pcap_rows.py` | Frames to the sponsor's 34-column packet rows, written as their CSV. Copies the sponsor's own quirks on purpose; `SPONSOR_QUIRKS` in its docstring lists them. |
-
-**The one entry point** — everything a person looks at goes through it.
+Each runs one measurement and writes its own CSV. `demo.py` runs these as documented; they
+also run on their own, as a script or with `-m`.
 
 | File | What it does |
 |---|---|
-| `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 are the experiments below; 8 regenerates every artifact; 9 runs the tests; 10 builds the interactive state-machine story page; 11 summarizes the last capture-conversion diff. |
+| `experiments/sweep.py` | Every capture against its own matched benign reference. `--groups` runs the feature-group ablation. |
+| `experiments/compare.py` | Every registered detector on the same windows, reference, and split. |
+| `experiments/feature_value.py` | Per-feature value: threshold-free separation (auc) and detection at a 5% benign budget. |
+| `experiments/flag_scores.py` | Per-window anomaly scores under the plain and flag alphabets, plus AUROC and matched-rate detection per stratum. Prints the pre-registered verdict. |
+| `experiments/windowed_scores.py` | The story page's detector, the windowed SEQUENT score, on every stratum, calibrated exactly as the page is. Quotes the windows each cutoff rests on and the realised benign rate beside every number. Prints the root-count verdict. |
+| `experiments/cv_calibration.py` | Cross-validated calibration of the windowed score (every benign window scored out of fold) against the split. Prints the pre-registered verdict: drop, so the split stays. |
+| `experiments/metrics.py` | One `auroc`, one `detection_at_rate`, one `detection_at_budget`, with the two missing-data policies stated rather than accidental. Imports nothing from the project, so any experiment can use it. |
 
-**The experiments** — each runs one measurement and writes its own CSV. `demo.py` runs
-these as documented; they also run on their own.
+### The pre-registered rules
 
-| File | What it does |
-|---|---|
-| `sweep.py` | Every capture against its own matched benign reference. `--groups` runs the feature-group ablation. |
-| `compare.py` | Every registered detector on the same windows, reference, and split. |
-| `feature_value.py` | Per-feature value: threshold-free separation (auc) and detection at a 5% benign budget. |
-| `statemachine.py` | PDFA anomaly detection after Cao et al. (ARES 2022): packet flows to symbols, ALERGIA state merging, trace likelihood flags. A second detection method; `demo.py` item 3 is its presentation. `--flags` adds TCP SYN/RST presence to the symbol; default is the old alphabet. |
-| `flag_scores.py` | Per-window anomaly scores under the plain and flag alphabets, plus AUROC and matched-rate detection per stratum. Prints the pre-registered verdict. |
-| `windowed_scores.py` | The story page's detector, the windowed SEQUENT score, on every stratum, calibrated exactly as the page is. Quotes the windows each cutoff rests on and the realised benign rate beside every number. Prints the root-count verdict. |
-| `cv_calibration.py` | Cross-validated calibration of the windowed score (every benign window scored out of fold) against the split. Prints the pre-registered verdict: drop, so the split stays. |
-| `story.py` | The state machine as one interactive page, `outputs/statemachine_story.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). One page carries every steady capture tap (`--vantages` to choose; `--vantage` picks the one it opens on): click a tap on the map or use the header picker to switch the learning and detection acts, and Act 3's *Across taps* view lines one scenario up at every tap on a shared capture-time axis. Self-contained (about 3 MB for the 8 steady taps; past 15 MB the other taps' per-trace breakdown is dropped); opens offline. `demo.py` item 10. The renderer is `story_template/`. Bulk-transfer vantages (`evaluation.BULK_LABELS`) never set a cutoff, so they are left out unless `--allow-bulk`, and the page then marks their verdicts as inspection only. Each cutoff shows how many held-out windows it rests on and how often it actually flags them; capture text is HTML-escaped in the bundle. |
-
-| `pcap_diff.py` | Regenerates every sponsor packet CSV from its capture file and diffs the two row for row, plus the window tables. Writes `outputs/pcap_diff.csv`. Reads every capture, so `demo.py` only summarizes the last run. |
-
-**Supporting files**
+Each is a keep-or-drop rule committed before the measurement it judges, with `decide()`
+applying it. They exist so a verdict cannot be chosen after seeing the numbers.
 
 | File | What it does |
 |---|---|
+| `verdicts/flag.py` | The flag-alphabet rule. |
+| `verdicts/root_count.py` | The start-state training-count rule (kept: entries). |
+| `verdicts/cv.py` | The cross-validated calibration rule (dropped). |
+
+### The presentation
+
+| File | What it does |
+|---|---|
+| `story/page.py` | The state machine as one interactive page, `outputs/statemachine_story.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). One page carries every steady capture tap (`--vantages` to choose; `--vantage` picks the one it opens on): click a tap on the map or use the header picker to switch the learning and detection acts, and Act 3's *Across taps* view lines one scenario up at every tap on a shared capture-time axis. Self-contained (about 3 MB for the 8 steady taps; past 15 MB the other taps' per-trace breakdown is dropped); opens offline. `demo.py` item 10. The renderer is `story/template/`. Bulk-transfer vantages (`core/evaluation.BULK_LABELS`) never set a cutoff, so they are left out unless `--allow-bulk`, and the page then marks their verdicts as inspection only. Each cutoff shows how many held-out windows it rests on and how often it actually flags them; capture text is HTML-escaped in the bundle. |
+| `story/cluster.py` | The k3s cluster's shape inferred from benign traffic: nodes, pods (including host-network ones), services, conversations and where each capture listened. |
+| `story/layout.py` | Computed positions for the story page: the prefix tree as an icicle, the learned machine in columns. |
+
+### Capture conversion
+
+Capture files to the packet CSVs `core/data_io.py` reads. Upstream of the subsystem and
+independent of it; see "Capture to packet rows" below.
+
+| File | What it does |
+|---|---|
+| `convert/read.py` | The two capture containers (pcap, pcapng) to raw frames. Format from the magic number, never the extension. Reads at most 256 bytes of each frame. |
+| `convert/rows.py` | Frames to the sponsor's 34-column packet rows, written as their CSV. Copies the sponsor's own quirks on purpose; `SPONSOR_QUIRKS` in its docstring lists them. |
+| `convert/diff.py` | Regenerates every sponsor packet CSV from its capture file and diffs the two row for row, plus the window tables. Writes `outputs/pcap_diff.csv`. Reads every capture, so `demo.py` only summarizes the last run. |
+
+### The entry surface
+
+| File | What it does |
+|---|---|
+| `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 are the experiments above; 8 regenerates every artifact; 9 runs the tests; 10 builds the interactive state-machine story page; 11 summarizes the last capture-conversion diff. |
+| `statemachine.py` | **A compatibility re-export, not a module with logic.** It exists so the name `statemachine` keeps resolving for older callers; the code is `methods/pdfa.py` and `methods/scores.py`. New code imports those. |
 | `tests.py` | All unit tests. |
-| `evaluation.py` | How a result is judged, in one place: the 70/30 split, the six bulk-transfer files that never calibrate, and the warm-up window. |
-| `flag_verdict.py` | The keep-or-drop rule for the flag alphabet, committed before the measurement, with `decide()` applying it. |
-| `root_verdict.py`, `cv_verdict.py` | The same kind of rule for the start-state training count (kept: entries) and for cross-validated calibration (dropped). |
-| `local_paths.py` | Your local dataset paths. Not committed; copy `local_paths.example.py` and fill it in. Only the entry points read it. |
+| `local_paths.py` | Your local dataset paths. Not committed; copy `local_paths.example.py` and fill it in. Only the entry points and experiments read it, never `core/`. |
 | `requirements.txt` | The pinned runtime: Python 3.11 with numpy, pandas, matplotlib and scikit-learn at the versions the numbers were measured under. |
 | `PROGRESS.md` | Why the design is what it is: decisions, retractions, what is not claimed, what is next. |
 | `EVENT_LOG.md` | The detection → response event contract (`LogV1`, carries the capture-relative second). |
 | `outputs/` | Everything generated. Safe to delete; `demo.py` item 8 rebuilds it. `outputs/SHOWCASE.md` is every measured result as one file. |
+
 
 ## Run it
 
@@ -105,21 +138,21 @@ The menu, in order:
 Underneath the menu, the same commands run directly:
 
 ```bash
-.venv/bin/python -m unittest tests                    # 259 tests
-.venv/bin/python sweep.py                             # all 88 captures, about 8 seconds
-.venv/bin/python sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv
-.venv/bin/python compare.py
-.venv/bin/python feature_value.py
-.venv/bin/python statemachine.py                      # PDFA sweep, 42 rows, about 13 seconds
+.venv/bin/python -m unittest tests                              # 276 tests
+.venv/bin/python experiments/sweep.py                           # all 88 captures, about 8 seconds
+.venv/bin/python experiments/sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv
+.venv/bin/python experiments/compare.py
+.venv/bin/python experiments/feature_value.py
+.venv/bin/python statemachine.py                                # PDFA sweep, 42 rows, about 13 seconds
 .venv/bin/python statemachine.py --method ptcp --out statemachine_sweep_ptcp.csv
-.venv/bin/python flag_scores.py                       # both alphabets' window scores, AUROC, verdict chart
-.venv/bin/python windowed_scores.py                   # the windowed SEQUENT score on every stratum
-.venv/bin/python cv_calibration.py                    # cross-validated calibration and its verdict
-.venv/bin/python story.py                             # interactive page, every steady tap; --vantage pod-nginx opens on it
+.venv/bin/python experiments/flag_scores.py                     # both alphabets' window scores, AUROC, verdict chart
+.venv/bin/python experiments/windowed_scores.py                 # the windowed SEQUENT score on every stratum
+.venv/bin/python experiments/cv_calibration.py                  # cross-validated calibration and its verdict
+.venv/bin/python story/page.py                                  # interactive page, every steady tap; --vantage pod-nginx opens on it
 
-.venv/bin/python pcap_diff.py                         # all 88 captures regenerated and diffed
-.venv/bin/python pcap_diff.py --max-gb 0.2            # only the 64 captures under 0.2 GB, for quick checks
-.venv/bin/python pcap_diff.py --report                # summary of the last run, no Drive needed
+.venv/bin/python convert/diff.py                                # all 88 captures regenerated and diffed
+.venv/bin/python convert/diff.py --max-gb 0.2                   # only the 64 captures under 0.2 GB, for quick checks
+.venv/bin/python convert/diff.py --report                       # summary of the last run, no Drive needed
 ```
 
 `sweep.py` writes `outputs/sweep_summary.png` and `outputs/detection_gap.png`; `flag_scores.py`

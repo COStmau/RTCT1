@@ -400,6 +400,24 @@ class EntryPointChecks(unittest.TestCase):
                               f"{path} cannot run as 'python {path}': add the bootstrap")
 
 
+class DocumentationChecks(unittest.TestCase):
+    """README.md is the file map a reader opens first; every module must be named in it."""
+
+    SKIP = {"local_paths.py", "local_paths.example.py", "__init__.py"}
+
+    def test_every_module_appears_in_the_readme(self):
+        readme = Path("README.md").read_text(encoding="utf-8")
+        missing = []
+        for path in sorted(Path(".").rglob("*.py")):
+            if ".venv" in path.parts or "__pycache__" in path.parts:
+                continue
+            if path.name in self.SKIP:
+                continue
+            if str(path) not in readme:
+                missing.append(str(path))
+        self.assertEqual(missing, [], "README.md does not name: " + ", ".join(missing))
+
+
 class FeatureLayerChecks(unittest.TestCase):
     def test_features_module_does_not_import_local_paths(self):
         script = "import sys; sys.path.insert(0, '.'); import core.features as f; print(f.WINDOW_SIZE)"
