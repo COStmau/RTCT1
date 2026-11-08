@@ -20,3 +20,7 @@ Threat_Detection/outputs/*.html
 
 # Git worktrees made for side work
 .worktrees/
+
+# Local Claude Code config and planning docs
+.claude/
+docs/superpowers/
