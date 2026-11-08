@@ -44,6 +44,7 @@ from verdicts import root_count as root_verdict
 from viz import cluster
 from viz import layout
 from viz import page as viz
+from viz import sources
 
 # The pre-refactor function names, mapped onto their layer homes. The old
 # DetectorChecks class pins behavior through these aliases so the assertions read the same
@@ -3499,6 +3500,295 @@ class PcapCorpusChecks(unittest.TestCase):
                 pcap_rows.write_capture_rows(pcap, regenerated)
                 pd.testing.assert_frame_equal(make_windows(data_io.load_capture(str(regenerated))),
                                               make_windows(data_io.load_capture(str(csv_path))))
+
+
+# --- The harness: profiles, sources, the local server --------------------------------------
+
+def _write_csv(frame, folder, name):
+    path = Path(folder) / name
+    frame.to_csv(path, index=False)
+    return path
+
+
+def _strip_volatile(bundle):
+    """A bundle as JSON with build times and provenance removed, for equality checks."""
+    parsed = json.loads(viz.to_json(bundle))
+    parsed.pop("source", None)
+    for block in parsed["vantages"].values():
+        block["meta"].pop("generated", None)
+    return parsed
+
+
+class _OutputsInTemp:
+    """Point outputs/ (uploads, converted captures, the exported page) at a temp folder."""
+
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+        from viz import sources
+        self.out = Path(tempfile.mkdtemp())
+        resolve = lambda name=None: self.out / name if name else self.out
+        self.patches = [mock.patch.object(sources, "resolve_output", resolve),
+                        mock.patch.object(viz, "resolve_output", resolve)]
+        for patch in self.patches:
+            patch.start()
+
+    def tearDown(self):
+        for patch in self.patches:
+            patch.stop()
+
+
+class ClusterProfileChecks(unittest.TestCase):
+    """The k3s address plan became a profile; the default must change nothing."""
+
+    def test_default_profile_is_todays_inference(self):
+        captures = ClusterChecks().captures()
+        found = cluster.infer_cluster(captures)
+        again = cluster.infer_cluster(captures, cluster.K3S)
+        self.assertEqual(found, again)
+        self.assertEqual(found["profile"]["name"], "k3s")
+        self.assertEqual(found["networks"], cluster.NETWORKS)
+
+    def test_kubeadm_preset_moves_the_pod_range(self):
+        self.assertEqual(cluster.classify("10.244.1.5", cluster.KUBEADM), "pod")
+        self.assertEqual(cluster.classify("10.42.1.5", cluster.KUBEADM), "private")
+        self.assertEqual(cluster.classify("10.96.0.10", cluster.KUBEADM), "service")
+        self.assertEqual(cluster.classify("10.42.1.5"), "pod")
+
+    def test_profile_round_trips_and_validates(self):
+        for profile in cluster.PROFILES.values():
+            self.assertEqual(cluster.profile_from_dict(profile.to_dict()), profile)
+        custom = cluster.profile_from_dict({"pod_cidrs": "10.1.0.0/16, 10.2.0.0/16",
+                                            "control_plane_ports": "6443 2379"})
+        self.assertEqual(custom.pod_cidrs, ("10.1.0.0/16", "10.2.0.0/16"))
+        self.assertEqual(custom.control_plane_ports, (6443, 2379))
+        with self.assertRaises(ValueError):
+            cluster.profile_from_dict({"pod_cidrs": ["10.300.0.0/16"]})
+        with self.assertRaises(ValueError):
+            cluster.profile_from_dict({"pods": ["10.1.0.0/16"]})
+
+    def test_locate_uses_the_profile_the_cluster_was_built_with(self):
+        captures = {"pod-a": flow_capture()}
+        found = cluster.infer_cluster(captures, cluster.KUBEADM)
+        self.assertEqual(cluster.locate(found, "10.244.3.9")["kind"], "pod")
+        self.assertEqual(cluster.locate(found, "10.42.3.9")["kind"], "lan")
+
+
+class SourceChecks(_OutputsInTemp, unittest.TestCase):
+    """Files in: what scan reports, what load accepts, and how assignments become a page."""
+
+    def test_scan_tells_captures_by_magic_and_guesses_roles(self):
+        import tempfile
+        root = Path(tempfile.mkdtemp())
+        (root / "benign" / "csv files").mkdir(parents=True)
+        (root / "nginx attack" / "csv files").mkdir(parents=True)
+        _write_csv(flow_capture(), root / "benign" / "csv files", "pod-web-tcp.csv")
+        _write_csv(flow_capture(), root / "nginx attack" / "csv files", "pod-web-tcp.csv")
+        (root / "odd.csv").write_bytes(_pcap_bytes([(1, 0, b"x" * 20, 20)]))   # a pcap named .csv
+        rows = {(Path(r["path"]).parent.parent.name, r["name"]): r for r in sources.scan(root)}
+        benign = rows[("benign", "pod-web-tcp.csv")]
+        attack = rows[("nginx attack", "pod-web-tcp.csv")]
+        self.assertEqual((benign["role"], benign["vantage"], benign["level"], benign["method"]),
+                         ("benign", "web", "pod", "tcp"))
+        self.assertEqual((attack["role"], attack["scenario"]), ("attack", "nginx attack"))
+        odd = next(r for r in rows.values() if r["name"] == "odd.csv")
+        self.assertEqual(odd["kind"], "pcap")
+        with self.assertRaises(ValueError):
+            sources.scan(root / "missing")
+
+    def test_a_csv_without_flow_columns_is_named_not_crashed(self):
+        import tempfile
+        folder = Path(tempfile.mkdtemp())
+        path = _write_csv(flow_capture().drop(columns=["dst_port"]), folder, "short.csv")
+        self.assertIn("dst_port", sources.describe_file(path)["problem"])
+        with self.assertRaisesRegex(ValueError, "dst_port"):
+            sources.load_packets(path)
+
+    def test_header_spelling_is_forgiven(self):
+        import tempfile
+        frame = flow_capture().rename(columns={"src_ip": "Src IP", "frame_len": "Frame Len"})
+        path = _write_csv(frame, tempfile.mkdtemp(), "spelled.csv")
+        loaded = sources.load_packets(path)
+        self.assertEqual(list(loaded.columns), statemachine.FLOW_COLUMNS)
+
+    def test_a_pcap_is_converted_then_loaded(self):
+        frames = [(1000 + s, 0, _sll2(_ipv4(_tcp(40000 + s, 80), 6, "10.42.0.5", "10.43.0.1"), 0x0800), 60)
+                  for s in range(5)]
+        path = _capture_file(_pcap_bytes(frames), "pod-x-tcp.pcapng")
+        loaded = sources.load_packets(path)
+        self.assertEqual(len(loaded), 5)
+        self.assertEqual(set(loaded["dst_ip"]), {"10.43.0.1"})
+        self.assertTrue(any((self.out / sources.CONVERTED_DIR).iterdir()))
+
+    def test_build_records_what_it_was_built_from(self):
+        import tempfile
+        folder = Path(tempfile.mkdtemp())
+        benign = _write_csv(flow_capture(), folder, "b.csv")
+        attack = _write_csv(flow_capture(burst=(20, 25)), folder, "a.csv")
+        rows = [{"path": str(benign), "role": "benign", "vantage": "web", "level": "pod"},
+                {"path": str(attack), "role": "attack", "vantage": "web", "level": "pod",
+                 "scenario": "flood"}]
+        bundle = sources.build(rows, profile=cluster.KUBEADM)
+        self.assertEqual(list(bundle["vantages"]), ["pod-web"])
+        scenarios = [c["scenario"] for c in bundle["vantages"]["pod-web"]["playback"]["captures"]]
+        self.assertEqual(scenarios, [viz.HELD_OUT, "flood"])
+        self.assertEqual([(f["role"], f["tap"]) for f in bundle["source"]["files"]],
+                         [("benign", "pod-web"), ("attack", "pod-web")])
+        self.assertEqual(bundle["cluster"]["profile"]["name"], "kubeadm")
+
+    def test_attack_only_and_ambiguous_input_is_refused(self):
+        import tempfile
+        path = str(_write_csv(flow_capture(), tempfile.mkdtemp(), "a.csv"))
+        with self.assertRaisesRegex(ValueError, "No benign capture"):
+            sources.build([{"path": path, "role": "attack", "vantage": "web", "scenario": "x"}])
+        with self.assertRaisesRegex(ValueError, "two captures"):
+            sources.build([{"path": path, "role": "benign", "vantage": "web"}] * 2)
+        with self.assertRaisesRegex(ValueError, "tap name"):
+            sources.build([{"path": path, "role": "benign", "vantage": "a b"}])
+
+    def test_upload_names_cannot_leave_their_folder(self):
+        for bad in ("../x.csv", "a/b.csv", ".hidden", "", "..", "a\\b.csv"):
+            with self.subTest(name=bad), self.assertRaises(ValueError):
+                sources.safe_upload_name(bad)
+        self.assertEqual(sources.safe_upload_name("pod-a (1).csv"), "pod-a (1).csv")
+
+    def test_replay_windows_every_second_in_order(self):
+        import tempfile
+        path = _write_csv(flow_capture(seconds=6), tempfile.mkdtemp(), "r.csv")
+        waits = []
+        windows = list(sources.ReplaySource(path, speed=4, sleep=waits.append).windows())
+        self.assertEqual([w["t"] for w in windows], list(range(6)))
+        self.assertEqual(sum(w["packets"] for w in windows), len(flow_capture(seconds=6)))
+        self.assertEqual(windows[0]["new_endpoints"], 2)
+        self.assertEqual(windows[1]["new_endpoints"], 0)
+        self.assertEqual(waits, [0.25] * 5)
+        with self.assertRaises(NotImplementedError):
+            next(sources.TapSource().windows())
+
+
+class HarnessParityChecks(unittest.TestCase):
+    """The harness must reproduce today's page: the same manifest gives the same bundle."""
+
+    def test_manifest_build_matches_the_static_page_path(self):
+        import tempfile
+        folder = Path(tempfile.mkdtemp())
+        bulk = sorted(evaluation.BULK_LABELS)[0]
+        rows = []
+        for scenario, label, frame in (
+                ("benign", "pod-lidar", flow_capture(vary=True)),
+                ("benign", "pod-nginx", flow_capture(start=1000.5)),
+                ("benign", bulk, flow_capture()),
+                ("flood attack", "pod-lidar", flow_capture(burst=(20, 25))),
+                ("flood attack", "pod-nginx", flow_capture(burst=(10, 30))),
+                ("udp attack", "pod-lidar", flow_capture(proto="udp", seconds=30))):
+            path = _write_csv(frame, folder, f"{scenario}-{label}-tcp.csv".replace(" ", "_"))
+            rows.append({"scenario": scenario, "level": data_io.level_from_label(label),
+                         "label": label, "method": "tcp", "path": str(path), "usable": True})
+        manifest = pd.DataFrame(rows)
+
+        captures = viz.benign_captures(manifest)
+        inputs = {}
+        for vantage in viz.steady_vantages(captures):
+            benign, targets, _ = viz.page_inputs(manifest, vantage, cluster_captures=captures)
+            inputs[vantage] = (benign, targets)
+        static = viz.build_pages(inputs, captures, selected=viz.DEFAULT_VANTAGE)
+        harness = sources.build(sources.manifest_assignments(manifest))
+
+        self.assertEqual(sorted(harness["vantages"]), ["pod-lidar", "pod-nginx"])
+        self.assertEqual(_strip_volatile(harness), _strip_volatile(static))
+
+
+class HarnessServerChecks(_OutputsInTemp, unittest.TestCase):
+    """The local server: one request per route, on a free port, against fixture captures."""
+
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        import threading
+        from viz import serve
+        self.folder = Path(tempfile.mkdtemp())
+        self.benign = _write_csv(flow_capture(), self.folder, "pod-web-tcp.csv")
+        self.server = serve.serve(serve.Harness(quiet=True), port=0)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        super().tearDown()
+
+    def call(self, path, body=None, headers=None, raw=None):
+        import urllib.error
+        import urllib.request
+        data = raw if raw is not None else (None if body is None else json.dumps(body).encode())
+        request = urllib.request.Request(self.base + path, data=data,
+                                         headers=headers or {"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.status, response.read().decode("utf-8")
+        except urllib.error.HTTPError as error:
+            return error.code, error.read().decode("utf-8")
+
+    def test_page_is_served_in_server_mode(self):
+        status, text = self.call("/")
+        self.assertEqual(status, 200)
+        self.assertIn("window.VIZ = null;", text)
+        self.assertIn("window.VIZ_SERVER = true;", text)
+        self.assertIn('data-act="data"', text)
+
+    def test_scan_build_and_export(self):
+        status, text = self.call("/api/scan", {"paths": [str(self.folder)]})
+        self.assertEqual(status, 200)
+        (row,) = json.loads(text)["files"]
+        self.assertEqual(row["path"], str(self.benign))
+        row["role"] = "benign"
+        status, text = self.call("/api/build", {"assignments": [row], "profile": {"name": "k3s"}})
+        self.assertEqual(status, 200, text)
+        self.assertEqual(list(json.loads(text)["vantages"]), ["pod-web"])
+        status, text = self.call("/api/state")
+        self.assertEqual(json.loads(text)["source"]["drawn"], ["pod-web"])
+        status, text = self.call("/api/export")
+        self.assertEqual(status, 200)
+        self.assertIn("window.VIZ_SERVER = false;", text)
+        self.assertTrue((self.out / "harness_export.html").exists())
+        self.assertFalse((self.out / viz.PAGE_HTML).exists())
+
+    def test_errors_come_back_as_messages(self):
+        status, text = self.call("/api/build", {"assignments": []})
+        self.assertEqual(status, 400)
+        self.assertIn("No benign capture", json.loads(text)["error"])
+        status, text = self.call("/api/scan", {"paths": [str(self.folder / "nope")]})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.call("/api/nothing")[0], 404)
+
+    def test_upload_lands_in_the_session_folder_and_refuses_escapes(self):
+        body = self.benign.read_bytes()
+        status, text = self.call("/api/upload", raw=body, headers={"X-Filename": "up.csv"})
+        self.assertEqual(status, 200, text)
+        stored = Path(json.loads(text)["file"]["path"])
+        self.assertEqual(stored.read_bytes(), body)
+        self.assertEqual(stored.parent.parent, self.out / sources.UPLOAD_DIR)
+        status, _ = self.call("/api/upload", raw=body, headers={"X-Filename": "../x.csv"})
+        self.assertEqual(status, 400)
+
+    def test_live_streams_windows_then_ends(self):
+        import urllib.parse
+        query = urllib.parse.urlencode({"path": str(self.benign), "speed": 10000})
+        status, text = self.call(f"/api/live?{query}")
+        self.assertEqual(status, 200)
+        events = [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: {\"t\"")]
+        self.assertEqual([e["t"] for e in events], list(range(60)))
+        self.assertIn("event: end", text)
+        self.assertEqual(self.call("/api/live?path=/nonexistent")[0], 400)
+
+
+class StaticPageModeChecks(unittest.TestCase):
+    def test_static_page_is_not_server_mode(self):
+        import tempfile
+        built = viz.build_page(flow_capture(), {}, {}, "pod-lidar")
+        page = viz.write_html(built, Path(tempfile.mkdtemp()) / "p.html").read_text()
+        self.assertIn("window.VIZ_SERVER = false;", page)
+        self.assertNotIn("window.VIZ = null;", page)
 
 
 if __name__ == "__main__":

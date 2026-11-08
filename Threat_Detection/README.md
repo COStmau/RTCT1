@@ -54,9 +54,11 @@ outside itself.
 
 | File | What it does |
 |---|---|
-| `viz/page.py` | The state machine as one interactive page, `outputs/state_machine.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). One page carries every steady capture tap (`--vantages` to choose; `--vantage` picks the one it opens on): click a tap on the map or use the header picker to switch the learning and detection acts, and Act 3's *Across taps* view lines one scenario up at every tap on a shared capture-time axis. Self-contained (about 3 MB for the 8 steady taps; past 15 MB the other taps' per-trace breakdown is dropped); opens offline. `demo.py` item 10. The renderer is `viz/template/`. Bulk-transfer vantages (`core/evaluation.BULK_LABELS`) never set a cutoff, so they are left out unless `--allow-bulk`, and the page then marks their verdicts as inspection only. Each cutoff shows how many held-out windows it rests on and how often it actually flags them; capture text is HTML-escaped in the bundle. |
+| `viz/page.py` | The state machine as one interactive page, `outputs/state_machine.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). One page carries every steady capture tap (`--vantages` to choose; `--vantage` picks the one it opens on): click a tap on the map or use the header picker to switch the learning and detection acts, and the Detection tab's *Across taps* view lines one scenario up at every tap on a shared capture-time axis. Self-contained (about 3 MB for the 8 steady taps; past 15 MB the other taps' per-trace breakdown is dropped); opens offline. `demo.py` item 10. The renderer is `viz/template/`. Bulk-transfer vantages (`core/evaluation.BULK_LABELS`) never set a cutoff, so they are left out unless `--allow-bulk`, and the page then marks their verdicts as inspection only. Each cutoff shows how many held-out windows it rests on and how often it actually flags them; capture text is HTML-escaped in the bundle. |
 | `viz/cluster.py` | The k3s cluster's shape inferred from benign traffic: nodes, pods (including host-network ones), services, conversations and where each capture listened. |
 | `viz/layout.py` | Computed positions for the page: the prefix tree as an icicle, the learned machine in columns. |
+| `viz/serve.py` | The harness: the same page served from a local, standard-library server, so its **Data** tab can load other captures and rebuild. Binds 127.0.0.1 only. Opens already built on today's page when `local_paths.KUBEDATA_ROOT` is set. `demo.py` item 12. See "The harness" below. |
+| `viz/sources.py` | What the harness reads: scans folders (CSV, pcap, pcapng, told by magic number), loads a file as flow packets (converting captures through `convert/`), turns role/tap assignments into a bundle with its provenance, and replays a capture as a stream of 1-second windows (`ReplaySource`; `TapSource` is the stub for a live collector). |
 
 ### Capture conversion
 
@@ -72,7 +74,7 @@ independent of it; see "Capture to packet rows" below.
 
 | File | What it does |
 |---|---|
-| `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 run experiments from `dev/`; 8 regenerates every artifact; 9 runs the tests (`dev/tests.py`); 10 builds the interactive state-machine visualization page; 11 summarizes the last capture-conversion diff. |
+| `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 run experiments from `dev/`; 8 regenerates every artifact; 9 runs the tests (`dev/tests.py`); 10 builds the interactive state-machine visualization page; 11 summarizes the last capture-conversion diff; 12 starts the harness (`viz/serve.py`). |
 | `local_paths.py` | Your local dataset paths. Not committed; copy `local_paths.example.py` and fill it in. Only the entry points and experiments read it, never `core/`. |
 | `dev/` | Development material, not shipped: experiments, verdicts, tests and design notes. Mapped in `dev/README.md`. |
 | `requirements.txt` | The pinned runtime: Python 3.11 with numpy, pandas, matplotlib and scikit-learn at the versions the numbers were measured under. |
@@ -106,6 +108,7 @@ The menu, in order:
  9  Tests           the unit suite
 10  Visualization   the state machine learned and replayed, as an interactive page
 11  Pcap diff       regenerated packet rows against the sponsor CSVs (last run's summary)
+12  Harness         the visualization served live: load any captures on its Data tab
 ```
 
 Items 4-7, 9 and 11 run scripts in `dev/`; in a copy without `dev/` they say so and skip.
@@ -121,6 +124,50 @@ The experiments, the tests and the capture diff run from `dev/`; their commands 
 Generated files always land in `Threat_Detection/outputs/`, whichever directory you run
 from. Delete `outputs/capture_manifest.csv` after any dataset change, or the sweep scores
 the previous inventory.
+
+## The harness
+
+`viz/page.py` bakes one dataset into a static page. The harness serves that page live, so
+someone with other captures (another cluster, another attack) can use it without editing
+code:
+
+```bash
+cd Threat_Detection
+python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once
+.venv/bin/python viz/serve.py --open                                    # or: demo.py 12
+```
+
+It adds no dependencies. Options: `--port`, `--data <folder>` (scanned when the page opens),
+and `--no-preload` (start empty rather than building today's KUBEDATA page). The page gains
+a first tab, **Data**:
+
+1. **Source.** Load the KUBEDATA manifest (tcp or ptcp), scan any folders (recursively), or
+   drop files onto the page. Uploads go to `outputs/uploads/`.
+2. **Captures.** One row per file. Set its role, level, tap name and scenario:
+   - **benign** trains a tap. The first 70% is learned and the last 30% is held out to set
+     its cutoffs. Every benign capture also draws the cluster map. A tap needs exactly one.
+   - **attack** is replayed against the tap of the same name.
+   - **ignore** leaves the file out.
+   - A tap is named `level-name` (`pod-nginx`, `node-child1`, `router-any`). The level tells
+     the map where the capture listened.
+   Names and folders are used to guess these; check them.
+3. **Cluster profile.** The address plan the map assumes, held in `viz/cluster.ClusterProfile`:
+   pod and service CIDRs, the per-node pod subnet size, control-plane, kubelet and NFS ports,
+   and flannel's `.0`/`.1` rule. `k3s` is the testbed's. `kubeadm` uses 10.244/16 pods and
+   10.96/12 services. Any field can be edited.
+4. **Parameters and build.** Set the anomaly clock, the tap to open on, and whether to draw
+   bulk-transfer taps. Build runs the same pipeline the static page does, then the other tabs
+   redraw. **Export static page** writes the result as one offline file (`outputs/harness_export.html`; it never overwrites `state_machine.html`). Its Data tab lists
+   what it was built from.
+5. **Live input (preview).** A capture replayed at 1-200x as a stream of 1-second windows
+   (packets, bytes, flows, new endpoints). It is the contract a live collector will meet;
+   detection is not wired to it yet.
+
+A capture is a packet CSV with `ts, frame_len, src_ip, dst_ip, src_port, dst_port, proto`
+(headers like `Src IP` are accepted), or a pcap/pcapng file. Captures are converted to the
+sponsor's 34-column rows by `convert/` and cached in `outputs/converted/`. With the manifest
+loaded and the default settings, the harness builds exactly the bundle `viz/page.py` writes.
+`HarnessParityChecks` holds it to that.
 
 ## Capture to packet rows
 

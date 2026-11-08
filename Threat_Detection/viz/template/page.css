@@ -344,3 +344,62 @@ table.taps tbody tr:hover td { background: var(--surface-2); }
 .demo-source { display: inline-block; margin-top: 8px; font-size: 13px; color: var(--ink-2);
                background: var(--surface-2); border: 1px solid var(--ring); border-radius: 999px; padding: 3px 12px; }
 .demo-source b { color: var(--ink); font-weight: 650; }
+
+/* data tab: a form over the canvas, served by viz/serve.py */
+.data-view { position: absolute; inset: 0; overflow: auto; display: none; }
+.app.form-act .data-view { display: block; }
+.app.form-act .canvas > svg, .app.form-act .demo-layer { display: none; }
+.canvas .live-chart svg { position: static; inset: auto; width: 100%; height: 150px; display: block; }
+.data-wrap { max-width: 1100px; margin: 0 auto; padding: 18px 20px 40px; display: flex;
+             flex-direction: column; gap: 14px; }
+.data-card { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px;
+             padding: 14px 16px; }
+.data-card h3 { margin: 0 0 10px; font-size: 14px; font-weight: 650; display: flex; gap: 10px;
+                align-items: baseline; }
+.data-card h3 .t-2 { font-weight: 400; font-size: 12.5px; color: var(--ink-2); }
+.data-card p { margin: 0 0 10px; color: var(--ink-2); }
+.data-card pre { background: var(--surface-2); padding: 8px 10px; border-radius: 8px; margin: 0;
+                 overflow-x: auto; }
+.data-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin-bottom: 10px; }
+.data-row.small { margin: 8px 0 0; }
+.data-row .grow { flex: 1; min-width: 220px; }
+.data-row .spacer { flex: 1; }
+.data-card label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.data-card label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--ink-2);
+                         font-size: 13px; }
+.data-card input:not([type=checkbox]), .data-card select, .data-card textarea {
+  font: inherit; font-size: 13px; color: var(--ink); background: var(--surface-2);
+  border: 1px solid var(--ring); border-radius: 7px; padding: 5px 8px; min-width: 0; }
+.data-card textarea { resize: vertical; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+.data-card button, .data-card a.button { font: inherit; font-size: 13px; color: var(--ink);
+  background: var(--surface-2); border: 1px solid var(--ring); border-radius: 7px; padding: 6px 12px;
+  cursor: pointer; text-decoration: none; white-space: nowrap; }
+.data-card button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+.data-card button:disabled, .data-card a.button.disabled { opacity: .45; cursor: default; pointer-events: none; }
+.data-card .seg button { padding: 6px 10px; }
+.data-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.drop { border: 1.5px dashed var(--axis); border-radius: 10px; padding: 14px; text-align: center;
+        cursor: pointer; color: var(--ink-2) !important; font-size: 13px !important; display: block !important; }
+.drop.over { border-color: var(--accent); background: var(--surface-2); }
+.table-scroll { max-height: 360px; overflow: auto; border: 1px solid var(--ring); border-radius: 8px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.data-table th { text-align: left; font-weight: 600; color: var(--muted); position: sticky; top: 0;
+                 background: var(--surface); padding: 6px 8px; border-bottom: 1px solid var(--ring); }
+.data-table td { padding: 4px 8px; border-bottom: 1px solid var(--ring); vertical-align: middle;
+                 max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.data-table tr.off td { opacity: .5; }
+.data-table.compact td { padding: 3px 8px; }
+.data-warn { color: var(--serious); font-size: 12px; }
+.data-error { background: color-mix(in srgb, var(--critical) 14%, var(--surface)); color: var(--ink);
+              border: 1px solid var(--critical); border-radius: 10px; padding: 10px 14px; }
+.data-note { background: var(--surface-2); color: var(--ink-2); border-radius: 10px; padding: 10px 14px; }
+.data-busy { background: var(--surface-2); color: var(--ink); border-left: 3px solid var(--accent);
+             border-radius: 6px; padding: 10px 14px; }
+.badge { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+         color: var(--ink-2); background: var(--surface-2); border-radius: 5px; padding: 2px 6px; }
+.live-chart { min-height: 150px; margin-top: 8px; }
+.live-chart .axis text { fill: var(--muted); font-size: 10px; }
+.live-chart .axis path, .live-chart .axis line { stroke: var(--axis); }
+.data-card details summary { cursor: pointer; color: var(--ink-2); font-size: 13px; margin-top: 4px; }
+.data-card .readout { font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 12.5px; }
+.data-card .t-2 { color: var(--ink-2); }

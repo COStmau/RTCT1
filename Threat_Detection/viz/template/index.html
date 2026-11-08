@@ -15,9 +15,10 @@
     </div>
     <label class="pick">tap <select id="vantage" aria-label="capture tap"></select></label>
     <nav class="acts" role="tablist">
-      <button role="tab" data-act="cluster"><b>1</b> Cluster</button>
-      <button role="tab" data-act="learning"><b>2</b> Learning</button>
-      <button role="tab" data-act="detection"><b>3</b> Detection</button>
+      <button role="tab" data-act="data"><b>1</b> Data</button>
+      <button role="tab" data-act="cluster"><b>2</b> Cluster</button>
+      <button role="tab" data-act="learning"><b>3</b> Learning</button>
+      <button role="tab" data-act="detection"><b>4</b> Detection</button>
     </nav>
     <div class="seg mode" role="group" aria-label="mode">
       <button data-mode="demo" title="A short concept walkthrough">Demo</button>
@@ -27,7 +28,7 @@
   </header>
   <div class="controls" id="controls"></div>
   <main class="stage">
-    <section class="canvas" id="canvas"><svg id="svg"></svg><div class="demo-layer" id="demo"></div></section>
+    <section class="canvas" id="canvas"><svg id="svg"></svg><div class="demo-layer" id="demo"></div><div class="data-view" id="dataview"></div></section>
     <aside class="panel" id="panel"></aside>
   </main>
   <div class="tooltip" id="tooltip" role="status"></div>

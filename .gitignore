@@ -24,3 +24,7 @@ Threat_Detection/outputs/*.html
 # Local Claude Code config and planning docs
 .claude/
 docs/superpowers/
+
+# Harness working files: uploaded and converted captures
+Threat_Detection/outputs/uploads/
+Threat_Detection/outputs/converted/

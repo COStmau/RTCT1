@@ -400,6 +400,13 @@ def pcap_diff():
     _run("dev/experiments/pcap_diff.py", "--report")
 
 
+# --- 12. The harness --------------------------------------------------------------
+
+def harness():
+    """The visualization served live: its Data tab loads other captures and rebuilds."""
+    _run("viz/serve.py", "--open")
+
+
 # --- 8. Everything ---------------------------------------------------------------
 
 def everything():
@@ -424,6 +431,7 @@ ITEMS = [
     ("Tests", run_tests, "the unit suite"),
     ("Visualization", viz_page, "the state machine learned and replayed, as an interactive page"),
     ("Pcap diff", pcap_diff, "regenerated packet rows against the sponsor CSVs"),
+    ("Harness", harness, "the visualization served live: load any captures on its Data tab"),
 ]
 
 
