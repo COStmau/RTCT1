@@ -1,4 +1,4 @@
-"""Load channel against behavior channel, judged by verdicts/load_behavior.py.
+"""Load channel against behavior channel, judged by dev/verdicts/load_behavior.py.
 
 The load channel is the z-score detector (all 13 features, fitted on the first 70% of the
 benign recording, cutoff THRESHOLD). The behavior channel is the windowed SEQUENT score of
@@ -14,13 +14,15 @@ Claim B runs on the steady taps. A warm attack window is flagged by a channel wh
 above that channel's cutoff; a window the behavior score could not score is not flagged. The
 per-window cross-tabulation is written beside the counts so the missing column is visible.
 
-Run it with:  .venv/bin/python experiments/load_behavior.py
+Run it with:  .venv/bin/python dev/experiments/load_behavior.py
 """
 import sys
 from pathlib import Path
 
-# A script run as `python experiments/load_behavior.py` gets experiments/ as sys.path[0].
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# A script run as `python dev/experiments/load_behavior.py` gets dev/experiments/ as sys.path[0], so the
+# Threat_Detection root (core, methods, convert) and dev/ (experiments, verdicts) go back on
+# the path before any project import.
+sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).resolve().parents[1])]
 
 import argparse
 

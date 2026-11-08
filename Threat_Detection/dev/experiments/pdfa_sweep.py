@@ -1,8 +1,16 @@
 """The PDFA experiment: one flag_stats row per capture stratum.
 
-Run with:  .venv/bin/python -m methods.sweep
-           .venv/bin/python statemachine.py        (same thing, kept as the old entry point)
+Run with:  .venv/bin/python dev/experiments/pdfa_sweep.py
+           .venv/bin/python dev/statemachine.py      (same thing, kept as the old entry point)
 """
+import sys
+from pathlib import Path
+
+# A script run as `python dev/experiments/pdfa_sweep.py` gets dev/experiments/ as sys.path[0], so the
+# Threat_Detection root (core, methods, convert) and dev/ (experiments, verdicts) go back on
+# the path before any project import.
+sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).resolve().parents[1])]
+
 import numpy as np
 
 from core.data_io import MANIFEST_NAME, load_manifest, resolve_output

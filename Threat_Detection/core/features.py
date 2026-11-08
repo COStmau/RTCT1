@@ -33,7 +33,7 @@ FEATURE_LABELS = {
 # (destination diversity, TCP flags, protocol mix) plus packet_count, which was put back
 # because without a volume term injection attacks lose ranking. The reasoning and the numbers
 # are in PROGRESS.md ("Eight-feature set", "Hybrid feature set"); a test keeps this list equal
-# to the candidate verdicts/feature_set_hybrid.py judged.
+# to the candidate dev/verdicts/feature_set_hybrid.py judged.
 DETECTION_FEATURES = ("packet_count", "unique_dst_ips", "unique_dst_ports", "syn_count",
                       "rst_count", "http_count", "dns_count", "https_count", "http_frac")
 

@@ -17,3 +17,6 @@ Threat_Detection/outputs/*.html
 
 # macOS
 .DS_Store
+
+# Git worktrees made for side work
+.worktrees/

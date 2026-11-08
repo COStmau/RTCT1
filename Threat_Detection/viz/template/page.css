@@ -250,3 +250,97 @@ table.taps th { text-align: left; color: var(--ink-2); font-weight: 600; padding
 table.taps td { padding: 4px 6px; border-bottom: 1px solid var(--grid); }
 table.taps tr.selected td { background: color-mix(in srgb, var(--accent) 8%, transparent); font-weight: 600; }
 table.taps tbody tr:hover td { background: var(--surface-2); }
+
+/* demo mode: one idea per slide, the panel and every .detail label hidden */
+.mode { margin-left: 4px; }
+.mode button { font: inherit; font-size: 13px; color: var(--ink-2); padding: 6px 12px; cursor: pointer; }
+.mode button[aria-pressed="true"] { color: var(--ink); }
+.demo-layer { position: absolute; inset: 0; pointer-events: none; display: none; }
+.app.demo .demo-layer { display: block; }
+.app.demo .stage { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.app.demo .panel, .app.demo .acts, .app.demo .detail { display: none; }
+.app.demo .tap.focus .tap-halo { animation: tap-pulse 1.8s ease-out infinite;
+                                 transform-box: fill-box; transform-origin: center; }
+@keyframes tap-pulse { 0% { transform: scale(1); opacity: .8; } 100% { transform: scale(2.6); opacity: 0; } }
+
+.demo-caption { position: absolute; left: 40px; right: 260px; top: 22px; }
+.demo-title { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+.demo-line { font-size: 16px; color: var(--ink-2); margin-top: 6px; }
+.demo-corner { position: absolute; top: 22px; right: 40px; display: flex; flex-direction: column;
+               align-items: flex-end; gap: 10px; pointer-events: none; }
+.demo-status { font-size: 15px; padding: 8px 16px; }
+/* the named idea a slide introduces: small, quiet, fades in with the slide */
+.demo-topic { display: flex; flex-direction: column; align-items: flex-end; text-align: right;
+              padding: 6px 12px; border-right: 3px solid var(--accent); animation: topic-in .5s ease-out both .15s; }
+.demo-topic b { font-size: 15px; font-weight: 700; letter-spacing: .02em; color: var(--ink); }
+.demo-topic span { font-size: 12px; color: var(--muted); margin-top: 2px; }
+@keyframes topic-in { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .demo-topic { animation: none; } }
+.demo-status[hidden] { display: none; }
+
+.demo-cards { position: absolute; left: 40px; right: 40px; display: flex; flex-wrap: wrap;
+              gap: 18px; justify-content: center; pointer-events: auto; }
+.demo-cards.side { left: auto; width: 320px; flex-direction: column; }
+.demo-card { background: var(--surface); border: 1px solid var(--ring); border-radius: 14px;
+             box-shadow: var(--shadow); padding: 16px 20px; min-width: 260px; }
+.demo-sym { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 600;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.demo-sym .sw { width: 14px; height: 14px; border-radius: 3px; }
+.demo-parts { display: grid; grid-template-columns: repeat(3, auto); gap: 14px; margin-top: 12px; }
+.demo-parts span { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); }
+.demo-parts b { font-size: 14px; color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.canvas .demo-card svg { position: static; inset: auto; width: 100%; height: auto; display: block; margin-top: 6px; }
+.demo-count { font-size: 12.5px; color: var(--muted); margin-top: 10px; }
+.demo-k { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.demo-verdict { font-size: 18px; font-weight: 650; color: var(--good-ink); margin: 4px 0 10px; }
+.demo-key { display: flex; gap: 14px; font-size: 12.5px; color: var(--ink-2); margin-bottom: 4px; }
+.demo-key span { display: inline-flex; align-items: center; gap: 6px; }
+.demo-key i { width: 10px; height: 10px; border-radius: 50%; }
+.demo-big { font-size: 56px; font-weight: 700; line-height: 1; letter-spacing: -0.03em; }
+.demo-swatches { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+.demo-swatches span { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+                      color: #fff; font-size: 12px; font-weight: 700; }
+.demo-trace { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; }
+.demo-trace .chip { font-size: 15px; padding: 7px 12px 7px 10px; border-radius: 8px; background: var(--surface); }
+.demo-trace .chip .sw { width: 11px; height: 11px; }
+.demo-arrow { color: var(--muted); font-size: 18px; }
+.demo-frame { fill: none; stroke: var(--ink); stroke-width: 2.5px; }
+
+.controls .dots { display: inline-flex; align-items: center; gap: 6px; }
+.controls .dots button { width: 10px; height: 10px; padding: 0; border: 0; border-radius: 5px;
+                         background: var(--axis); transition: width .2s, background .2s; }
+.controls .dots button.on { width: 26px; background: var(--accent); }
+.controls button:disabled { opacity: .4; cursor: default; }
+
+@media (max-width: 760px) {
+  .demo-caption { right: 16px; left: 16px; }
+  .demo-title { font-size: 22px; }
+  .demo-corner { top: auto; bottom: 12px; right: 16px; }
+  .demo-topic span { display: none; }
+  .demo-cards { left: 16px; right: 16px; }
+  .demo-cards.side { display: none; }
+}
+
+/* demo timeline: play, scrubber, time, speed; it fills the space between the slide nav and Replay */
+.controls .timeline { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.controls .timeline input[type=range] { min-width: 120px; }
+.controls .timeline .readout { min-width: 9.5em; text-align: right; }
+.controls .timeline .seg button { padding: 5px 9px; }
+@media (max-width: 760px) { .controls .timeline { flex-basis: 100%; order: 9; } }
+
+/* slide 5's side cards: the running tally and the current step */
+.demo-tally { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.demo-tally span { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); }
+.demo-tally b { font-size: 24px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.demo-verdict.new { color: var(--red); }
+.demo-path { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); }
+.demo-path .chip { font-size: 12px; }
+.demo-rule { font-size: 14.5px; line-height: 1.45; color: var(--ink-2); margin: 8px 0 0; }
+
+/* a trace that fell off the machine, on the floor of the frequency chart */
+.fell-mark { fill: var(--serious); font-size: 11px; font-weight: 700; }
+
+/* which recording a replay slide plays */
+.demo-source { display: inline-block; margin-top: 8px; font-size: 13px; color: var(--ink-2);
+               background: var(--surface-2); border: 1px solid var(--ring); border-radius: 999px; padding: 3px 12px; }
+.demo-source b { color: var(--ink); font-weight: 650; }

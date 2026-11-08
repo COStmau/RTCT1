@@ -19,14 +19,15 @@ What the verdict reads, per tap:
   - scale_ratio: median |full machine - fold machine| on attack windows (out of sample for
     every machine), over the interquartile range of the benign windows.
 
-Run it with:  .venv/bin/python cv_calibration.py
+Run it with:  .venv/bin/python dev/experiments/cv_calibration.py
 """
 import sys
 from pathlib import Path
 
-# A script run as `python experiments/cv_calibration.py` gets experiments/ as sys.path[0], so
-# the project root has to go back on the path before any project import.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# A script run as `python dev/experiments/cv_calibration.py` gets dev/experiments/ as sys.path[0], so the
+# Threat_Detection root (core, methods, convert) and dev/ (experiments, verdicts) go back on
+# the path before any project import.
+sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).resolve().parents[1])]
 
 import argparse
 

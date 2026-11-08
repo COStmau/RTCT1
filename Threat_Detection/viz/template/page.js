@@ -9,6 +9,7 @@
 const B = window.VIZ;
 const VANTAGES = Object.keys(B.vantages);
 let S = null;
+let mode = "detail";   // "detail": the three acts; "demo": the short concept walkthrough
 const svg = d3.select("#svg");
 const panel = d3.select("#panel");
 const controls = d3.select("#controls");
@@ -36,6 +37,7 @@ function size() {
 }
 
 function showTip(event, html) {
+  if (mode === "demo") return;
   tip.html(html).classed("on", true);
   const pad = 14, box = tip.node().getBoundingClientRect();
   let x = event.clientX + pad, y = event.clientY + pad;
@@ -165,11 +167,11 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
       if (!compact) {
         const lines = h.name ? [`${h.ip} · ${h.roles.join(" · ")}`, h.pod_cidr ? `pods ${h.pod_cidr}` : "no pod subnet"]
                              : ["seen in traffic only"];
-        lines.forEach((line, i) => hostG.append("text").attr("class", "t-small t-muted")
+        lines.forEach((line, i) => hostG.append("text").attr("class", "t-small t-muted detail")
           .attr("x", r.x + 12).attr("y", r.y + 35 + i * 13).text(fit(line, r.w - 24)));
       }
     } else if (!compact) {
-      hostG.append("text").attr("class", "t-small t-muted").attr("x", r.x + 12).attr("y", r.y + 20)
+      hostG.append("text").attr("class", "t-small t-muted detail").attr("x", r.x + 12).attr("y", r.y + 20)
         .text("pods with no claimed node");
     }
     hover(hostG.append("rect").attr("x", r.x).attr("y", r.y).attr("width", r.w).attr("height", head)
@@ -218,8 +220,8 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     .attr("x", box.x).attr("y", upY - 3).attr("width", box.w).attr("height", 6).attr("rx", 3);
   pos.set("uplink", { x: box.x + box.w * 0.92, y: upY, kind: "network" });
   if (!compact) {
-    g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", upY - 8).text("LAN uplink");
-    g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", top.y + top.h * 0.24 + 4).text("outside");
+    g.append("text").attr("class", "t-section detail").attr("x", box.x).attr("y", upY - 8).text("LAN uplink");
+    g.append("text").attr("class", "t-section detail").attr("x", box.x).attr("y", top.y + top.h * 0.24 + 4).text("outside");
   }
   outside.forEach((e, i) => {
     const ex = box.x + box.w * (0.16 + 0.8 * (i + 0.5) / outside.length), ey = top.y + top.h * 0.24;
@@ -230,7 +232,7 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
         : `<div class="tt-title">${d.kind === "internet" ? "the internet" : "LAN device " + d.ip}</div>
            ${d.note ? `<div class="tt-row">${d.note}; not proven to be a node</div>` : ""}`)
         + (d.new ? `<div class="tt-row">never seen in benign traffic</div>` : ""));
-    if (!compact) g.append("text").attr("class", "t-small t-2").attr("text-anchor", "middle")
+    if (!compact) g.append("text").attr("class", "t-small t-2 detail").attr("text-anchor", "middle")
       .attr("x", ex).attr("y", ey + 23).text(e.kind === "internet" ? "internet" : e.ip);
   });
 
@@ -239,7 +241,7 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
   g.append("rect").attr("class", "band").attr("x", box.x).attr("y", oy - overlay.h * 0.3)
     .attr("width", box.w).attr("height", overlay.h * 0.6).attr("rx", 6);
   pos.set("overlay", { x: box.x + box.w * 0.92, y: oy, kind: "network" });
-  if (!compact) g.append("text").attr("class", "t-section").attr("x", box.x + 10).attr("y", oy + 4)
+  if (!compact) g.append("text").attr("class", "t-section detail").attr("x", box.x + 10).attr("y", oy + 4)
     .text("flannel overlay · pod-to-pod across nodes");
 
   // services (the cluster's virtual IPs) along the bottom
@@ -250,10 +252,10 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     hover(g.append("rect").attr("class", `svc ${s.new ? "new" : ""}`).attr("x", sx - w / 2).attr("y", sy - h / 2)
       .attr("width", w).attr("height", h).attr("rx", h / 2).datum(s),
       d => `<div class="tt-title">service ${d.ip}</div><div class="tt-row">${d.port_names.join(", ") || "no well-known port"}</div>`);
-    if (!compact) g.append("text").attr("text-anchor", "middle").attr("x", sx).attr("y", sy + 4)
+    if (!compact) g.append("text").attr("class", "detail").attr("text-anchor", "middle").attr("x", sx).attr("y", sy + 4)
       .text(`${s.ip}${s.port_names.length ? " · " + s.port_names.join(", ") : ""}`).style("pointer-events", "none");
   });
-  if (!compact && cluster.services.length) g.append("text").attr("class", "t-section")
+  if (!compact && cluster.services.length) g.append("text").attr("class", "t-section detail")
     .attr("x", box.x).attr("y", services.y + 12).text("services");
 
   // conversations: one curve per element pair, width by log packets, behind everything
@@ -812,16 +814,54 @@ function rebuild() {
 // index of the last trace at or before t, -1 if none
 const traceAt = t => d3.bisectRight(capture().tt, t) - 1;
 
-function machineView(g, box) {
+// where each state sits in `box`: the layout as computed; with `turn`, turned a quarter when
+// that leaves the two closest states further apart; with `ring`, spaced evenly around an
+// ellipse filling the box, start state at the top, in the computed layout's order around its
+// middle. A layered layout lines a busy layer up in one row and its edges run over each
+// other; on a ring no three states line up, so every edge has its own path.
+function stateSpot(states, box, pad, { turn = false, ring = false } = {}) {
+  const make = flip => s => {
+    const u = flip ? s.y : s.x, v = flip ? s.x : s.y;
+    return [box.x + pad + u * (box.w - 2 * pad), box.y + pad + v * (box.h - 2 * pad)];
+  };
+  if (ring) return ringSpot(states, box, pad, make(false));
+  if (!turn) return make(false);
+  const gap = at => d3.min(states.flatMap((a, i) => states.slice(i + 1)
+    .map(b => Math.hypot(at(a)[0] - at(b)[0], at(a)[1] - at(b)[1])))) ?? Infinity;
+  return gap(make(true)) > gap(make(false)) ? make(true) : make(false);
+}
+
+function ringSpot(states, box, pad, base) {
+  const cx = box.x + box.w / 2, cy = box.y + box.h / 2 + 8;   // a little low: loops rise above states
+  if (states.length < 2) return () => [cx, cy];
+  const rx = Math.max(box.w / 2 - pad - 24, 10), ry = Math.max(box.h / 2 - pad - 8, 10);
+  // clockwise order around the computed layout's middle, from the start state
+  const mx = d3.mean(states, s => base(s)[0]), my = d3.mean(states, s => base(s)[1]);
+  const turnOf = s => Math.atan2(base(s)[0] - mx, my - base(s)[1]);
+  const start = states.find(s => s.id === 0) || states[0], a0 = turnOf(start);
+  const order = states.slice().sort((a, b) => a === start ? -1 : b === start ? 1
+    : ((turnOf(a) - a0 + 4 * Math.PI) % (2 * Math.PI)) - ((turnOf(b) - a0 + 4 * Math.PI) % (2 * Math.PI)));
+  // equal steps along the ellipse itself, so a wide box does not bunch states at its ends
+  const N = 720, pts = d3.range(N + 1).map(i => {
+    const t = i / N * 2 * Math.PI;
+    return [cx + rx * Math.sin(t), cy - ry * Math.cos(t)];
+  });
+  const run = [0];
+  for (let i = 1; i <= N; i++) run.push(run[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const spot = new Map(order.map((s, k) => [s.id, pts[Math.min(N, d3.bisectLeft(run, run[N] * k / order.length))]]));
+  return s => spot.get(s.id);
+}
+
+function machineView(g, box, { turn = false, ring = false } = {}) {
   const states = L.pdfa.states;
   const pad = 60;
-  const at = s => [box.x + pad + s.x * (box.w - 2 * pad), box.y + pad + s.y * (box.h - 2 * pad)];
+  const at = stateSpot(states, box, pad, { turn, ring });
   // each state plus its clock ring must fit halfway to its own nearest neighbour
   const nearest = new Map(states.map(a => [a.id, d3.min(states.filter(b => b !== a),
     b => Math.hypot(at(a)[0] - at(b)[0], at(a)[1] - at(b)[1])) ?? Infinity]));
   const rScale = d3.scaleSqrt().domain([0, d3.max(states, s => s.visits)]).range([12, Math.min(40, box.h / 5)]);
   const radius = s => Math.max(9, Math.min(rScale(s.visits), nearest.get(s.id) / 2 - 22));
-  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", box.y + 4)
+  g.append("text").attr("class", "t-section detail").attr("x", box.x).attr("y", box.y + 4)
     .text("the machine · each dot circles its state's clock once, then is forgotten");
   const links = drawMachineEdges(g.append("g"), L.pdfa, at, radius);
   // a test trace counts the states it walks into, so the training rate is the same thing:
@@ -838,7 +878,7 @@ function machineView(g, box) {
   const heat = sg.append("circle").attr("class", "state-heat").attr("r", radius)
     .style("stroke", s => stateColor(s.id)).style("fill", "var(--div-0)");
   sg.append("text").attr("class", "t-title halo").attr("text-anchor", "middle").attr("y", 5).text(s => s.id);
-  const countLabel = sg.append("text").attr("class", "t-small t-2 halo").attr("text-anchor", "middle")
+  const countLabel = sg.append("text").attr("class", "t-small t-2 halo detail").attr("text-anchor", "middle")
     .attr("y", s => radius(s) + 34);
   hover(sg, s => {
     const n = clockCounts().get(s.id) || 0;
@@ -949,7 +989,7 @@ function clusterInset(g, box) {
       ({ src: e.src, dst: e.dst, packets: e.flows, ports: [], new: true }))],
   };
   const extra = shownCapture.new_edges.length;
-  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", box.y - 14)
+  g.append("text").attr("class", "t-section detail").attr("x", box.x).attr("y", box.y - 14)
     .text(fit(`flows of the current trace${extra ? ` · ${extra} new (dashed)` : ""}`, box.w));
   const { edges } = renderCluster(g, map, box, { focus: S.meta.vantage, compact: true, onTap: switchTo });
   const halo = g.select(".tap.focus .tap-halo");
@@ -977,7 +1017,7 @@ function clusterInset(g, box) {
   });
 }
 
-function scoreStrip(g, box) {
+function scoreStrip(g, box, { minimal = false } = {}) {
   const { c, begin, end } = capture();
   const traces = c.traces;
   const x = d3.scaleLinear().domain([begin, end]).range([box.x, box.x + box.w]);
@@ -988,7 +1028,13 @@ function scoreStrip(g, box) {
   const ws = S.meta.window_size;
   const reference = c.cutoffs.cumulative_reference
     .map((v, w) => ({ w, v })).filter(d => d.v !== null && (d.w + 1) * ws > begin && d.w * ws < end);
-  const freq = traces.flatMap(t => [t.windowed, t.cumulative]).concat([c.cutoffs.windowed], reference.map(d => d.v));
+  // A trace that falls off the machine scores only the states it reached, about 6.7 a state, so
+  // drawn as a point it reads as a sudden calm exactly where behaviour is new. The frequency
+  // lines join only the traces that walked every state; each fall-off is an ✕ on the floor,
+  // and the likelihood line below is the detector that judges it.
+  const whole = traces.filter(t => t.fell_off_at === null);
+  const fell = traces.filter(t => t.fell_off_at !== null);
+  const freq = whole.flatMap(t => [t.windowed, t.cumulative]).concat([c.cutoffs.windowed], reference.map(d => d.v));
   const yA = d3.scaleLinear().domain(d3.extent(freq.length ? freq : [0, 1])).nice().range([yA0 + hA, yA0 + 14]);
   const lik = traces.map(t => t.likelihood).concat([c.cutoffs.likelihood, 0]);
   const yB = d3.scaleLinear().domain(d3.extent(lik)).nice().range([yB0 + hB, yB0 + 12]);
@@ -1002,8 +1048,10 @@ function scoreStrip(g, box) {
     g.append("g").attr("class", "axis").attr("transform", `translate(${box.x},0)`)
       .call(d3.axisLeft(y).ticks(ticks).tickSize(3)).call(s => s.select(".domain").remove());
   }
-  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", yA0 + 4).text("SEQUENT frequency score · higher = more unusual");
-  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", yB0 + 4).text("trace likelihood · lower = more unusual");
+  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", yA0 + 4)
+    .text(minimal ? "how unusual" : "SEQUENT frequency score · higher = more unusual");
+  g.append("text").attr("class", "t-section").attr("x", box.x).attr("y", yB0 + 4)
+    .text(minimal ? "how familiar" : "trace likelihood · lower = more unusual");
 
   // cutoff labels sit at opposite ends, so two close cutoffs never print on top of each other
   const cut = (y, value, color, text, end) => {
@@ -1012,21 +1060,25 @@ function scoreStrip(g, box) {
     g.append("text").attr("class", "t-small halo").attr("text-anchor", end ? "end" : "start")
       .attr("x", end ? box.x + box.w - 2 : box.x + 4).attr("y", y(value) - 4).text(text).style("fill", "var(--ink-2)");
   };
-  cut(yA, c.cutoffs.windowed, "var(--s1)",
-      `windowed cutoff ${f1(c.cutoffs.windowed)} · ${c.cutoffs.calibration.windowed_windows} held-out windows`, false);
-  cut(yB, c.cutoffs.likelihood, "var(--muted)", `cutoff ${f2(c.cutoffs.likelihood)}`, true);
+  cut(yA, c.cutoffs.windowed, "var(--s1)", minimal ? "cutoff"
+      : `windowed cutoff ${f1(c.cutoffs.windowed)} · ${c.cutoffs.calibration.windowed_windows} held-out windows`, false);
+  cut(yB, c.cutoffs.likelihood, "var(--muted)", minimal ? "cutoff" : `cutoff ${f2(c.cutoffs.likelihood)}`, true);
 
-  if (reference.length) {
+  if (reference.length && !minimal) {
     const steps = reference.flatMap(d => [[Math.max(begin, d.w * ws), d.v], [Math.min(end, (d.w + 1) * ws), d.v]]);
     g.append("path").attr("class", "series").attr("d", d3.line().x(p => x(p[0])).y(p => yA(p[1]))(steps))
       .style("stroke", "var(--s2)").attr("stroke-width", 1).attr("stroke-opacity", 0.55);
   }
-  const line = (y, key) => d3.line().x(d => x(d.t)).y(d => y(d[key]))(traces);
-  if (traces.length) {
-    g.append("path").attr("class", "series").attr("d", line(yA, "cumulative"))
+  const line = (y, key, rows) => d3.line().x(d => x(d.t)).y(d => y(d[key]))(rows);
+  if (whole.length) {
+    g.append("path").attr("class", "series").attr("d", line(yA, "cumulative", whole))
       .style("stroke", "var(--s2)").attr("stroke-width", 1.5).attr("stroke-dasharray", "5 3");
-    g.append("path").attr("class", "series").attr("d", line(yA, "windowed")).style("stroke", "var(--s1)").attr("stroke-width", 2);
-    g.append("path").attr("class", "series").attr("d", line(yB, "likelihood")).style("stroke", "var(--ink-2)").attr("stroke-width", 1.5);
+    g.append("path").attr("class", "series").attr("d", line(yA, "windowed", whole)).style("stroke", "var(--s1)").attr("stroke-width", 2);
+  }
+  g.append("g").selectAll("text").data(fell).join("text").attr("class", "fell-mark")
+    .attr("x", t => x(t.t)).attr("y", yA0 + hA - 2).attr("text-anchor", "middle").text("✕");
+  if (traces.length) {
+    g.append("path").attr("class", "series").attr("d", line(yB, "likelihood", traces)).style("stroke", "var(--ink-2)").attr("stroke-width", 1.5);
     g.append("g").selectAll("circle").data(traces.filter(t => t.likelihood < c.cutoffs.likelihood)).join("circle")
       .attr("cx", t => x(t.t)).attr("cy", t => yB(t.likelihood)).attr("r", 2.5).style("fill", "var(--warning)");
   }
@@ -1034,11 +1086,18 @@ function scoreStrip(g, box) {
   const swatchLine = (color, dash, opacity = 1) => item => item.append("line").attr("x1", 0).attr("x2", 18)
     .attr("y1", -4).attr("y2", -4).style("stroke", color).attr("stroke-width", 2)
     .attr("stroke-dasharray", dash).attr("stroke-opacity", opacity);
-  legendRow(g.append("g").attr("transform", `translate(${box.x + box.w * 0.42},${yA0 - 4})`), [
+  const swatchFell = item => item.append("text").attr("class", "fell-mark").attr("x", 9).attr("y", 0)
+    .attr("text-anchor", "middle").text("✕");
+  legendRow(g.append("g").attr("transform", `translate(${box.x + box.w * 0.3},${yA0 - 4})`), minimal ? [
+    ["forgets", swatchLine("var(--s1)", null)],
+    ["never forgets", swatchLine("var(--s2)", "5 3")],
+    ["fell off", swatchFell],
+  ] : [
     [`windowed (forgets after ${S.meta.forget_seconds} s)`, swatchLine("var(--s1)", null)],
     ["cumulative (never forgets)", swatchLine("var(--s2)", "5 3")],
     ["benign cumulative, same age", swatchLine("var(--s2)", null, 0.55)],
-  ], box.w * 0.58, { align: "end" });
+    ["fell off the machine (judged by likelihood)", swatchFell],
+  ], box.w * 0.7, { align: "end" });
 
   // window verdicts: flagged, alert (sustained), released; empty and warming windows say so
   const bands = g.append("g");
@@ -1059,7 +1118,11 @@ function scoreStrip(g, box) {
     .call(d3.axisBottom(x).ticks(10).tickFormat(v => `${v}s`).tickSize(3));
   const swatch = (fill, cls = null) => item => item.append("rect").attr("class", cls).attr("x", 0).attr("y", -9)
     .attr("width", 18).attr("height", 9).attr("rx", 2).style("fill", fill);
-  legendRow(g.append("g").attr("transform", `translate(${box.x},${band1 + bandH + 30})`), [
+  legendRow(g.append("g").attr("transform", `translate(${box.x},${band1 + bandH + 30})`), minimal ? [
+    ["flagged", swatch("var(--warning)")],
+    ["alert", swatch("var(--critical)")],
+    ["unseen", swatch("var(--serious)")],
+  ] : [
     ["flagged", swatch("var(--warning)")],
     [`alert: ${S.meta.persistence}+ in a row`, swatch("var(--critical)")],
     ["unseen behaviour (likelihood)", swatch("var(--serious)")],
@@ -1085,7 +1148,8 @@ function scoreStrip(g, box) {
       cross.attr("x1", x(t)).attr("x2", x(t)).attr("opacity", 1);
       if (!tr) return;
       showTip(e, `<div class="tt-title">${f1(t)} s · window ${Math.floor(t / ws)}</div>
-        <div class="tt-row">windowed ${f1(tr.windowed)} · cumulative ${f1(tr.cumulative)}</div>
+        <div class="tt-row">${tr.fell_off_at === null ? `windowed ${f1(tr.windowed)} · cumulative ${f1(tr.cumulative)}`
+          : `fell off after ${tr.fell_off_at} state${tr.fell_off_at === 1 ? "" : "s"}: frequency score not drawn`}</div>
         <div class="tt-row">likelihood ${f2(tr.likelihood)}</div>
         <div class="tt-row">${w ? STATUS[w.status].text.toLowerCase() : ""}</div>`);
     })
@@ -1386,6 +1450,375 @@ function tapsPanel(scenario, rows) {
   });
 }
 
+// ---------------------------------------------------------------- demo mode
+// A short walkthrough for a live demo: one idea per slide, one real example from the bundle,
+// almost no text. It draws with the acts' own renderers; it computes no new numbers.
+const demoLayer = d3.select("#demo");
+const demo = { slide: 0, timers: [], tl: null, speed: 1 };
+
+function demoStop() { for (const t of demo.timers) t.stop(); demo.timers = []; }
+const demoEvery = (ms, fn) => demo.timers.push(d3.interval(fn, ms));
+const demoLater = (ms, fn) => demo.timers.push(d3.timeout(fn, ms));
+
+// the recording this tap shows best: most sustained-alert windows, then most flags
+function demoAttack() {
+  let best = -1, most = -1;
+  S.playback.captures.forEach((c, i) => {
+    if (i === 0) return;
+    const score = c.windows.filter(w => w.alert).length * 1e4
+      + c.windows.filter(w => w.flagged || w.likelihood_flag).length;
+    if (score > most) { most = score; best = i; }
+  });
+  return best;
+}
+
+function demoSlides() {
+  const attack = demoAttack();
+  const forgets = attack > 0 && S.playback.captures[attack].windows.some(w => w.released);
+  // which recording a replay slide plays, said under its caption
+  const source = i => `replaying <b>${S.playback.captures[i].scenario}</b> at ${S.meta.vantage}`;
+  return [
+    { topic: ["Packet capture", "taps on the cluster network"], title: "Where we listen", line: "We tap the cluster and record its traffic.", draw: slideCluster },
+    { topic: ["Flow symbols", "percentile-binned size and duration"], title: "Every flow becomes a symbol", line: "Protocol, size and duration, binned into one word.", draw: slideSymbols },
+    { topic: ["Sliding window", `traces of ${S.meta.trace_len} flows`], title: `A trace is ${S.meta.trace_len} flows in a row`, line: "It slides along the traffic one flow at a time.", draw: slideTraces },
+    { topic: ["Prefix tree"], title: "Memorize every trace", line: `${fmt(L.traces)} benign traces become a tree of ${fmt(L.pta.length)} prefixes.`, draw: slideTree },
+    { topic: ["ALERGIA", "state merging"], title: "Merge what behaves alike", line: "Same next-flow odds? Fold it in. Otherwise, a new state.", draw: slideMerge },
+    { topic: ["PDFA", "probabilistic finite automaton"], title: "The learned machine", line: `${L.pdfa.states.length} states: a map of normal behaviour.`, draw: slideMachine },
+    { topic: ["SEQUENT", "state-visit frequency score"], title: "Normal traffic walks the map", source: source(0), line: "Each state counts its recent visits on a short clock.", draw: box => slideReplay(box, 0) },
+    ...(attack > 0 ? [{ topic: ["SEQUENT + likelihood", "too often · never seen"], title: "An attack lights it up", source: source(attack), line: "States visited far more than training predicts: alert.",
+                        draw: box => slideReplay(box, attack) }] : []),
+    ...(forgets ? [{ topic: ["Windowed SEQUENT", `${S.meta.forget_seconds} s forgetting clock`], title: "…then it forgets", source: source(attack), line: `Visits expire after ${S.meta.forget_seconds} s, so the alert clears.`,
+                     draw: box => slideForget(box, attack) }] : []),
+  ];
+}
+
+function drawSlide() {
+  const slides = demoSlides();
+  demo.slide = Math.max(0, Math.min(slides.length - 1, demo.slide));
+  demo.tl = null;
+  const slide = slides[demo.slide];
+  const go = i => { demo.slide = Math.max(0, Math.min(slides.length - 1, i)); show(currentAct); };
+  controls.html(`
+    <button id="s-prev" aria-label="previous slide" ${demo.slide === 0 ? "disabled" : ""}>◀</button>
+    <span class="dots">${slides.map((s, i) =>
+      `<button data-i="${i}" class="${i === demo.slide ? "on" : ""}" title="${s.title}" aria-label="slide ${i + 1}"></button>`).join("")}</span>
+    <button id="s-next" aria-label="next slide" ${demo.slide === slides.length - 1 ? "disabled" : ""}>▶</button>
+    <span class="readout">${demo.slide + 1} / ${slides.length}</span>
+    <span class="timeline" id="s-time"></span>
+    <button id="s-again" title="Start this slide over">↺ Replay</button>`);
+  d3.select("#s-prev").on("click", () => go(demo.slide - 1));
+  d3.select("#s-next").on("click", () => go(demo.slide + 1));
+  d3.select("#s-again").on("click", () => go(demo.slide));
+  controls.selectAll(".dots button").on("click", function () { go(+this.dataset.i); });
+  demoLayer.html(`<div class="demo-caption"><div class="demo-title">${slide.title}</div>
+    <div class="demo-line">${slide.line}</div>
+    ${slide.source ? `<div class="demo-source">${slide.source}</div>` : ""}</div>
+    <div class="demo-corner">
+      ${slide.topic ? `<div class="demo-topic"><b>${slide.topic[0]}</b>${slide.topic[1] ? `<span>${slide.topic[1]}</span>` : ""}</div>` : ""}
+      <div class="status demo-status" id="demo-status" hidden></div></div>
+    <div class="demo-cards" id="demo-cards"></div>`);
+  const { w, h } = size();
+  slide.draw({ x: 40, y: 118, w: w - 80, h: h - 150 });
+  window.onkeydown = e => {
+    if (e.target.closest && e.target.closest("select, textarea, input:not([type=range])")) return;
+    if (["ArrowRight", "PageDown"].includes(e.code)) { e.preventDefault(); go(demo.slide + 1); }
+    if (["ArrowLeft", "PageUp"].includes(e.code)) { e.preventDefault(); go(demo.slide - 1); }
+    if (e.code === "Space" && demo.tl && !(e.target.closest && e.target.closest("button"))) {
+      e.preventDefault(); demo.tl.toggle();
+    }
+  };
+}
+
+// 0 before `start`, 1 after `start + span`, linear between: a fade or move at slide time t
+const ramp = (t, start, span) => Math.max(0, Math.min(1, (t - start) / span));
+const DEMO_SPEEDS = [0.25, 0.5, 1, 2];
+const speedText = v => ({ 0.25: "¼×", 0.5: "½×" })[v] || `${v}×`;
+
+// One clock per slide. The scrubber, ▶/❚❚ and the speed buttons drive it; the slide redraws
+// itself from the clock's time alone, so any moment can be scrubbed back to or slowed down.
+// `duration` and `start` are in the slide's own units, `rate` units per second at 1×.
+function demoTimeline({ duration, render, rate = 1, start = 0,
+                        label = u => `${f1(u)} s / ${f1(duration)} s` }) {
+  duration = Math.max(duration, 1e-6);
+  const tl = { t: start, playing: false };
+  d3.select("#s-time").html(`
+    <button class="primary" id="tl-play"></button>
+    <input type="range" id="tl-scrub" min="0" max="1000" step="1" aria-label="slide timeline">
+    <span class="readout" id="tl-read"></span>
+    <span class="seg" id="tl-speed">${DEMO_SPEEDS.map(v =>
+      `<button data-v="${v}" aria-pressed="${v === demo.speed}" title="playback speed">${speedText(v)}</button>`).join("")}</span>`);
+  const scrub = d3.select("#tl-scrub"), read = d3.select("#tl-read"), play = d3.select("#tl-play");
+  const sync = () => { scrub.property("value", Math.round(tl.t / duration * 1000)); read.text(label(tl.t)); };
+  tl.seek = u => { tl.t = Math.max(0, Math.min(duration, u)); render(tl.t); sync(); };
+  tl.follow = u => { tl.t = Math.max(0, Math.min(duration, u)); sync(); };   // someone else moved the time
+  tl.play = () => { if (tl.t >= duration) tl.seek(0); tl.playing = true; play.text("❚❚ Pause"); };
+  tl.pause = () => { tl.playing = false; play.text("▶ Play"); };
+  tl.toggle = () => tl.playing ? tl.pause() : tl.play();
+  let last = null;
+  demo.timers.push(d3.timer(elapsed => {
+    const dt = last === null ? 0 : (elapsed - last) / 1000;
+    last = elapsed;
+    if (!tl.playing) return;
+    tl.seek(tl.t + dt * rate * demo.speed);
+    if (tl.t >= duration) tl.pause();
+  }));
+  scrub.on("input", e => { tl.pause(); tl.seek(+e.target.value / 1000 * duration); });
+  play.on("click", tl.toggle);
+  d3.selectAll("#tl-speed button").on("click", function () {
+    demo.speed = +this.dataset.v;
+    d3.selectAll("#tl-speed button").attr("aria-pressed", function () { return +this.dataset.v === demo.speed; });
+  });
+  demo.tl = tl;
+  tl.seek(start);
+  tl.play();
+  return tl;
+}
+
+function slideCluster(box) {
+  renderCluster(svg.append("g"), S.cluster, box, { focus: S.meta.vantage, onTap: switchTo });
+}
+
+// the first flows of training as bars, colored by protocol; the slide's clock fades them in
+function demoStream(g, box, count, top, height) {
+  const stream = L.stream.slice(0, count);
+  const x = d3.scaleBand().domain(d3.range(stream.length)).range([box.x, box.x + box.w]).paddingInner(0.25);
+  const bars = g.append("g").selectAll("rect").data(stream).join("rect")
+    .attr("x", (d, i) => x(i)).attr("y", top).attr("width", x.bandwidth()).attr("height", height).attr("rx", 3)
+    .attr("fill", d => protoColor(symbolParts(d.symbol).proto));
+  const fadeIn = t => bars.attr("opacity", (d, i) => ramp(t, i * 0.012, 0.25));
+  return { stream, x, fadeIn, end: stream.length * 0.012 + 0.25 };
+}
+
+function slideSymbols(box) {
+  const top = box.y + 6, height = Math.min(56, box.h * 0.16);
+  const s = demoStream(svg.append("g"), box, Math.min(96, Math.floor(box.w / 9)), top, height);
+  const cards = d3.select("#demo-cards").style("top", `${top + height + 44}px`).html(L.symbols.slice(0, 3).map(s => `
+    <div class="demo-card">
+      <div class="demo-sym"><span class="sw" style="background:${protoColor(s.proto)}"></span>${s.symbol}</div>
+      <div class="demo-parts">
+        <span><b>${s.proto}</b>protocol</span>
+        <span><b>${binText("bytes", s.bytes_bin)}</b>size</span>
+        <span><b>${binText("duration", s.duration_bin)}</b>duration</span>
+      </div>
+      <div class="demo-count">${fmt(s.count)} training flows</div>
+    </div>`).join(""));
+  const card = cards.selectAll(".demo-card");
+  demoTimeline({
+    duration: s.end + 1.8,
+    render: t => { s.fadeIn(t); card.style("opacity", (d, i) => ramp(t, s.end + i * 0.4, 0.4)); },
+  });
+}
+
+function slideTraces(box) {
+  const g = svg.append("g"), n = S.meta.trace_len;
+  const top = box.y + 20, height = Math.min(72, box.h * 0.2);
+  const s = demoStream(g, box, Math.min(40, Math.max(n + 8, Math.floor(box.w / 26))), top, height);
+  const { stream, x } = s;
+  const span = k => x(Math.min(k + n - 1, stream.length - 1)) + x.bandwidth() - x(k);
+  const frame = g.append("rect").attr("class", "demo-frame").attr("y", top - 8)
+    .attr("width", span(0) + 12).attr("height", height + 16).attr("rx", 8);
+  const cards = d3.select("#demo-cards").style("top", `${top + height + 48}px`);
+  const last = Math.max(stream.length - n, 0), step = 1.1, slide = 0.4;
+  let shown = -1;
+  demoTimeline({
+    duration: s.end + (last + 1) * step,
+    render: t => {
+      s.fadeIn(t);
+      // the frame rests on trace k, then glides to k + 1 over the first `slide` seconds of its step
+      const u = Math.max(0, (t - s.end) / step), k = Math.min(Math.floor(u), last);
+      const glide = k === 0 ? 0 : d3.easeCubicInOut(Math.min(1, (u - k) * step / slide));
+      const from = Math.max(k - 1, 0);
+      frame.attr("x", x(from) + (x(k) - x(from)) * glide - 6);
+      if (k === shown) return;
+      shown = k;
+      cards.html(`<div class="demo-trace">${stream.slice(k, k + n).map(d => chip(d.symbol))
+        .join('<span class="demo-arrow">→</span>')}</div>`);
+    },
+  });
+}
+
+// the prefix tree as an icicle, protocol-colored: depth is position in the trace
+function demoIcicle(box) {
+  const g = svg.append("g");
+  const depth = d3.max(L.pta, n => n.depth), row = box.h / (depth + 1);
+  const x = v => box.x + v * box.w;
+  const rects = g.selectAll("rect").data(L.pta).join("rect").attr("class", "pta-rect")
+    .attr("x", n => x(n.x0)).attr("y", n => box.y + n.depth * row + 1)
+    .attr("width", n => Math.max(x(n.x1) - x(n.x0) - 1, 0.5)).attr("height", row - 2).attr("rx", 2)
+    .style("fill", n => n.symbol ? protoColor(symbolParts(n.symbol).proto) : "var(--muted)");
+  return { g, rects, x, row, box, depth };
+}
+
+function slideTree(box) {
+  const tree = demoIcicle(box);
+  demoTimeline({
+    duration: 0.15 + tree.depth * 0.26 + 0.9,
+    render: t => tree.rects.style("opacity", n => ramp(t, 0.15 + n.depth * 0.26, 0.4)),
+  });
+}
+
+function slideMerge(box) {
+  const tree = demoIcicle({ x: box.x, y: box.y, w: box.w - 360, h: box.h });
+  const marks = svg.append("g");
+  const total = L.steps.length;
+  const firstMerge = L.steps.findIndex(s => s.kind === "merge");
+  const cards = d3.select("#demo-cards").classed("side", true).style("top", `${box.y}px`);
+  const paint = k => {
+    const final = k > total;
+    const kept = new Set([0, ...L.steps.slice(0, Math.min(k, total)).filter(s => s.kind === "promote").map(s => s.blue)]);
+    const settled = n => final || n.settled_step <= k;
+    tree.rects
+      .style("fill", n => settled(n) ? stateColor(stateOfPta.get(n.id))
+                       : n.symbol ? protoColor(symbolParts(n.symbol).proto) : "var(--muted)")
+      .style("fill-opacity", n => kept.has(n.id) ? 1 : settled(n) ? 0.72 : 0.22);
+    marks.selectAll("*").remove();
+    const step = k >= 1 && k <= total ? L.steps[k - 1] : null;
+    if (!step) return;
+    for (const [id, role] of [[step.red, "red"], [step.blue, "blue"]]) {
+      const n = ptaById.get(id);
+      marks.append("rect").attr("x", tree.x(n.x0) - 1).attr("y", box.y + n.depth * tree.row - 1)
+        .attr("width", Math.max(tree.x(n.x1) - tree.x(n.x0) + 1, 4)).attr("height", tree.row + 2).attr("rx", 3)
+        .attr("fill", "none").attr("stroke", `var(--${role})`).attr("stroke-width", 3);
+    }
+  };
+  // The side cards follow the scrubber: a running tally, then the step under the rings with
+  // its own test, so every merge and every new state is a worked example of the one rule.
+  const firstPromote = L.steps.findIndex(s => s.kind === "promote");
+  cards.html(`<div class="demo-card" id="m-tally"></div><div class="demo-card" id="m-now"></div>`);
+  const tally = cards.select("#m-tally"), now = cards.select("#m-now");
+  const symText = s => s === "#" ? "trace ends" : s;
+  const showTally = k => {
+    const taken = L.steps.slice(0, Math.min(k, total));
+    const ids = k > total ? L.pdfa.states.map(s => s.id)
+      : [stateOfPta.get(0), ...taken.filter(s => s.kind === "promote").map(s => stateOfPta.get(s.blue))];
+    const merged = taken.filter(s => s.kind === "merge").length;
+    const left = k > total ? 0 : L.pta.filter(n => !(n.settled_step <= k)).length;
+    tally.html(`<div class="demo-k">${k > total ? "learned" : k ? `step ${k} of ${total}` : "before merging"}</div>
+      <div class="demo-tally"><span><b>${ids.length}</b>states</span><span><b>${merged}</b>merged</span>
+        <span><b>${fmt(left)}</b>prefixes left</span></div>
+      <div class="demo-swatches">${ids.map(id => `<span style="background:${stateColor(id)}">${id}</span>`).join("")}</div>`);
+  };
+  const showNow = k => {
+    if (k > total) return now.html(`<div class="demo-k">result</div><div class="demo-big">${L.pdfa.states.length}</div>
+      <div class="demo-count">states and ${L.pdfa.edges.length} transitions from ${fmt(L.pta.length)} prefixes</div>`);
+    const step = k >= 1 ? L.steps[k - 1] : null;
+    if (!step) return now.html(`<div class="demo-k">the rule</div>
+      <p class="demo-rule">Take the next <b style="color:var(--blue)">candidate</b> prefix and compare its
+        next-flow odds with each <b style="color:var(--red)">kept state</b>.</p>
+      <p class="demo-rule">All within the band → <b>merge</b>.<br>Any outside every state → <b>new state</b>.</p>`);
+    const test = step.attempts[step.attempts.length - 1], merged = step.kind === "merge";
+    const off = hoeffdingRows(test).find(t => Math.abs(t.p_red - t.p_blue) >= test.bound);
+    const path = pathOf(step.blue), tail = path.slice(-3);
+    const example = k - 1 === firstMerge || k - 1 === firstPromote;
+    const tried = step.attempts.length;
+    now.html(`<div class="demo-k">${example ? "example · " : ""}step ${k}</div>
+      <div class="demo-verdict ${merged ? "" : "new"}">${merged
+        ? `✓ merged into state ${stateOfPta.get(step.red)}` : `★ new state ${stateOfPta.get(step.blue)}`}</div>
+      <div class="demo-path">${path.length > 3 ? "<span>…</span>" : ""}${tail.map(s => chip(s)).join("") || "<i>start</i>"}</div>
+      <div class="demo-count">${fmt(step.blue_visits)} traces reach this candidate${tried > 1
+        ? ` · tried ${tried} kept states` : ""}</div>
+      <div class="demo-key" style="margin-top:12px"><span><i style="background:var(--red)"></i>state ${stateOfPta.get(test.red)}</span>
+        <span><i style="background:var(--blue)"></i>candidate</span></div>
+      <svg id="hoeffding" width="300"></svg>
+      <div class="demo-count">${merged ? "every next flow within the band"
+        : `“${symText(off ? off.symbol : "?")}” falls outside the band${tried > 1 ? ", and did for every kept state" : ""}`}</div>`);
+    drawHoeffding({ bound: test.bound, tests: hoeffdingRows(test).slice(0, 3) });
+  };
+  // when each step lands: a short lead, then every step gets the same time, enough to read its
+  // card; a tap with many steps shortens them so the slide stays about half a minute
+  const dt = Math.max(0.3, Math.min(1.4, 30 / Math.max(total, 1)));
+  const at = d3.range(total + 1).map(i => 0.9 + i * dt);
+  let shownK = -1;
+  demoTimeline({
+    duration: at[at.length - 1] + 1.2,
+    label: t => { const k = d3.bisectRight(at, t);
+      return k > total ? `done · ${total} steps` : `step ${k} / ${total}`; },
+    render: t => {
+      const k = d3.bisectRight(at, t);   // steps taken by time t
+      if (k === shownK) return;
+      shownK = k;
+      paint(k); showTally(k); showNow(k);
+    },
+  });
+}
+
+function slideMachine(full) {
+  // keep the layout near its natural proportions rather than stretched across a wide screen
+  const w = Math.min(full.w, full.h * 1.7);
+  const box = { x: full.x + (full.w - w) / 2, y: full.y, w, h: full.h };
+  const g = svg.append("g"), states = L.pdfa.states, pad = 50;
+  const at = stateSpot(states, box, pad, { ring: true });
+  const r = d3.scaleSqrt().domain([0, d3.max(states, s => s.visits)]).range([14, Math.min(46, box.h / 7)]);
+  const radius = s => r(s.visits);
+  const edges = drawMachineEdges(g.append("g"), L.pdfa, at, radius);
+  const sg = g.append("g").selectAll("g").data(states).join("g").attr("transform", s => `translate(${at(s)})`);
+  sg.append("circle").attr("class", "state-circle").attr("r", radius).attr("fill", s => stateColor(s.id));
+  sg.append("text").attr("class", "t-title halo").attr("text-anchor", "middle").attr("y", 5).text(s => s.id);
+  const edgesAt = states.length * 0.14 + 0.2;
+  demoTimeline({
+    duration: edgesAt + 1.2,
+    render: t => {
+      sg.attr("opacity", (s, i) => ramp(t, i * 0.14, 0.4));
+      edges.attr("opacity", ramp(t, edgesAt, 0.6));
+    },
+  });
+}
+
+// point the player at one recording and say where its story starts: the held-out benign
+// from its beginning, an attack a few seconds before its first alert (or first flag)
+function demoCue(i, lead) {
+  player.capture = i;
+  player.listeners = [];
+  const { c, begin } = capture();
+  const ws = S.meta.window_size;
+  const w = i === 0 ? null : c.windows.find(w => w.alert) || c.windows.find(w => w.flagged || w.likelihood_flag);
+  player.t = w ? Math.max(begin, w.index * ws - lead) : begin;
+}
+
+// the replay slides: the slide's clock is the recording's clock, `rate` recording seconds a second
+function demoPlayback(rate) {
+  const pill = d3.select("#demo-status").attr("hidden", null);
+  let shown = null;
+  player.on("tick", t => {
+    const status = statusOf(t);
+    if (status.text === shown) return;
+    shown = status.text;
+    pill.attr("class", `status demo-status ${status.cls}`).html(`<span class="dot"></span>${status.text}`);
+  });
+  const { begin, end } = capture();
+  const tl = demoTimeline({
+    duration: end - begin, start: player.t - begin, rate,
+    label: u => `${f1(begin + u)} s / ${f1(end)} s`,
+    render: u => player.seek(begin + u),
+  });
+  // a click on the score strip moves the player itself: keep the scrubber with it
+  player.on("tick", t => tl.follow(t - begin));
+}
+
+function slideReplay(box, i) {
+  demoCue(i, 3);
+  // the machine gets the whole width: no cluster inset here, so the states can spread out
+  const top = { x: box.x, y: box.y, w: box.w, h: box.h * 0.62 };
+  const strip = { x: box.x + 30, y: box.y + box.h * 0.68, w: box.w - 40, h: box.h * 0.32 - 30 };
+  machineView(svg.append("g"), top, { ring: true });
+  scoreStrip(svg.append("g"), strip, { minimal: true });
+  demoPlayback(i === 0 ? 4 : 2);
+}
+
+function slideForget(box, i) {
+  demoCue(i, 2);
+  scoreStrip(svg.append("g"), { x: box.x + 30, y: box.y + 20, w: box.w - 40, h: box.h - 80 }, { minimal: true });
+  demoPlayback(2);
+}
+
+function setMode(next) {
+  mode = next;
+  d3.select(".app").classed("demo", mode === "demo");
+  d3.selectAll(".mode button").attr("aria-pressed", function () { return this.dataset.mode === mode; });
+  try { localStorage.setItem("viz-mode", mode); } catch (e) { /* storage may be blocked */ }
+  show(currentAct);
+}
+
 // ---------------------------------------------------------------- app shell
 
 const ACTS = { cluster: actCluster, learning: actLearning, detection: actDetection };
@@ -1393,13 +1826,17 @@ let currentAct = "cluster";
 
 function show(act) {
   stopLearn();
+  demoStop();
   if (window.__stopPlayer) window.__stopPlayer();
+  window.onkeydown = null;
   currentAct = act;
   d3.selectAll(".acts button").attr("aria-selected", function () { return this.dataset.act === act; });
   svg.selectAll("*").remove();
   controls.html("");
+  demoLayer.html("");
   hideTip();
   defs();
+  if (mode === "demo") return drawSlide();
   ACTS[act]();
   try { localStorage.setItem("viz-act", act); } catch (e) { /* storage may be blocked */ }
 }
@@ -1453,13 +1890,16 @@ window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => show(currentAct), 150);
 });
-let start = "cluster", tap = B.selected;
+d3.selectAll(".mode button").on("click", function () { setMode(this.dataset.mode); });
+let start = "cluster", tap = B.selected, startMode = "detail";
 try {
   const query = new URLSearchParams(location.search);
   start = query.get("act") || localStorage.getItem("viz-act") || start;
+  startMode = query.get("mode") || localStorage.getItem("viz-mode") || startMode;
   // a remembered tap belongs to this build: a rebuilt page opens where --vantage says
   tap = query.get("vantage") || localStorage.getItem(TAP_KEY) || tap;
 } catch (e) { /* ignore */ }
 selectVantage(B.vantages[tap] ? tap : B.selected);
-show(ACTS[start] ? start : "cluster");
+currentAct = ACTS[start] ? start : "cluster";
+setMode(startMode === "demo" ? "demo" : "detail");
 })();

@@ -1,4 +1,4 @@
-"""All 13 features against the eight-feature candidate, judged by verdicts/feature_set.py.
+"""All 13 features against the eight-feature candidate, judged by dev/verdicts/feature_set.py.
 
 Both sets run the same z-score detector, split and cutoff; only the columns differ. For every
 steady tap and capture method the detector is fitted on the first 70% of the benign windows,
@@ -9,16 +9,18 @@ AUROC against the held-out benign scores and the detection at a 5% benign budget
 realised benign rate is stored beside it: on 15-20 windows it is not 5%). Bulk taps are
 scored and reported but decide nothing.
 
-`--rule hybrid` swaps in the nine-feature candidate of verdicts/feature_set_hybrid.py, which
+`--rule hybrid` swaps in the nine-feature candidate of dev/verdicts/feature_set_hybrid.py, which
 is judged by the same decide(); each rule writes its own CSV.
 
-Run it with:  .venv/bin/python experiments/feature_set.py [--rule eight|hybrid]
+Run it with:  .venv/bin/python dev/experiments/feature_set.py [--rule eight|hybrid]
 """
 import sys
 from pathlib import Path
 
-# A script run as `python experiments/feature_set.py` gets experiments/ as sys.path[0].
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# A script run as `python dev/experiments/feature_set.py` gets dev/experiments/ as sys.path[0], so the
+# Threat_Detection root (core, methods, convert) and dev/ (experiments, verdicts) go back on
+# the path before any project import.
+sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).resolve().parents[1])]
 
 import argparse
 

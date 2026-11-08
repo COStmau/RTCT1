@@ -26,7 +26,7 @@ attacks are still seen.
   methods  Both capture methods, tcp and ptcp, must satisfy all three.
 
 "keep" means adopt the candidate, "drop" means stay on all 13. `decide()` takes the pooled
-summaries `experiments/feature_set.py` writes.
+summaries `dev/experiments/feature_set.py` writes.
 """
 
 MIN_ALERT_REDUCTION = 0.50   # candidate alerts <= (1 - this) * baseline alerts

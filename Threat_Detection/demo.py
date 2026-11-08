@@ -27,9 +27,10 @@ from core.evaluation import BULK_LABELS
 from core.data_io import load_capture, resolve_output
 from core.detectors import PERSISTENCE_WINDOW, THRESHOLD, build
 from core.features import FEATURE_LABELS, WINDOW_SIZE, make_windows, split_reference
-from statemachine import (encode, fit_model, flags_for_windows, load_flow_packets,
-                          make_flows, n_windows_for, plot_pdfa, score_cutoff,
-                          score_flows, segment_flows, split_flows, write_pair)
+from methods.pdfa import (encode, fit_model, load_flow_packets, make_flows, segment_flows,
+                          split_flows)
+from methods.scores import (flags_for_windows, n_windows_for, plot_pdfa, score_cutoff,
+                            score_flows, write_pair)
 
 HERE = Path(__file__).resolve().parent
 DETECTOR = "z_score"
@@ -346,8 +347,15 @@ def state_machine():
 
 # --- 4-7. The experiments, run exactly as their own scripts document -------------
 
+DEV = HERE / "dev"   # experiments, verdicts and tests; absent from a shipped-only copy
+
+
 def _run(*args):
     """Run a command with the interpreter that started this menu, from this folder."""
+    script = next((a for a in args if a.endswith(".py")), "")
+    if script.startswith("dev/") and not DEV.is_dir():
+        print(f"   {script} is development material and is not in this copy (no dev/ folder).")
+        return
     # Flush first: our own prints are buffered when output is piped, and the child writes
     # straight to the file descriptor, so without this the transcript interleaves wrongly.
     sys.stdout.flush()
@@ -356,24 +364,24 @@ def _run(*args):
 
 
 def sweep_captures():
-    _run("experiments/sweep.py")
+    _run("dev/experiments/sweep.py")
 
 
 def ablation():
-    _run("experiments/sweep.py", "--groups", "volume,size_timing,diversity,flags,protocol",
+    _run("dev/experiments/sweep.py", "--groups", "volume,size_timing,diversity,flags,protocol",
          "--out", "ablation_results.csv")
 
 
 def comparison():
-    _run("experiments/compare.py")
+    _run("dev/experiments/compare.py")
 
 
 def feature_value():
-    _run("experiments/feature_value.py")
+    _run("dev/experiments/feature_value.py")
 
 
 def run_tests():
-    _run("-m", "unittest", "tests")
+    _run("dev/tests.py")
 
 
 # --- 10. The visualization page ---------------------------------------------------
@@ -388,8 +396,8 @@ def viz_page():
 
 def pcap_diff():
     """The last pcap_diff.py run, summarized. The run itself reads every capture file, so
-    it is started by hand: .venv/bin/python pcap_diff.py"""
-    _run("convert/diff.py", "--report")
+    it is started by hand: .venv/bin/python dev/experiments/pcap_diff.py"""
+    _run("dev/experiments/pcap_diff.py", "--report")
 
 
 # --- 8. Everything ---------------------------------------------------------------

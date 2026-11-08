@@ -8,7 +8,7 @@
 All coordinates are in [0, 1]; the renderer scales them to whatever canvas it has. Ties are
 broken by symbol or state id, so the same machine always draws the same way.
 """
-from statemachine import pdfa_states_in_order
+from methods.scores import pdfa_states_in_order
 
 BARYCENTER_SWEEPS = 4
 
@@ -114,7 +114,7 @@ def settled_steps(nodes, steps):
     """{prefix-tree id: the step after which it belongs to a kept (red) state; 0 = from start}.
 
     Replays the red-blue steps on the prefix tree's ids with the same fold as
-    statemachine._fold_into. A merge folds the candidate into a red state, but the
+    methods.pdfa._fold_into. A merge folds the candidate into a red state, but the
     candidate's children only fold into that red state's children, which may still be
     candidates themselves, so they settle later, when their own group turns red or folds into
     a red one. Colouring a merged subtree at once would show states that do not exist yet.

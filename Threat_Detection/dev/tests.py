@@ -1,10 +1,22 @@
 """Run from this folder with: python -m unittest -v tests"""
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import unittest
 from pathlib import Path
+
+# Run as `python dev/tests.py` from anywhere. dev/ holds experiments, verdicts and the
+# statemachine shim; the Threat_Detection root holds core, methods, convert, viz and demo.
+# Both go on the path, and the working directory becomes the root so the relative paths
+# below (README.md, core/, dev/experiments/) resolve the same however the suite is started.
+ROOT = Path(__file__).resolve().parents[1]
+DEV = ROOT / "dev"
+for _folder in (ROOT, DEV):
+    if str(_folder) not in sys.path:
+        sys.path.insert(0, str(_folder))
+os.chdir(ROOT)
 
 import numpy as np
 import pandas as pd
@@ -293,7 +305,7 @@ class LayeringChecks(unittest.TestCase):
     LAYERS = ["data_io", "evaluation", "features", "detectors", "reporting"]
 
     def path_of(self, name):
-        root = Path("core") if name in self.LAYERS else Path("experiments")
+        root = Path("core") if name in self.LAYERS else Path("dev/experiments")
         return root / f"{name}.py"
 
     def imported_modules(self, name):
@@ -330,8 +342,9 @@ class LayeringChecks(unittest.TestCase):
     def test_metrics_imports_nothing_from_the_project(self):
         # metrics is shared by every experiment; it must stay a leaf.
         project = ({p.stem for p in Path(".").glob("*.py")}
+                   | {p.stem for p in Path("dev").glob("*.py")}
                    | {p.stem for p in Path("core").glob("*.py")}
-                   | {p.stem for p in Path("experiments").glob("*.py")})
+                   | {p.stem for p in Path("dev/experiments").glob("*.py")})
         self.assertEqual(self.imported_modules("metrics") & project, set())
 
     def test_core_imports_nothing_from_the_outer_packages(self):
@@ -376,7 +389,7 @@ class LayeringChecks(unittest.TestCase):
     def test_the_layers_import_without_matplotlib(self):
         # reporting pins Agg and imports pyplot; importing it must not be required to use
         # the rest of the core. This guards the P1-5 move of matplotlib out of module scope.
-        script = ("import sys; sys.path.insert(0, '.'); "
+        script = ("import sys; sys.path[:0] = ['.', 'dev']; "
                   "import core.data_io, core.features, core.detectors, experiments.metrics; "
                   "print('matplotlib' in sys.modules)")
         out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
@@ -386,39 +399,43 @@ class LayeringChecks(unittest.TestCase):
 
 class EntryPointChecks(unittest.TestCase):
     """A script run by path has its own directory as sys.path[0], so every entry point
-    that lives in a subpackage has to put the project root back."""
+    that lives in a subpackage has to put the project root back; one under dev/experiments
+    also needs dev/ itself, for experiments and verdicts."""
 
-    ENTRY_POINTS = ["experiments/compare.py", "experiments/cv_calibration.py",
-                    "experiments/feature_value.py", "experiments/flag_scores.py",
-                    "experiments/sweep.py", "experiments/windowed_scores.py",
-                    "convert/diff.py", "viz/page.py"]
-
-    BOOTSTRAP = "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))"
+    ENTRY_POINTS = {
+        "viz/page.py": "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))",
+        **{f"dev/experiments/{name}.py":
+           "sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).resolve().parents[1])]"
+           for name in ("compare", "cv_calibration", "feature_set", "feature_value", "flag_scores",
+                        "load_behavior", "pcap_diff", "pdfa_sweep", "sweep", "windowed_scores")},
+    }
 
     def test_each_entry_point_bootstraps_the_project_root(self):
-        for path in self.ENTRY_POINTS:
+        for path, bootstrap in self.ENTRY_POINTS.items():
             with self.subTest(path=path):
                 source = Path(path).read_text(encoding="utf-8")
-                self.assertIn(self.BOOTSTRAP, source,
+                self.assertIn(bootstrap, source,
                               f"{path} cannot run as 'python {path}': add the bootstrap")
 
 
 class DocumentationChecks(unittest.TestCase):
-    """README.md is the file map a reader opens first; every module must be named in it."""
+    """README.md (shipped code) and dev/README.md (development material) are the file maps a
+    reader opens first; every module must be named in one of them."""
 
     SKIP = {"local_paths.py", "local_paths.example.py", "__init__.py"}
 
     def test_every_module_appears_in_the_readme(self):
-        readme = Path("README.md").read_text(encoding="utf-8")
+        readme = (Path("README.md").read_text(encoding="utf-8")
+                  + Path("dev/README.md").read_text(encoding="utf-8"))
         missing = []
         for path in sorted(Path(".").rglob("*.py")):
-            if ".venv" in path.parts or "__pycache__" in path.parts:
+            if {".venv", "__pycache__", ".worktrees"} & set(path.parts):
                 continue
             if path.name in self.SKIP:
                 continue
             if str(path) not in readme:
                 missing.append(str(path))
-        self.assertEqual(missing, [], "README.md does not name: " + ", ".join(missing))
+        self.assertEqual(missing, [], "neither README names: " + ", ".join(missing))
 
 
 class FeatureLayerChecks(unittest.TestCase):
@@ -3302,13 +3319,13 @@ class PcapDiffChecks(unittest.TestCase):
         return root, flat, nested
 
     def test_locate_pcap_flat_and_nested(self):
-        from convert import diff as pcap_diff
+        from experiments import pcap_diff
         root, flat, nested = self.tree()
         self.assertEqual(pcap_diff.locate_pcap(root, "benign", "pod-nginx", "tcp"), flat)
         self.assertEqual(pcap_diff.locate_pcap(root, "nginx attack", "pod-nginx", "ptcp"), nested)
 
     def test_locate_pcap_missing_or_duplicate_raises(self):
-        from convert import diff as pcap_diff
+        from experiments import pcap_diff
         root, flat, _ = self.tree()
         with self.assertRaisesRegex(ValueError, "benign/pod-lidar/tcp: 0 capture files"):
             pcap_diff.locate_pcap(root, "benign", "pod-lidar", "tcp")
@@ -3338,7 +3355,7 @@ class PcapDiffChecks(unittest.TestCase):
         return pcap, csv_path
 
     def test_compare_capture_counts_and_names_mismatch(self):
-        from convert import diff as pcap_diff
+        from experiments import pcap_diff
         result = pcap_diff.compare_capture(*self.pair(edit=("dst_port", "9999")))
         self.assertEqual((result["rows_sponsor"], result["rows_regen"]), (2, 2))
         self.assertEqual((result["tier_a_exact"], result["mismatch_cells"],
@@ -3346,26 +3363,26 @@ class PcapDiffChecks(unittest.TestCase):
         self.assertEqual(result["first_mismatch"], "frame 1 dst_port 8080|9999")
 
     def test_compare_capture_tier_b_only_is_still_tier_a_exact(self):
-        from convert import diff as pcap_diff
+        from experiments import pcap_diff
         result = pcap_diff.compare_capture(*self.pair(edit=("eth_src", "aa:aa:aa:aa:aa:aa")))
         self.assertEqual((result["tier_a_exact"], result["differing_columns"], result["windows"]),
                          (True, "eth_src:1", "equal"))
 
     def test_identical_capture_is_exact_with_equal_windows(self):
-        from convert import diff as pcap_diff
+        from experiments import pcap_diff
         result = pcap_diff.compare_capture(*self.pair())
         self.assertEqual((result["tier_a_exact"], result["mismatch_cells"], result["windows"],
                           result["warnings"]), (True, 0, "equal", ""))
 
     def test_truncation_warning_blocks_exact(self):
-        from convert import diff as pcap_diff
+        from experiments import pcap_diff
         result = pcap_diff.compare_capture(*self.pair(cut=10))
         self.assertEqual((result["rows_regen"], result["mismatch_cells"]), (1, 0))
         self.assertEqual((result["tier_a_exact"], result["warnings"]),
                          (False, "truncated after frame 1"))
 
     def test_row_count_difference_blocks_exact(self):
-        from convert import diff as pcap_diff
+        from experiments import pcap_diff
         pcap, csv_path = self.pair()
         with open(csv_path, "a", newline="") as handle:
             handle.write("3" + "," * 33 + "\r\n")
@@ -3375,7 +3392,7 @@ class PcapDiffChecks(unittest.TestCase):
 
     def test_one_bad_capture_is_recorded_and_the_run_continues(self):
         import tempfile
-        from convert import diff as pcap_diff
+        from experiments import pcap_diff
         root = Path(tempfile.mkdtemp())
         good_pcap, good_csv = self.pair()
         rows = []
@@ -3394,7 +3411,7 @@ class PcapDiffChecks(unittest.TestCase):
         self.assertIn("1 failed", pcap_diff.summarize(results))
 
     def test_summary_names_captures_cut_short_at_the_source(self):
-        from convert import diff as pcap_diff
+        from experiments import pcap_diff
         results = pd.DataFrame([
             {"tier_a_exact": False, "mismatch_cells": 0, "rows_sponsor": 5, "rows_regen": 5,
              "windows": "equal", "differing_columns": "", "warnings": "truncated after frame 5",
@@ -3422,7 +3439,7 @@ class PcapDiffChecks(unittest.TestCase):
                        "tier_a_exact": False, "windows": "differ", "differing_columns": "eth_src:2;ts:1",
                        "mismatch_cells": 3, "rows_sponsor": 4, "rows_regen": 4, "warnings": "",
                        "note": ""}]).to_csv(out, index=False)
-        run = subprocess.run([sys.executable, "convert/diff.py", "--report", "--out", str(out)],
+        run = subprocess.run([sys.executable, "dev/experiments/pcap_diff.py", "--report", "--out", str(out)],
                              capture_output=True, text=True)
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIn("1 of 2 Tier-A exact; windows equal on 1", run.stdout)

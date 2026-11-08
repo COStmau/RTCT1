@@ -35,11 +35,12 @@ from core.detectors import BENIGN_QUANTILE, PERSISTENCE_WINDOW, persistent_mask
 from core.evaluation import BULK_LABELS
 from core.reporting import CLEAR_WINDOWS
 from core.features import WINDOW_SIZE
-from statemachine import (FORGET_SECONDS, TRAIN_COUNTS, FrequencyScorer, WindowedFrequencyScorer, encode,
-                          fit_model, frequency_cutoff, frequency_scores_by_window, make_flows,
-                          n_windows_for, pdfa_states_in_order, score_cutoff, score_flows,
-                          load_flow_packets, segment_flows, split_flows, trace_score,
-                          trace_states)
+from methods.pdfa import (encode, fit_model, load_flow_packets, make_flows, segment_flows,
+                          split_flows)
+from methods.scores import (FORGET_SECONDS, TRAIN_COUNTS, FrequencyScorer, WindowedFrequencyScorer,
+                            frequency_cutoff, frequency_scores_by_window, n_windows_for,
+                            pdfa_states_in_order, score_cutoff, score_flows, trace_score,
+                            trace_states)
 
 DEFAULT_VANTAGE = "pod-lidar"   # its 5 s replay loop is what FORGET_SECONDS was sized for
 HELD_OUT = "benign (held out)"
@@ -61,7 +62,7 @@ def build_page(benign, targets, cluster_captures, vantage, forget_seconds=FORGET
     """The bundle for one vantage.
 
     `benign` and each `targets[scenario]` are packet frames for `vantage` (flow columns, as
-    statemachine.load_flow_packets reads them). `cluster_captures` maps every capture label
+    methods.pdfa.load_flow_packets reads them). `cluster_captures` maps every capture label
     to a benign packet frame and drives the cluster drawing; it may be empty. `found` is that
     cluster already inferred, so several vantages can share one inference.
 
@@ -267,7 +268,7 @@ def _capture(scenario, flows, t0, n_windows, duration, model, found, forget, cut
             "cumulative": total,
             "terms": [[float(term) for term in state_terms] for state_terms in terms],
             # exact integers: the page would otherwise invert rounded logarithms; the training
-            # count is the scorer's own (statemachine.TRAIN_COUNTS), not always node.visits
+            # count is the scorer's own (methods.scores.TRAIN_COUNTS), not always node.visits
             "visits": [[int(np.rint(np.expm1(state_terms[0]))), int(windowed.train[id(state)])]
                        for state_terms, state in zip(terms, reached)],
             "expired": [[float(seen), ids[key]] for seen, key in expired],

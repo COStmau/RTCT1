@@ -1,6 +1,6 @@
 """The hybrid feature-set verdict: the eight features plus `packet_count`, fixed before it ran.
 
-`verdicts/feature_set.py` dropped the eight-feature set because of one condition, ptcp
+`dev/verdicts/feature_set.py` dropped the eight-feature set because of one condition, ptcp
 injection AUROC (0.152 lost, 0.10 allowed), carried by two strata of 6 and 11 windows. The
 hypothesis here is that injection is seen partly through volume, so one volume feature put
 back protects it. `packet_count` is the choice because `total_bytes` is clipped at the
@@ -8,7 +8,7 @@ recorder's size limit on the three bulk taps and `payload_bytes` underperformed 
 the choice was made before this candidate was run, and it is the only one that will be run.
 
 The rule is the previous rule, unchanged: the thresholds are imported from
-`verdicts/feature_set.py` rather than copied, so they cannot differ. Changing them to suit this
+`dev/verdicts/feature_set.py` rather than copied, so they cannot differ. Changing them to suit this
 candidate would be editing the old rule, which is a different commit and has to be said so.
 
 Disclosure, in addition to the previous module's: this is the second candidate judged on the

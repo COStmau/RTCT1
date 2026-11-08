@@ -18,9 +18,10 @@ import tempfile
 import time
 from pathlib import Path
 
-# A script run as `python convert/diff.py` gets convert/ as sys.path[0], so the
-# project root has to go back on the path before any project import.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# A script run as `python dev/experiments/pcap_diff.py` gets dev/experiments/ as sys.path[0], so the
+# Threat_Detection root (core, methods, convert) and dev/ (experiments, verdicts) go back on
+# the path before any project import.
+sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).resolve().parents[1])]
 
 import pandas as pd
 

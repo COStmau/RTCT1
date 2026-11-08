@@ -7,9 +7,10 @@ scored too, so the false-alarm rows come from windows the baseline never saw.
 import sys
 from pathlib import Path
 
-# A script run as `python experiments/sweep.py` gets experiments/ as sys.path[0], so
-# the project root has to go back on the path before any project import.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# A script run as `python dev/experiments/sweep.py` gets dev/experiments/ as sys.path[0], so the
+# Threat_Detection root (core, methods, convert) and dev/ (experiments, verdicts) go back on
+# the path before any project import.
+sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).resolve().parents[1])]
 
 import argparse
 

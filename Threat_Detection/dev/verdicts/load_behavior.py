@@ -17,7 +17,7 @@ could not score counted as "not escalated", never dropped.
 
 These constants and `decide()` were committed before any number of this comparison existed,
 so moving a threshold later means editing a committed file, not recalling an intention.
-`experiments/load_behavior.py` produces the rows this reads. The deciding behavior score is
+`dev/experiments/load_behavior.py` produces the rows this reads. The deciding behavior score is
 the windowed SEQUENT score at the page's calibration; the trace-likelihood detector is
 reported beside it and decides nothing.
 
