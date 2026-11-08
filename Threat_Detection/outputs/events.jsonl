@@ -1,51 +1,52 @@
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "low", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "low", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "low", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "low", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "low", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "low", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "high", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
-{"version": "LogV0", "detector": "z_score", "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 2, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 4, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 8, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 9, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 10, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 11, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 12, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 14, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 15, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 16, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 17, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 18, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 19, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 20, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 21, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 22, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 23, "severity": "high", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 24, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 25, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 26, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 27, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 28, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 29, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 30, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 31, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 32, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 33, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 35, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 36, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 37, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 38, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 39, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 40, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 41, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 42, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 43, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 44, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 45, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 46, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 47, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 48, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 49, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 50, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 51, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 52, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 53, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 54, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 55, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 56, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 57, "severity": "med", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 58, "severity": "low", "locations": {"pods": ["pod-nginx"]}}
+{"version": "LogV1", "detector": "z_score", "t": 59, "severity": "low", "locations": {"pods": ["pod-nginx"]}}

@@ -6,8 +6,8 @@ feature set, and nothing about what counts as an anomaly.
 import numpy as np
 import pandas as pd
 
-import evaluation
-from data_io import load_capture, timebase_issues
+import core.evaluation as evaluation
+from core.data_io import load_capture, timebase_issues
 
 WINDOW_SIZE = 1.0
 
@@ -26,6 +26,16 @@ FEATURE_LABELS = {
     "https_count": ("HTTPS packets", "packets/window"),
     "http_frac": ("HTTP share of packets", "fraction"),
 }
+
+# What the detectors read. make_windows still computes all 13 measurements, because the
+# ablations, the feature ranking and the reporting read the whole table; a detector built with
+# its default uses only these nine. They are the eight measurements that do not move with load
+# (destination diversity, TCP flags, protocol mix) plus packet_count, which was put back
+# because without a volume term injection attacks lose ranking. The reasoning and the numbers
+# are in PROGRESS.md ("Eight-feature set", "Hybrid feature set"); a test keeps this list equal
+# to the candidate dev/verdicts/feature_set_hybrid.py judged.
+DETECTION_FEATURES = ("packet_count", "unique_dst_ips", "unique_dst_ports", "syn_count",
+                      "rst_count", "http_count", "dns_count", "https_count", "http_frac")
 
 # Groups used by the ablation. Every feature label belongs to exactly one group.
 FEATURE_GROUPS = {

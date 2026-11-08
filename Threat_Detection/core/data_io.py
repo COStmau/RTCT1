@@ -29,9 +29,10 @@ MAX_CAPTURE_SPAN_S = 600.0
 
 MANIFEST_NAME = "capture_manifest.csv"
 
-# Every generated file lands here, next to this module. Anchored to __file__ so a run started
-# from any directory still writes into Threat_Detection/outputs/.
-OUTPUT_DIR = Path(__file__).resolve().parent / "outputs"
+# Every generated file lands here, at the project root rather than next to this module,
+# which now sits in core/. Anchored to __file__ so a run started from any directory still
+# writes into Threat_Detection/outputs/.
+OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 
 
 def resolve_output(name=None):

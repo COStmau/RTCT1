@@ -1,34 +1,23 @@
-"""State-machine anomaly detection after Cao, Blaise, Verwer and Rebecchi (ARES 2022).
+"""Scoring: how anomalous a trace is, and how anomalous a window is.
 
-Packet captures become flows (5-tuple, like their NetFlow input). Each flow
-becomes one symbol, ``PROTO_BYTES_DURATION``, with the two sizes percentile
-binned on benign traffic. A fixed sliding window cuts the symbol stream into
-traces. A probabilistic DFA is learned from benign traces with the classic
-ALERGIA state-merging test, and new traces score by mean log transition
-probability. Traces below the 5th percentile of held-out benign scores flag
-their window, the same budget convention compare.py uses for the forest/SVM.
+Two questions, both answered here. How unlikely is this trace under the learned machine
+(``trace_score``)? And how much more often does it visit states than training said it would
+(SEQUENT's frequency score), counted either cumulatively or over a trailing ``FORGET_SECONDS``
+clock so a burst expires instead of accumulating forever.
 
-Run it with:  .venv/bin/python demo.py 3      (the pair demo)
-              .venv/bin/python statemachine.py  (every stratum, one row each)
+Every score is oriented so higher means more anomalous, the same convention the detectors in
+``detectors`` use.
 """
 from collections import Counter, deque
 
 import numpy as np
 import pandas as pd
 
-from data_io import MANIFEST_NAME, load_capture, load_manifest, resolve_output, timebase_issues
-from detectors import BENIGN_QUANTILE, flag_stats
-from features import BENIGN_TRAIN_FRACTION, WINDOW_SIZE
-
-FLOW_COLUMNS = ["ts", "frame_len", "src_ip", "dst_ip", "src_port",
-                "dst_port", "proto"]
-FLAG_COLUMNS = ["tcp_syn", "tcp_rst"]
-TRACE_LEN = 5
-NBINS = 4
-ALERGIA_ALPHA = 0.05
-MISSING_PROB = 1e-6
-PAIR_CSV = "statemachine_pair.csv"
-SWEEP_CSV = "statemachine_sweep.csv"
+from core.data_io import load_capture, resolve_output, timebase_issues
+from core.detectors import BENIGN_QUANTILE, flag_stats
+from core.features import WINDOW_SIZE
+from methods.pdfa import (MISSING_PROB, PDFA, TRACE_LEN, encode, fit_model,
+                          load_flow_packets, make_flows, segment_flows, split_flows)
 
 # The anomaly clock: a state visit counts only while it is inside this trailing window of
 # observed seconds, so an attack's excess visits expire instead of accumulating forever.
@@ -37,236 +26,13 @@ SWEEP_CSV = "statemachine_sweep.csv"
 # a 5 s LiDAR replay loop and leaves room for a few clean windows of runway after it.
 FORGET_SECONDS = 8.0
 
+# Where a frequency scorer's training count per state comes from. "visits" counts the start
+# state once per training trace start, which a test trace never adds; "entries" counts only
+# transitions into a state, the same thing a test trace's visits count. Entries won under the
+# rule root_verdict.py fixed before measuring (windowed_scores.py, PROGRESS.md 2026-11-03).
+TRAIN_COUNTS = "entries"
 
-def load_flow_packets(path, flags=False):
-    """Read only the packet columns flows are built from; flag columns when asked."""
-    columns = FLOW_COLUMNS + (FLAG_COLUMNS if flags else [])
-    return pd.read_csv(path, usecols=columns, low_memory=False)
-
-
-def make_flows(packets):
-    """One row per 5-tuple flow: start time, protocol, bytes, duration, flag presence."""
-    required = set(FLOW_COLUMNS) - {"proto"}
-    missing = required - set(packets.columns)
-    if missing:
-        raise ValueError(f"Missing packet columns: {', '.join(sorted(missing))}")
-    if packets.empty:
-        raise ValueError("No packets available to build flows.")
-    frames = packets.copy()
-    frames["ts"] = pd.to_numeric(frames["ts"], errors="raise")
-    frames["frame_len"] = pd.to_numeric(frames["frame_len"], errors="raise")
-    if not np.isfinite(frames[["ts", "frame_len"]].to_numpy()).all():
-        raise ValueError("Packet columns ts/frame_len contain missing or nonfinite values.")
-    has_flags = all(column in frames.columns for column in FLAG_COLUMNS)
-    if has_flags:
-        for column in FLAG_COLUMNS:
-            frames[column] = pd.to_numeric(frames[column], errors="raise")
-    grouped = frames.groupby(["src_ip", "dst_ip", "src_port", "dst_port",
-                              "proto"], dropna=False)
-    aggregations = {
-        "start_ts": ("ts", "min"),
-        "bytes": ("frame_len", "sum"),
-        "duration": ("ts", lambda s: float(s.max() - s.min())),
-        "proto": ("proto", "first"),
-    }
-    if has_flags:
-        aggregations["syn_seen"] = ("tcp_syn", "max")
-        aggregations["rst_seen"] = ("tcp_rst", "max")
-    flows = grouped.agg(**aggregations).reset_index(drop=True)
-    if has_flags:
-        flows["syn_seen"] = flows["syn_seen"].astype(bool)
-        flows["rst_seen"] = flows["rst_seen"].astype(bool)
-    return flows.sort_values("start_ts").reset_index(drop=True)
-
-
-def segment_flows(flows, t0, window_size=WINDOW_SIZE):
-    """Flows lying inside a single window, plus the number dropped.
-
-    A flow cut by a window boundary would carry a partial byte count and a partial
-    duration, which is an artifact of where the slice fell rather than of behaviour, so it
-    is dropped instead of symbolized. The count comes back with the kept flows so a caller
-    can report it rather than lose it.
-    """
-    start = np.floor((flows["start_ts"] - t0) / window_size)
-    end = np.floor((flows["start_ts"] + flows["duration"] - 1e-9 - t0) / window_size)
-    crossing = start != end
-    return flows[~crossing].reset_index(drop=True), int(crossing.sum())
-
-
-def fit_percentile(flows, nbins=NBINS, flags=False):
-    """Quantile bin edges for bytes and duration, fitted on benign flows."""
-    enc = {"kind": "percentile", "flags": bool(flags)}
-    for column in ("bytes", "duration"):
-        cuts = np.quantile(flows[column].to_numpy(dtype=float),
-                           np.linspace(0, 1, nbins + 1))
-        enc[column] = np.unique(cuts)
-    return enc
-
-
-def fit_frequency(flows, nbins=NBINS, min_count=3, flags=False):
-    """Frequent exact values keep their own label; the rest is binned.
-
-    The paper's frequency encoding with a count threshold, adapted to
-    near-continuous flow sizes: only exactly repeated values earn a label.
-    """
-    enc = {"kind": "frequency", "flags": bool(flags)}
-    for column in ("bytes", "duration"):
-        counts = flows[column].value_counts()
-        frequent = sorted(counts[counts.ge(min_count)].index.tolist())
-        rest = flows[~flows[column].isin(frequent)][column].to_numpy(dtype=float)
-        cuts = np.quantile(rest, np.linspace(0, 1, nbins + 1)) if len(rest) else np.array([])
-        enc[column] = {"freq": {v: i for i, v in enumerate(frequent)},
-                       "edges": np.unique(cuts)}
-    return enc
-
-
-def _bin(values, edges):
-    if len(edges) < 2:
-        return np.zeros(len(values), dtype=int)
-    return np.clip(np.searchsorted(edges[1:-1], values, side="right"),
-                   0, len(edges) - 2)
-
-
-def _flag_bits(flows, enabled):
-    """`s1r0` per TCP flow when flags are enabled; empty strings otherwise."""
-    if not enabled:
-        return [""] * len(flows)
-    missing = {"syn_seen", "rst_seen"} - set(flows.columns)
-    if missing:
-        raise ValueError("Flags requested but flows lack syn_seen/rst_seen; "
-                         "load them with load_flow_packets(path, flags=True).")
-    return [f"s{int(syn)}r{int(rst)}" if str(proto).lower() == "tcp" else ""
-            for proto, syn, rst in zip(flows["proto"], flows["syn_seen"],
-                                       flows["rst_seen"])]
-
-
-def encode(flows, enc):
-    """Flows to PROTO_[FLAGS_]SIZE_DURATION symbols using the fitted encoding."""
-    symbols = []
-    for proto, flags, size, duration in zip(flows["proto"],
-                                            _flag_bits(flows, enc.get("flags", False)),
-                                            flows["bytes"], flows["duration"]):
-        parts = [str(proto)]
-        if flags:
-            parts.append(flags)
-        parts += [_encode_value(size, enc["bytes"]),
-                  _encode_value(duration, enc["duration"])]
-        symbols.append("_".join(parts))
-    return pd.Series(symbols, index=flows.index)
-
-
-def _encode_value(value, spec):
-    if isinstance(spec, dict):  # frequency encoding
-        if value in spec["freq"]:
-            return f"f{spec['freq'][value]}"
-        return f"p{_bin(np.array([float(value)]), spec['edges'])[0]}"
-    return f"p{_bin(np.array([float(value)]), spec)[0]}"
-
-
-def make_traces(symbols, length=TRACE_LEN):
-    """Fixed sliding window over the symbol stream, one tuple per trace."""
-    symbols = list(symbols)
-    if length < 1:
-        raise ValueError("Trace length must be positive.")
-    return [tuple(symbols[i:i + length]) for i in range(len(symbols) - length + 1)]
-
-
-class _Node:
-    __slots__ = ("children", "edge", "visits", "final")
-
-    def __init__(self):
-        self.children = {}
-        self.edge = {}
-        self.visits = 0
-        self.final = 0
-
-
-def _hoeffding(n1, n2, alpha=ALERGIA_ALPHA):
-    return np.sqrt(0.5 * np.log(2.0 / alpha)) * (1 / np.sqrt(n1) + 1 / np.sqrt(n2))
-
-
-def _compatible(node1, node2, alpha=ALERGIA_ALPHA):
-    """ALERGIA test: same next-symbol and termination probabilities."""
-    if node1.visits == 0 or node2.visits == 0:
-        return False
-    bound = _hoeffding(node1.visits, node2.visits, alpha)
-    symbols = set(node1.children) | set(node2.children) | {"#"}
-    for symbol in symbols:
-        if symbol == "#":
-            first, second = node1.final, node2.final
-        else:
-            first = node1.edge.get(symbol, 0)
-            second = node2.edge.get(symbol, 0)
-        if abs(first / node1.visits - second / node2.visits) >= bound:
-            return False
-    return True
-
-
-def _fold_into(target, other):
-    """Merge other into target, determinizing shared continuations."""
-    if target is other:
-        return  # already the same state; folding would double-count
-    target.visits += other.visits
-    target.final += other.final
-    for symbol, count in other.edge.items():
-        target.edge[symbol] = target.edge.get(symbol, 0) + count
-    for symbol, child in other.children.items():
-        if symbol in target.children:
-            _fold_into(target.children[symbol], child)
-        else:
-            target.children[symbol] = child
-
-
-class PDFA:
-    """Deterministic probabilistic automaton with transition probabilities."""
-
-    def __init__(self, root):
-        self.root = root
-        self.probs = {}
-        stack = [root]
-        seen = {id(root)}
-        while stack:
-            node = stack.pop()
-            outgoing = {s: (c, node.edge[s] / node.visits)
-                        for s, c in node.children.items()}
-            self.probs[id(node)] = (node, outgoing)
-            for child in node.children.values():
-                if id(child) not in seen:
-                    seen.add(id(child))
-                    stack.append(child)
-        self.n_states = len(seen)
-
-    def transition(self, node, symbol):
-        _, outgoing = self.probs[id(node)]
-        return outgoing.get(symbol, (None, 0.0))
-
-
-def learn_pdfa(traces, alpha=ALERGIA_ALPHA):
-    """PTA from traces, then red-blue ALERGIA state merging."""
-    root = _Node()
-    for trace in traces:
-        node = root
-        node.visits += 1
-        for symbol in trace:
-            node.edge[symbol] = node.edge.get(symbol, 0) + 1
-            node = node.children.setdefault(symbol, _Node())
-            node.visits += 1
-        node.final += 1
-    red = [root]
-    while True:
-        fringe = [(parent, s, c) for parent in red
-                  for s, c in sorted(parent.children.items()) if c not in red]
-        if not fringe:
-            break
-        parent, symbol, blue = fringe[0]
-        for candidate in red:
-            if _compatible(candidate, blue, alpha):
-                parent.children[symbol] = candidate
-                _fold_into(candidate, blue)
-                break
-        else:
-            red.append(blue)
-    return PDFA(root)
+PAIR_CSV = "statemachine_pair.csv"
 
 
 def trace_score(pdfa, trace):
@@ -378,25 +144,6 @@ def plot_pdfa(pdfa, path=None, min_label_prob=0.25):
     return out
 
 
-def split_flows(flows, train_fraction=BENIGN_TRAIN_FRACTION):
-    """First `train_fraction` of flows (time order) fit the model."""
-    split = int(len(flows) * train_fraction)
-    if split < 1 or split >= len(flows):
-        raise ValueError("Insufficient benign flows for fitting and holdout.")
-    return flows.iloc[:split].reset_index(drop=True), flows.iloc[split:].reset_index(drop=True)
-
-
-def fit_model(train_flows, nbins=NBINS, trace_len=TRACE_LEN, alpha=ALERGIA_ALPHA,
-              encoding="percentile", flags=False):
-    """Bin edges plus PDFA learned from benign training flows."""
-    fitter = fit_frequency if encoding == "frequency" else fit_percentile
-    enc = fitter(train_flows, nbins, flags=flags)
-    traces = make_traces(encode(train_flows, enc), trace_len)
-    if not traces:
-        raise ValueError("Too few training flows for one trace.")
-    return {"enc": enc, "pdfa": learn_pdfa(traces, alpha), "trace_len": trace_len}
-
-
 def score_flows(model, flows):
     """(end-flow start time, trace score) for each sliding trace."""
     symbols = list(encode(flows, model["enc"]))
@@ -417,6 +164,24 @@ def trace_states(pdfa, trace):
     return states
 
 
+def state_train_counts(pdfa, source=TRAIN_COUNTS):
+    """{state key: training count}, from `node.visits` or from entries into the state.
+
+    The two differ only where training traces started: every state but the start state is
+    entered exactly as often as it is visited, and the start state's visits add one per
+    training trace.
+    """
+    if source == "visits":
+        return {id(node): node.visits for node, _ in pdfa.probs.values()}
+    if source != "entries":
+        raise ValueError(f"Unknown training count source: {source!r}")
+    counts = {id(node): 0 for node, _ in pdfa.probs.values()}
+    for node, outgoing in pdfa.probs.values():
+        for symbol, (child, _) in outgoing.items():
+            counts[id(child)] += node.edge[symbol]
+    return counts
+
+
 class FrequencyScorer:
     """SEQUENT's rolling score: test-time state frequency against a fixed training count.
 
@@ -427,9 +192,9 @@ class FrequencyScorer:
     counting. `WindowedFrequencyScorer` is the bounded version.
     """
 
-    def __init__(self, pdfa):
+    def __init__(self, pdfa, train_counts=TRAIN_COUNTS):
         self.pdfa = pdfa
-        self.train = {id(node): node.visits for node, _ in pdfa.probs.values()}
+        self.train = state_train_counts(pdfa, train_counts)
         self.total_train = sum(self.train.values())
         self.test = Counter()
         self.states_seen = 0
@@ -443,7 +208,6 @@ class FrequencyScorer:
             self.test[key] += 1
             self.states_seen = len(self.test)
         return float(total)
-
 
 
 class WindowedFrequencyScorer:
@@ -460,54 +224,67 @@ class WindowedFrequencyScorer:
     window the two scorers return bit-identical scores; the tests hold that.
     """
 
-    def __init__(self, pdfa, forget_seconds=FORGET_SECONDS):
+    def __init__(self, pdfa, forget_seconds=FORGET_SECONDS, train_counts=TRAIN_COUNTS):
         if not forget_seconds > 0:
             raise ValueError("forget_seconds must be positive.")
         self.pdfa = pdfa
         self.forget_seconds = float(forget_seconds)
-        self.train = {id(node): node.visits for node, _ in pdfa.probs.values()}
+        self.train = state_train_counts(pdfa, train_counts)
         self.total_train = sum(self.train.values())
         self.visits = deque()          # (when, state key), oldest first
         self.counts = Counter()
         self.last_when = float("-inf")
 
     def _expire(self, when):
-        """Drop visits older than the trailing window ending at `when`."""
+        """Drop visits older than the trailing window ending at `when`; return them."""
         oldest_allowed = when - self.forget_seconds
+        expired = []
         while self.visits and self.visits[0][0] < oldest_allowed:
-            _, key = self.visits.popleft()
+            expired.append(self.visits.popleft())
+            key = expired[-1][1]
             self.counts[key] -= 1
             if not self.counts[key]:
                 del self.counts[key]
+        return expired
 
-    def score(self, trace, when):
-        """Anomaly score of one trace observed at `when` seconds; higher is more anomalous."""
+    def score_terms(self, trace, when):
+        """Per visited state, the four terms of its score; and the visits expired first.
+
+        Terms are (log(test+1), -log(train+1), log(total_train+1), log(states_seen+1)), so
+        a state's contribution is their sum and the trace's score is the sum over states.
+        """
         when = float(when)
         if when < self.last_when:
             raise ValueError("Traces must arrive in time order.")
         self.last_when = when
-        self._expire(when)
-        total = 0.0
+        expired = self._expire(when)
+        terms = []
         for state in trace_states(self.pdfa, trace):
             key = id(state)
-            total += (np.log(self.counts[key] + 1) - np.log(self.train.get(key, 0) + 1)
-                      + np.log(self.total_train + 1) + np.log(len(self.counts) + 1))
+            terms.append((np.log(self.counts[key] + 1), -np.log(self.train.get(key, 0) + 1),
+                          np.log(self.total_train + 1), np.log(len(self.counts) + 1)))
             self.visits.append((when, key))
             self.counts[key] += 1
-        return float(total)
+        return terms, expired
+
+    def score(self, trace, when):
+        """Anomaly score of one trace observed at `when` seconds; higher is more anomalous."""
+        terms, _ = self.score_terms(trace, when)
+        return float(sum(map(sum, terms)))
 
 
-def frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds=None):
+def frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds=None,
+                               train_counts=TRAIN_COUNTS):
     """Most anomalous state-frequency score per window; NaN where no trace ended.
 
     `forget_seconds=None` is cumulative SEQUENT; a number is the windowed scorer. Each trace
     is timed by the start of its last flow, the same convention `flags_for_windows` uses.
     """
     if forget_seconds is None:
-        scorer = FrequencyScorer(model["pdfa"])
+        scorer = FrequencyScorer(model["pdfa"], train_counts)
         score = lambda trace, when: scorer.score(trace)
     else:
-        score = WindowedFrequencyScorer(model["pdfa"], forget_seconds).score
+        score = WindowedFrequencyScorer(model["pdfa"], forget_seconds, train_counts).score
     symbols = list(encode(flows, model["enc"]))
     trace_len = model["trace_len"]
     scores = np.full(n_windows, np.nan)
@@ -518,6 +295,39 @@ def frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds=None)
         if 0 <= window < n_windows:
             scores[window] = value if np.isnan(scores[window]) else max(scores[window], value)
     return scores
+
+
+def warm_from(forget_seconds=FORGET_SECONDS):
+    """First window of a cold-started capture whose clock has run a full `forget_seconds`.
+
+    A windowed scorer starts with an empty clock, so its first seconds understate the
+    traffic; anything compared to a warm reference has to skip them.
+    """
+    return int(np.ceil(forget_seconds / WINDOW_SIZE))
+
+
+def held_out_scores(model, flows, holdout, t0, n_windows, forget_seconds=FORGET_SECONDS,
+                    train_counts=TRAIN_COUNTS):
+    """Held-out benign window scores on a warm clock, as viz.build_page calibrates.
+
+    Every benign flow is scored in order, training flows first, and only the windows after
+    the one the train/holdout split falls in are kept; NaN where no trace ended.
+    """
+    first_held = int((float(holdout["start_ts"].iloc[0]) - t0) // WINDOW_SIZE)
+    warm = frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds, train_counts)
+    return warm[first_held + 1:]
+
+
+def frequency_cutoff(holdout_scores, quantile=BENIGN_QUANTILE):
+    """Frequency-score cutoff flagging the top `quantile` of held-out benign; NaN ignored.
+
+    Frequency scores rise with anomaly, so the cut is the upper tail, unlike `score_cutoff`.
+    """
+    scores = np.asarray(holdout_scores, dtype=float)
+    if not np.isfinite(scores).any():
+        raise ValueError("No held-out benign frequency scores to calibrate the cutoff.")
+    return float(np.nanquantile(scores, 1 - quantile))
+
 
 def score_cutoff(holdout_scores, quantile=BENIGN_QUANTILE):
     """Trace-score cutoff that flags the worst `quantile` of held-out benign."""
@@ -635,43 +445,3 @@ def write_pair(benign_flags, attack_flags, path=None):
     out_file = resolve_output(path or PAIR_CSV)
     pair.to_csv(out_file, index=False)
     return out_file
-
-
-def main():
-    """Write one flag_stats row per stratum: the sweep behind the pair demo.
-
-    Same shape as sweep.py's output, so the two detectors can be compared row by row.
-    """
-    import argparse
-
-    import local_paths
-
-    parser = argparse.ArgumentParser(
-        description="Score every capture against its matched benign reference with the "
-                    "state machine. One row per stratum.")
-    parser.add_argument("--method", default="tcp", choices=("tcp", "ptcp"),
-                        help="capture method; tcp and ptcp are separate measurements")
-    parser.add_argument("--encoding", default="percentile",
-                        choices=("percentile", "frequency"))
-    parser.add_argument("--flags", action="store_true",
-                        help="add TCP SYN/RST presence to the symbol alphabet")
-    parser.add_argument("--out", default=SWEEP_CSV)
-    parser.add_argument("--manifest", default=MANIFEST_NAME)
-    args = parser.parse_args()
-
-    manifest = load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest)
-    rows = statemachine_rows(manifest, method=args.method, encoding=args.encoding,
-                             flag_bits=args.flags)
-    out_file = resolve_output(args.out)
-    rows.to_csv(out_file, index=False)
-
-    print(f"Wrote {out_file} | rows={len(rows)} | method={args.method} "
-          f"| encoding={args.encoding} | flags={args.flags}")
-    for scenario, group in rows.groupby("scenario"):
-        print(f"  {scenario:<16} flagged fraction {group['flagged_fraction'].mean():.3f} "
-              f"(mean over {len(group)} strata) | {int(group['windows'].sum())} windows")
-    print(f"Windows are {WINDOW_SIZE:g}s. Flags are deviations, not confirmed attacks.")
-
-
-if __name__ == "__main__":
-    main()

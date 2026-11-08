@@ -21,6 +21,8 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
+from core.features import DETECTION_FEATURES
+
 
 # Detection policy. These constants are the whole tuning surface.
 THRESHOLD = 2.5                 # design cutoff; the FSR asks for 3 sigma, the captures support 2.5
@@ -47,8 +49,18 @@ class Detector:
     # Typed with ... so a bound method (self already applied) satisfies it.
     explain: Callable[..., pd.DataFrame] | None = None
 
-    def __init__(self):
+    def __init__(self, features=DETECTION_FEATURES):
+        """`features` are the window columns this detector reads; None reads every column given.
+
+        The default is the adopted set (features.DETECTION_FEATURES). An ablation that has
+        already chosen its columns passes None so the detector uses exactly those.
+        """
         self.cutoff = None
+        self.features = None if features is None else list(features)
+
+    def _select(self, windows):
+        """The columns this detector reads, in a fixed order. A missing one is an error."""
+        return windows if self.features is None else windows[self.features]
 
     def fit(self, reference):
         raise NotImplementedError
@@ -116,14 +128,15 @@ class ZScoreDetector(Detector):
 
     name = "z_score"
 
-    def __init__(self, threshold=THRESHOLD):
-        super().__init__()
+    def __init__(self, threshold=THRESHOLD, features=DETECTION_FEATURES):
+        super().__init__(features)
         self.threshold = threshold
         self.mean = None
         self.std = None
         self.degenerate = None
 
     def fit(self, reference):
+        reference = self._select(reference)
         if reference.empty or reference.count().lt(2).any():
             raise ValueError("Insufficient baseline data: each feature needs at least two observations.")
         # 1.4826 scales MAD to be a consistent estimator of sigma for normal data, so the
@@ -146,6 +159,7 @@ class ZScoreDetector(Detector):
         return self
 
     def _z(self, windows):
+        windows = self._select(windows)
         if self.mean is None or self.std is None:
             raise ValueError("Baseline statistics are unset; call fit() first.")
         if not np.isfinite(self.mean).all() or not np.isfinite(self.std).all() or self.std.lt(0).any():
@@ -211,6 +225,7 @@ class LearnedDetector(Detector):
         raise NotImplementedError
 
     def fit(self, reference):
+        reference = self._select(reference)
         if reference.empty or reference.count().lt(2).any():
             raise ValueError("Insufficient baseline data: each feature needs at least two observations.")
         self.model = self._build()
@@ -224,12 +239,12 @@ class LearnedDetector(Detector):
         evidence, which is also why this detector's window set is not identical to the
         z-score's.
         """
-        scored = windows.dropna()
+        scored = self._select(windows).dropna()
         raw = pd.Series(-self.model.decision_function(scored), index=scored.index)
         return raw.reindex(windows.index)
 
     def calibrate(self, held_out_benign):
-        values = held_out_benign.dropna()
+        values = self._select(held_out_benign).dropna()
         if values.empty:
             raise ValueError("No held-out benign windows to calibrate the cutoff")
         # The score is negated, so the worst BENIGN_QUANTILE now sits high, not low.
@@ -259,8 +274,8 @@ class OneClassSvmDetector(LearnedDetector):
 
     name = "one_class_svm"
 
-    def __init__(self, nu=SVM_NU):
-        super().__init__()
+    def __init__(self, nu=SVM_NU, features=DETECTION_FEATURES):
+        super().__init__(features)
         self.nu = nu
 
     def _build(self):

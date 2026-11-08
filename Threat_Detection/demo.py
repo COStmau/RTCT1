@@ -19,17 +19,18 @@ import pandas as pd
 
 # reporting pins matplotlib to Agg before it imports pyplot, so importing it first gives
 # this module the same headless backend instead of opening a window.
-from reporting import plot_detection, summarize_flags, write_report
+from core.reporting import plot_detection, summarize_flags, to_events, write_events, write_report
 import matplotlib.pyplot as plt
 
-from evaluation import BULK_LABELS
+from core.evaluation import BULK_LABELS
 
-from data_io import load_capture, resolve_output
-from detectors import PERSISTENCE_WINDOW, THRESHOLD, build
-from features import FEATURE_LABELS, WINDOW_SIZE, make_windows, split_reference
-from statemachine import (encode, fit_model, flags_for_windows, load_flow_packets,
-                          make_flows, n_windows_for, plot_pdfa, score_cutoff,
-                          score_flows, segment_flows, split_flows, write_pair)
+from core.data_io import load_capture, resolve_output
+from core.detectors import PERSISTENCE_WINDOW, THRESHOLD, build
+from core.features import FEATURE_LABELS, WINDOW_SIZE, make_windows, split_reference
+from methods.pdfa import (encode, fit_model, load_flow_packets, make_flows, segment_flows,
+                          split_flows)
+from methods.scores import (flags_for_windows, n_windows_for, plot_pdfa, score_cutoff,
+                            score_flows, write_pair)
 
 HERE = Path(__file__).resolve().parent
 DETECTOR = "z_score"
@@ -66,6 +67,13 @@ def resolve_reference(benign_windows):
     return reference, held_out, note
 
 
+def _label_of(path):
+    """The capture label a packet CSV belongs to, e.g. pod-nginx from pod-nginx-tcp.csv."""
+    from core.data_io import parse_capture
+    from pathlib import Path
+    return parse_capture(Path(path).name)[0]
+
+
 def pair_demo():
     """Two captures in, one report and one chart out."""
     import local_paths
@@ -83,7 +91,14 @@ def pair_demo():
     results.to_csv(resolve_output("results.csv"))
     benign_results.to_csv(resolve_output("benign_results.csv"))
 
+    # The detection -> response handoff (EVENT_LOG.md). Only flagged attack windows are
+    # emitted, each carrying its second inside the capture so the response side can order
+    # and expire them.
+    events = to_events(results, detector=DETECTOR, pods=[_label_of(local_paths.ATTACK_CSV)])
+    write_events(events)
+
     summarize_flags(results, benign_results, len(reference), note)
+    print(f"   {len(events)} events written to outputs/events.jsonl ({events[0]['version'] if events else 'no flags'})")
     plot_detection(results, benign_results, detector.mean, detector.std, len(reference))
 
 
@@ -134,7 +149,7 @@ def walkthrough():
     mean, spread = detector.mean, detector.std
     print(f"   learned from {len(learned)} seconds, kept {len(unseen_normal)} seconds aside")
     print("\n   What each slice counts, and what 'normal' looked like:")
-    for name in learned.columns:
+    for name in detector.features:
         label, unit = FEATURE_LABELS[name]
         print(f"      {label:<26} normal is about {mean[name]:>8.2f} {unit}")
 
@@ -332,8 +347,15 @@ def state_machine():
 
 # --- 4-7. The experiments, run exactly as their own scripts document -------------
 
+DEV = HERE / "dev"   # experiments, verdicts and tests; absent from a shipped-only copy
+
+
 def _run(*args):
     """Run a command with the interpreter that started this menu, from this folder."""
+    script = next((a for a in args if a.endswith(".py")), "")
+    if script.startswith("dev/") and not DEV.is_dir():
+        print(f"   {script} is development material and is not in this copy (no dev/ folder).")
+        return
     # Flush first: our own prints are buffered when output is piped, and the child writes
     # straight to the file descriptor, so without this the transcript interleaves wrongly.
     sys.stdout.flush()
@@ -342,24 +364,40 @@ def _run(*args):
 
 
 def sweep_captures():
-    _run("sweep.py")
+    _run("dev/experiments/sweep.py")
 
 
 def ablation():
-    _run("sweep.py", "--groups", "volume,size_timing,diversity,flags,protocol",
+    _run("dev/experiments/sweep.py", "--groups", "volume,size_timing,diversity,flags,protocol",
          "--out", "ablation_results.csv")
 
 
 def comparison():
-    _run("compare.py")
+    _run("dev/experiments/compare.py")
 
 
 def feature_value():
-    _run("feature_value.py")
+    _run("dev/experiments/feature_value.py")
 
 
 def run_tests():
-    _run("-m", "unittest", "tests")
+    _run("dev/tests.py")
+
+
+# --- 10. The visualization page ---------------------------------------------------
+
+def viz_page():
+    """The state machine learned and replayed, as one self-contained interactive page."""
+    from viz import page
+    page.main([])
+
+
+# --- 11. The pcap diff ------------------------------------------------------------
+
+def pcap_diff():
+    """The last pcap_diff.py run, summarized. The run itself reads every capture file, so
+    it is started by hand: .venv/bin/python dev/experiments/pcap_diff.py"""
+    _run("dev/experiments/pcap_diff.py", "--report")
 
 
 # --- 8. Everything ---------------------------------------------------------------
@@ -384,6 +422,8 @@ ITEMS = [
     ("Feature value", feature_value, "what each measurement is worth on its own"),
     ("Everything", everything, "all of the above, in the order the report needs it"),
     ("Tests", run_tests, "the unit suite"),
+    ("Visualization", viz_page, "the state machine learned and replayed, as an interactive page"),
+    ("Pcap diff", pcap_diff, "regenerated packet rows against the sponsor CSVs"),
 ]
 
 

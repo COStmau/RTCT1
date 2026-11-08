@@ -10,43 +10,42 @@ Value has two numbers per feature, per scenario, per capture stratum:
 Both are computed against the matched benign reference for the same capture label and
 capture method, so a feature is never credited for a vantage effect.
 
-Run it with:  .venv/bin/python feature_value.py
+Run it with:  .venv/bin/python dev/experiments/feature_value.py
 """
+import sys
+from pathlib import Path
+
+# A script run as `python dev/experiments/feature_value.py` gets dev/experiments/ as sys.path[0], so the
+# Threat_Detection root (core, methods, convert) and dev/ (experiments, verdicts) go back on
+# the path before any project import.
+sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).resolve().parents[1])]
+
 import argparse
 
 import pandas as pd
 
+from experiments import metrics
+
 import local_paths
-from data_io import load_manifest, resolve_output
-from features import load_all_windows, split_reference
+from core.data_io import load_manifest, resolve_output
+from core.features import load_all_windows, split_reference
 
 BUDGET = 0.05
 STRONG_AUC = 0.75
 
 
 def separation_auc(benign, attack):
-    """Probability that a random attack window ranks above a random benign window."""
-    benign = pd.Series(benign).dropna()
-    attack = pd.Series(attack).dropna()
-    if len(benign) < 2 or len(attack) < 2:
-        return float("nan")
-    n_b, n_a = len(benign), len(attack)
-    ranks = pd.concat([benign, attack]).rank()
-    rank_sum = ranks.iloc[n_b:].sum()
-    return (rank_sum - n_a * (n_a + 1) / 2) / (n_b * n_a)
+    """Probability that a random attack window ranks above a random benign window.
+
+    Delegates to metrics.auroc_ranked, which returns NaN when a stratum has fewer than two
+    finite windows on either side -- a 1-vs-1 stratum would otherwise score 1.0 by chance.
+    """
+    return metrics.auroc_ranked(benign, attack)
 
 
 def detection_at_budget(benign_train, benign_holdout, attack, budget=BUDGET):
     """Attack-window flag rate when the cutoff flags `budget` of held-out benign windows."""
-    train = pd.Series(benign_train).dropna()
-    holdout = pd.Series(benign_holdout).dropna()
-    target = pd.Series(attack).dropna()
-    mean, std = train.mean(), train.std()
-    if not len(train) or not len(holdout) or not len(target) or not std or pd.isna(std):
-        return float("nan")
-    deviation = lambda values: (values - mean).abs() / std
-    cutoff = deviation(holdout).quantile(1 - budget)
-    return float((deviation(target) >= cutoff).mean())
+    return metrics.detection_at_budget(benign_train, benign_holdout, attack, budget)
 
 
 def rank_features(manifest):

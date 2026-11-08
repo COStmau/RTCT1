@@ -5,26 +5,47 @@ or an image; none of them re-derives a number another module already computed.
 """
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")  # before pyplot: this subsystem renders to files, never a window
 import json
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from data_io import SNAPLEN_CEILINGS, SNAPLEN_REPORT_AT, resolve_output
-from evaluation import BULK_LABELS, TRAIN_FRACTION
-from detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, SVM_NU, THRESHOLD,
+# matplotlib is imported on first use, not at module scope: importing this module for its
+# console tables or its event stream should not cost the 0.9 s matplotlib takes to load.
+# `plt` is a module-level name that resolves on access, so the plotting functions below
+# are unchanged.
+_PLT = None
+
+
+class _LazyPyplot:
+    """Resolves to matplotlib.pyplot on first attribute access, with the Agg backend set."""
+
+    def __getattr__(self, name):
+        global _PLT
+        if _PLT is None:
+            import matplotlib
+            matplotlib.use("Agg")   # before pyplot: renders to files, never a window
+            import matplotlib.pyplot as _pyplot
+            _PLT = _pyplot
+        return getattr(_PLT, name)
+
+
+plt = _LazyPyplot()
+
+from core.data_io import SNAPLEN_CEILINGS, SNAPLEN_REPORT_AT, resolve_output
+from core.evaluation import BULK_LABELS, TRAIN_FRACTION
+from core.detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, SVM_NU, THRESHOLD,
                        flag_stats, persistent_mask)
-from features import FEATURE_LABELS, WINDOW_SIZE
+from core.features import DETECTION_FEATURES, FEATURE_LABELS, WINDOW_SIZE
 
 __all__ = ["flag_stats", "persistent_mask", "summarize_flags", "threshold_table",
            "plot_detection", "print_matrix", "plot_matrix", "plot_detection_gap",
            "plot_comparison", "print_comparison", "plot_regime_split", "plot_snaplen",
            "write_report", "to_events", "write_events"]
 
-EVENT_VERSION = "LogV0"
+# LogV1 adds `t`, the capture-relative second, so a consumer can order and expire events.
+# LogV0 carried no time at all: 51 events on one capture were indistinguishable.
+EVENT_VERSION = "LogV1"
 
 # Incident lifetime: consecutive clean windows before a flag may clear. Nothing enforces it
 # yet; the rule belongs to the event stream this module writes, not to the detector.
@@ -48,7 +69,7 @@ def summarize_flags(results, benign_results, baseline_windows, evaluation_note):
     print(f"   {evaluation_note}")
     print("   The reference stays fixed during evaluation.")
     print("\n2. COMPARE EACH WINDOW")
-    print(f"   Window: {WINDOW_SIZE:g} s  |  Features: {len(FEATURE_LABELS)}")
+    print(f"   Window: {WINDOW_SIZE:g} s  |  Features: {len(DETECTION_FEATURES)}")
     print(f"   Flag when score > {THRESHOLD:g}")
     print("   Score = the largest absolute feature deviation, in standard deviations.")
     print()
@@ -191,12 +212,20 @@ def _severity(score):
 
 
 def to_events(results, *, detector, pods):
-    """One dict per flagged window: version, detector, severity, locations."""
+    """One dict per flagged window: version, detector, time, severity, locations.
+
+    `t` is the window's second inside its capture -- the index of the windowed table, which
+    annotate() builds from the capture's first packet. Without it a consumer can tell which
+    windows flagged but not in what order or how far apart, so it cannot dedupe or expire
+    an incident. It is capture-relative, not wall-clock: the manifest carries the capture's
+    own start time for that.
+    """
     events = []
     flagged = results[results["anomaly"].fillna(False)].sort_index()
-    for _, row in flagged.iterrows():
+    for t, row in flagged.iterrows():
         events.append({"version": EVENT_VERSION,
                        "detector": detector,
+                       "t": int(t),
                        "severity": _severity(row.get("anomaly_score")),
                        "locations": {"pods": list(pods)}})
     return events
@@ -349,9 +378,14 @@ def print_comparison(comparison):
         print(f"\n{detector}: held-out benign flagged fraction {benign:.2f}")
         for scenario in [s for s in view["scenario"].unique() if s != "benign"]:
             attacks = view[view["scenario"].eq(scenario)]
+            # A mean over captures weights a 3-window capture like an 80-window one, so the
+            # window spread is printed beside it; the mean is not over a common pool.
+            windows = attacks["windows"]
             print(f"   {scenario:<18} mean {attacks['flagged_fraction'].mean():.2f}"
                   f" | persistent {attacks['persistent_fraction'].mean():.2f}"
-                  f" | captures {len(attacks)}")
+                  f" | captures {len(attacks)}"
+                  f" | windows {int(windows.sum())} ({int(windows.min())}-{int(windows.max())}"
+                  f" each)")
 
 
 def plot_comparison(comparison, path=None):
@@ -378,8 +412,10 @@ def plot_comparison(comparison, path=None):
         ax.legend(fontsize=8)
     # Strata count from the data, not a number typed in by hand.
     strata = comparison.groupby(["label", "method"]).ngroups
+    windows = comparison["windows"]
     fig.suptitle(f"Same windows and matched benign reference per capture stratum"
-                 f" | {WINDOW_SIZE:g}s windows | mean over {strata} strata\n"
+                 f" | {WINDOW_SIZE:g}s windows | mean over {strata} strata,"
+                 f" {int(windows.min())}-{int(windows.max())} windows each\n"
                  f"forest and SVM cutoffs = {BENIGN_QUANTILE:.0%} of held-out benign"
                  f" | z-score alert > {THRESHOLD:g} sigma"
                  f" | {PERSISTENCE_WINDOW}-window persistence", fontsize=10)
@@ -601,7 +637,8 @@ def write_report(sweep, ablation, manifest, comparison, chart_dir=None, path=Non
     add("## Method")
     add("")
     add(f"Each recording is cut into {WINDOW_SIZE:g}-second slices and summarised by "
-        f"{len(FEATURE_LABELS)} measurements. What normal looks like is learned from a benign "
+        f"{len(FEATURE_LABELS)} measurements, {len(DETECTION_FEATURES)} of which the detector reads "
+        f"(raw byte and timing measurements drift with load and are left out). What normal looks like is learned from a benign "
         f"recording only, with its last {1 - TRAIN_FRACTION:.0%} held back as an honest check, "
         f"so no detector is "
         f"graded on the seconds it learned from. Each slice is scored by its largest deviation "

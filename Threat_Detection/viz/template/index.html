@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>State Machine Visualization</title>
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <span class="brand-title">State-machine detection</span>
+      <span class="brand-sub" id="subtitle"></span>
+    </div>
+    <label class="pick">tap <select id="vantage" aria-label="capture tap"></select></label>
+    <nav class="acts" role="tablist">
+      <button role="tab" data-act="cluster"><b>1</b> Cluster</button>
+      <button role="tab" data-act="learning"><b>2</b> Learning</button>
+      <button role="tab" data-act="detection"><b>3</b> Detection</button>
+    </nav>
+    <div class="seg mode" role="group" aria-label="mode">
+      <button data-mode="demo" title="A short concept walkthrough">Demo</button>
+      <button data-mode="detail" title="The full explainer">Detail</button>
+    </div>
+    <button class="ghost" id="theme" title="Toggle light / dark">◐</button>
+  </header>
+  <div class="controls" id="controls"></div>
+  <main class="stage">
+    <section class="canvas" id="canvas"><svg id="svg"></svg><div class="demo-layer" id="demo"></div></section>
+    <aside class="panel" id="panel"></aside>
+  </main>
+  <div class="tooltip" id="tooltip" role="status"></div>
+</div>
+<script>/*__D3__*/</script>
+<script>/*__VIZ__*/</script>
+<script>/*__JS__*/</script>
+</body>
+</html>

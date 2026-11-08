@@ -5,13 +5,23 @@ only difference between them is the symbol alphabet. Scores are oriented so high
 means more anomalous: the likelihood path negates the mean log probability, which is lower
 for unlikely traces.
 """
+import sys
+from pathlib import Path
+
+# A script run as `python dev/experiments/flag_scores.py` gets dev/experiments/ as sys.path[0], so the
+# Threat_Detection root (core, methods, convert) and dev/ (experiments, verdicts) go back on
+# the path before any project import.
+sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).resolve().parents[1])]
+
 import argparse
 
 import numpy as np
 import pandas as pd
 
-from data_io import MANIFEST_NAME, describe_captures, load_manifest, resolve_output
-from features import WINDOW_SIZE
+from experiments import metrics
+
+from core.data_io import MANIFEST_NAME, describe_captures, load_manifest, resolve_output
+from core.features import WINDOW_SIZE
 from statemachine import (fit_model, load_flow_packets, make_flows, n_windows_for,
                           score_cutoff, score_flows, segment_flows, split_flows)
 
@@ -31,27 +41,17 @@ def window_scores(scored, t0, n_windows, window_size=WINDOW_SIZE):
 
 
 def auroc(benign, attack):
-    """Probability an attack window outranks a benign one, ties counted as half."""
-    benign = np.asarray([value for value in benign if np.isfinite(value)], dtype=float)
-    attack = np.asarray([value for value in attack if np.isfinite(value)], dtype=float)
-    if not len(benign) or not len(attack):
-        raise ValueError("AUROC needs at least one finite score on each side.")
-    greater = (attack[:, None] > benign[None, :]).sum()
-    ties = (attack[:, None] == benign[None, :]).sum()
-    return float((greater + 0.5 * ties) / (len(attack) * len(benign)))
+    """Probability an attack window outranks a benign one, ties counted as half.
+
+    Delegates to metrics.auroc, the pairwise policy that raises on an empty side: in a sweep
+    an empty stratum is a broken measurement, not a thin one.
+    """
+    return metrics.auroc(benign, attack)
 
 
 def detection_at_benign_rate(benign, attack, fraction):
     """(detection, realised benign rate) with the threshold at the k-th largest benign score."""
-    benign = np.asarray([value for value in benign if np.isfinite(value)], dtype=float)
-    attack = np.asarray([value for value in attack if np.isfinite(value)], dtype=float)
-    if not 0 < fraction <= 1:
-        raise ValueError("fraction must be within (0, 1].")
-    if not len(benign) or not len(attack):
-        raise ValueError("Detection needs at least one finite score on each side.")
-    k = max(1, int(round(fraction * len(benign))))
-    threshold = float(np.sort(benign)[-k])
-    return float(np.mean(attack >= threshold)), float(np.mean(benign >= threshold))
+    return metrics.detection_at_rate(benign, attack, fraction)
 
 
 def anomaly_scores(model, flows, t0, n_windows):
@@ -63,7 +63,7 @@ def anomaly_scores(model, flows, t0, n_windows):
 
 def verdict_rows(summary):
     """The summary rows the pre-registered rule reads, in the rule's own order."""
-    import flag_verdict
+    from verdicts import flag as flag_verdict
     rows = []
     for label, scenario in flag_verdict.STRATA:
         match = summary[(summary["label"] == label) & (summary["scenario"] == scenario)]
@@ -87,7 +87,7 @@ def plot_alphabet_slope(summary, path=None):
     matplotlib.use("Agg")   # renders to a file; nothing here opens a window
     import matplotlib.pyplot as plt
 
-    import flag_verdict
+    from verdicts import flag as flag_verdict
 
     path = resolve_output(path or "alphabet_verdict.png")
     verdict, _ = flag_verdict.decide(verdict_rows(summary))
@@ -246,7 +246,7 @@ def main():
     print(f"Wrote {windows_path} | rows={len(windows)}")
     print(f"Wrote {summary_path} | strata={len(rows)}")
 
-    import flag_verdict
+    from verdicts import flag as flag_verdict
     rule_rows = verdict_rows(rows)
     verdict, reasons = flag_verdict.decide(rule_rows)
     print(f"\nverdict: {verdict}")

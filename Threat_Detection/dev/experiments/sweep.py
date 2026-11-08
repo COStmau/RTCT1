@@ -4,16 +4,24 @@ The reference for a target capture is the benign capture with the same label and
 the same capture method, fitted on its first 70% of windows. The remaining 30% are
 scored too, so the false-alarm rows come from windows the baseline never saw.
 """
+import sys
+from pathlib import Path
+
+# A script run as `python dev/experiments/sweep.py` gets dev/experiments/ as sys.path[0], so the
+# Threat_Detection root (core, methods, convert) and dev/ (experiments, verdicts) go back on
+# the path before any project import.
+sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).resolve().parents[1])]
+
 import argparse
 
 import numpy as np
 import pandas as pd
 
 import local_paths
-from data_io import MANIFEST_NAME, load_manifest, resolve_output
-from detectors import build, flag_stats
-from features import FEATURE_GROUPS, WINDOW_SIZE, load_all_windows, split_reference
-from reporting import plot_detection_gap, plot_matrix, print_matrix
+from core.data_io import MANIFEST_NAME, load_manifest, resolve_output
+from core.detectors import build, flag_stats
+from core.features import FEATURE_GROUPS, WINDOW_SIZE, load_all_windows, split_reference
+from core.reporting import plot_detection_gap, plot_matrix, print_matrix
 
 DETECTOR = "z_score"
 
@@ -48,8 +56,10 @@ def run_sweep(manifest, groups=(None,)):
     attacks = [s for s in sorted(manifest["scenario"].unique()) if s != "benign"]
     rows = []
     for group in groups:
-        columns = None if group in (None, "all") else list(FEATURE_GROUPS[group])
-        group_name = "all" if columns is None else group
+        # "all" is the adopted detector (its own feature list); "full" is every one of the 13
+        # measurements, the old baseline; a named group is that group alone.
+        columns = None if group in (None, "all", "full") else list(FEATURE_GROUPS[group])
+        group_name = "all" if group is None else group
         for method in sorted(manifest["method"].unique()):
             for label in sorted(manifest["label"].unique()):
                 reference_windows = windows.get(("benign", label, method))
@@ -62,7 +72,7 @@ def run_sweep(manifest, groups=(None,)):
                 reference, holdout = split_reference(reference_windows)
                 # For z_score, calibrate() installs the fixed design cutoff rather
                 # than fitting a quantile, so this is the sweep's original behavior.
-                detector = build(DETECTOR).pipeline(reference if columns is None else reference[columns],
+                detector = (build(DETECTOR) if group in (None, "all") else build(DETECTOR, features=None)).pipeline(reference if columns is None else reference[columns],
                                                      holdout if columns is None else holdout[columns])
                 for scenario, target in targets:
                     target = holdout if scenario == "benign" else target
@@ -81,7 +91,8 @@ def run_sweep(manifest, groups=(None,)):
 def main():
     parser = argparse.ArgumentParser(description="Score every capture against its matched benign reference.")
     parser.add_argument("--groups", default="all",
-                        help="'all', or a comma-separated subset of " + ", ".join(FEATURE_GROUPS))
+                        help="'all' (the adopted detector), 'full' (all 13 measurements), or a "
+                             "comma-separated subset of " + ", ".join(FEATURE_GROUPS))
     parser.add_argument("--out", default="sweep_results.csv")
     parser.add_argument("--manifest", default=MANIFEST_NAME)
     args = parser.parse_args()
