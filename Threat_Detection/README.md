@@ -106,11 +106,9 @@ outside itself.
 | `viz/bake.py` | Builds the harness's default bundle from KUBEDATA and writes it, with every local path rewritten to `KUBEDATA/...`, into `baked_demo/`. |
 | `viz/layout.py` | Computed positions for the page: the prefix tree as an icicle, the learned machine in columns. |
 | `viz/serve.py` | The harness: the same page served from a local, standard-library server, so its **Data** tab can load other captures and rebuild. Binds 127.0.0.1 only. Opens already built on today's page when `local_paths.KUBEDATA_ROOT` is set. `demo.py` item 12. See "The harness" below. |
-| `viz/sources.py` | What the harness reads: scans folders (CSV, pcap, pcapng, told by magic number), loads a file as flow packets (converting captures through `convert/`), turns role/tap assignments into a bundle with its provenance, and replays a capture as a stream of 1-second windows (`ReplaySource`; `TapSource` is the stub for a live collector). |
+| `viz/sources.py` | What the harness reads: scans folders (CSV, pcap, pcapng, told by magic number), loads a file as flow packets (converting captures through `convert/`), turns role/tap assignments into a bundle with its provenance, and replays a capture as a stream of 1-second windows (`ReplaySource`, counts only). |
 | `localcluster/collect.py` | A local k3s cluster (k3d on Docker) that records new captures in the KUBEDATA layout: `up`, `run <scenario>`, `all`, `status`, `down`. Two profiles in `localcluster/profiles/`: `lab` (the lab look-alike) and `general` (a generic app on the kubeadm address plan). See "Collecting new captures" below. |
 | `localcluster/traffic.py` | Every workload and attack in those clusters as one stdlib script with modes, mounted into the pods from a ConfigMap. |
-| `viz/live.py` | Live detection: a pcap byte stream (`tcpdump -w -`) read without seeking, closed one second at a time into flows, and scored with the same machine, cutoffs and window rules as the page. Also the per-tap worker the monitor runs (`viz/live.py watch`). See "Live test mode" below. |
-| `viz/monitor.py` | The server side of the harness's **Live** view (tab 1, switched from Data to Live): finds the running local cluster, runs one capture and one scoring worker per watched tap, launches the profile's attacks, records baselines, and streams every verdict to the page. |
 
 ### Capture conversion
 
@@ -215,8 +213,8 @@ a first tab, **Data**:
    redraw. **Export static page** writes the result as one offline file (`outputs/harness_export.html`; it never overwrites `state_machine.html`). Its Data tab lists
    what it was built from.
 5. **Replay as a stream.** A capture replayed at 1-200x as a stream of 1-second windows
-   (packets, bytes, flows, new endpoints), not scored. Scoring live traffic is the **Live**
-   side of the same tab (see "Live test mode").
+   (packets, bytes, flows, new endpoints), not scored. Scoring live traffic is a separate
+   program, the live monitor (see "Live monitor").
 
 A capture is a packet CSV with `ts, frame_len, src_ip, dst_ip, src_port, dst_port, proto`
 (headers like `Src IP` are accepted), or a pcap/pcapng file. Captures are converted to the
@@ -278,36 +276,73 @@ outside the repo.
   the *lab* recordings carry bulk transfers. Local recordings don't, so tick "draw bulk-transfer
   taps" in the harness to see those taps.
 
-## Live test mode
+## Live monitor
 
-With a local cluster up, tab 1 of the harness (**Input**), switched from **Data** to **Live**,
-watches it as it runs (only when served by `viz/serve.py`):
+The demo above (`viz/`) explains recordings and is kept as it is. Watching a cluster as it runs
+is a separate program, `live/`, with its own server and its own dashboard. The two share the
+detector (`methods/calibration.py`: one calibration, one set of alert and release rules) and
+nothing else, so a live tap and a replayed recording of it can be checked against each other.
 
 ```bash
 .venv/bin/python localcluster/collect.py up --profile general
-.venv/bin/python localcluster/collect.py run benign --profile general --csv   # the first baseline
-.venv/bin/python viz/serve.py --open                                         # tab 1, then Live
+.venv/bin/python live/serve.py --open                         # http://127.0.0.1:8766
 ```
 
-- **Cluster:** the running profile, its nodes and pods, each tap's status as a dot.
-- **Monitor:** tick the taps to watch (pods and nodes by default; router taps carry every packet
-  between nodes, so turn them on only if you need them), then Start. Each tap streams tcpdump into
-  its own scoring process (`viz/live.py watch`), so taps score on separate cores. Record saves the
-  stream to `~/rtct-data/<profile>/live/session-<time>/` with `attacks.json`, laid out so the Data
-  tab can rebuild it.
-- **Attacks:** the profile's own four scenarios, for 5-300 s. Each one is shaded on every strip;
-  the event log gives each tap's alert latency from the attack's start and its release after the end.
-- **Record new baseline:** 60 s of benign at every tap, saved under `live/baseline-<time>/`; the
-  watched taps then re-learn from it. Use it whenever benign traffic has drifted since the last
-  recording (a running app's data grows, and response sizes move between bins).
+No cluster is needed to try it: recordings can be played back as if they were taps.
 
-The detector is the page's: `viz/page.py` `calibrate` and `LiveStatus` are shared. One rule has
-to change for a stream: offline, a 5-tuple whose packets span more than one second anywhere in the
-capture is dropped; live, a flow is kept in its second only if its 5-tuple appeared in no earlier
-second (within 120 s) and in none of the next two. So each window is scored about three seconds
-after it ends, and the monitor trains each tap on flows cut the live way (`live.calibrate_live`).
-The two rules disagree only on reused 5-tuples, such as DNS lookups that reuse a source port half
-a minute later.
+```bash
+.venv/bin/python live/serve.py --open --replay ~/rtct-data/general/"http-flood attack"/"pcapng files"/pod-api-tcp.pcap --speed 10
+```
+
+One screen:
+
+- **Cluster:** nodes, pods and services from Kubernetes itself (nothing inferred), with who talked
+  to whom in the last 30 s at the watched taps. Each tap's dot is its latest verdict; click one to
+  follow it.
+- **Taps:** one strip per tap: the windowed score against its cutoff over the last three minutes,
+  the status band under it, attacks shaded. Watch or stop taps one at a time or all at once; pods
+  and nodes are the default (router taps carry every packet between nodes).
+- **The selected tap:** its verdict in words, the trace behind the latest flagged window and who
+  its flows were between (also drawn in red on the map), and what its detector rests on.
+- **Attacks** (local cluster only): the profile's own scenarios for 5-300 s, shaded on every strip.
+  The event log gives each tap's alert latency from the attack's start and its release after the end.
+- **Events:** alerts, releases, attacks, and taps that stopped or stalled.
+
+Where a tap's machine comes from, first that applies: one saved by an earlier run
+(`live/models/<label>.pkl`); the tap's benign recording from `collect.py run benign`, when that is
+newer; otherwise the tap's own stream, whose first 60 s are taken as benign. So a cluster with no
+recording at all can be watched straight away. **Re-learn** does the last of these on demand, for
+one tap or all: the next N seconds are learned from while the old machine keeps scoring, then the
+new one is swapped in. Nothing restarts, and open alerts carry over. Use it whenever benign traffic
+has drifted (a running app's data grows, and response sizes move between bins). It is refused
+while an attack is running, and attacks are refused while a tap is learning.
+
+A tap is two processes, the capture piped into a scoring worker (`live/worker.py watch`), so taps
+score on separate cores. The monitor supervises them: a capture that dies (a pod restarted, a
+dropped `kubectl exec`) is restarted with a growing delay on the pod's new name, a tap that stops
+closing windows is called stalled and then restarted, and one tap failing leaves the rest alone.
+A window scored more than 5 s late is marked `behind`.
+
+Everything a session produced is kept under `~/rtct-data/<profile>/live/`:
+`session-<time>/events.jsonl` (every verdict, alert and attack), `attacks.json`, and, with
+**Record packets** on, each tap's packets in `live attack/pcapng files/<label>-tcp.pcap`, laid out
+so the demo's Data tab or `--replay` can read them back.
+
+| File | What it does |
+|---|---|
+| `methods/calibration.py` | The detector both programs use: `calibrate` (the machine and its cutoffs from benign packets) and `WindowRules` (alert, release and status, one window at a time). |
+| `live/stream.py` | A pcap byte stream (`tcpdump -w -`) read without seeking, closed one second at a time into flows, and scored. Also `replay`, a recording through the same path. |
+| `live/worker.py` | One tap's scoring process: learns or loads its machine, re-learns on command, writes one JSON line per closed second. `pace` plays a recording back as a stream. |
+| `live/taps.py` | Where packets come from, as a small provider interface: the local k3d clusters (`LocalClusterProvider`) or recordings (`ReplayProvider`). A deployed cluster is a third provider. |
+| `live/monitor.py` | The monitor: supervises each tap's processes, keeps the snapshot and the event stream a page needs, launches attacks, writes the session log. |
+| `live/serve.py` | Its server (standard library, 127.0.0.1): the dashboard in `live/web/`, `/api/state`, and `/api/stream`, which resumes from where a page left off. |
+
+One rule has to change for a stream: offline, a 5-tuple whose packets span more than one second
+anywhere in the capture is dropped; live, a flow is kept in its second only if its 5-tuple appeared
+in no earlier second (within 120 s) and in none of the next two. So each window is scored about
+three seconds after it ends, and a tap is always trained on flows cut the live way
+(`live.stream.calibrate_live`). The two rules disagree only on reused 5-tuples, such as DNS lookups
+that reuse a source port half a minute later.
 
 ## Capture to packet rows
 

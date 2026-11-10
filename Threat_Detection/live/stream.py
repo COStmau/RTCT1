@@ -1,19 +1,16 @@
 """Live detection: packets as they arrive, scored one closed second at a time.
 
-The page (viz/page.py) scores whole recordings. This scores a stream with the same machine,
-the same cutoffs (page.calibrate) and the same window rules (page.LiveStatus), so a live tap
-and a replayed recording of it can only differ where a stream has to: it cannot see the future.
+The demo page (viz/page.py) scores whole recordings. This scores a stream with the same
+machine, the same cutoffs (methods.calibration.calibrate) and the same window rules
+(methods.calibration.WindowRules), so a live tap and a replayed recording of it can only
+differ where a stream has to: it cannot see the future.
 
   PcapStream(fileobj)      frames from a classic-pcap byte stream (tcpdump -U -w -), no seeks
   packet_row(frame)        one frame as the flow columns (ts, frame_len, src_ip, ...)
   Windower(lateness)       packet rows in, closed 1-second windows of flows out
   LiveDetector(cal)        one held scorer: each closed window's peak score and status
+  calibrate_live(source)   the calibration for a tap, from a recording or from buffered rows
   replay(path, cal)        a recording through the live path, for checking it against the page
-
-Run as a worker, one per tap, so taps score on separate cores (viz/monitor.py does this):
-  <capture command writing pcap to stdout> | python viz/live.py watch --label pod-api
-      --baseline <the tap's benign csv or pcap> [--record out.pcap]
-It prints one JSON line per closed window (and a "ready" line with the cutoff first).
 
 The one rule that changes: offline, methods.pdfa.segment_flows drops a 5-tuple whose packets
 span more than one window anywhere in the capture. Live, a window is held `lateness` seconds
@@ -21,26 +18,25 @@ after it ends, and a 5-tuple is kept in it only if it appeared in no earlier win
 HISTORY_SECONDS) and in none of the `lateness` windows after. A connection that idles longer
 than `lateness` and then speaks again is the case the two can disagree on.
 """
-import argparse
-import json
-import os
 import struct
 import sys
-import threading
-import time
 from collections import deque
 from pathlib import Path
 
-# a script run as `python viz/live.py` gets viz/ as sys.path[0]; the project root goes first
+# a script run as `python live/worker.py` gets live/ as sys.path[0]; the project root goes first
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import pandas as pd
 
-from convert.read import HEAD_BYTES, LINKTYPES, PCAP_MAGIC, CaptureReader, Frame
+from convert.read import HEAD_BYTES, LINKTYPES, PCAP_MAGIC, CaptureReader, Frame, detect_format
 from convert.rows import dissect, ts_seconds
+from core.data_io import normalize_columns
+from core.detectors import PERSISTENCE_WINDOW
 from core.features import WINDOW_SIZE
-from methods.pdfa import encode
+from core.reporting import CLEAR_WINDOWS
+from methods.calibration import WindowRules, calibrate
+from methods.pdfa import FLOW_COLUMNS, encode
 from methods.scores import FORGET_SECONDS, WindowedFrequencyScorer, trace_score
 
 LATENESS = 2               # windows a closed window waits for the packets after it
@@ -215,56 +211,118 @@ class Windower:
 class LiveDetector:
     """One tap's detector held for a whole stream: closed windows in, verdicts out.
 
-    `calibration` is page.calibrate(benign) for this tap. Traces slide across window edges,
+    `calibration` is calibrate_live(...) for this tap. Traces slide across window edges,
     exactly as they do over a recording, and the windowed clock starts cold, so the first
-    `warmup_s` seconds report warmup instead of normal.
+    `warmup_s` seconds report warmup instead of normal. `swap` replaces the machine while
+    the stream runs (a re-learned baseline): open alerts and the window count carry over,
+    the clock starts cold again.
     """
 
     def __init__(self, calibration, forget_seconds=FORGET_SECONDS, warmup_s=None):
-        from viz.page import LiveStatus   # page imports nothing from here; keep it one-way
+        self.forget_seconds = float(forget_seconds)
+        self.rules = WindowRules(forget_seconds if warmup_s is None else warmup_s)
+        self.last_window = -1
+        self._load(calibration)
+
+    def _load(self, calibration):
         self.model = calibration["model"]
         self.cutoffs = calibration["cutoffs"]
         self.length = self.model["trace_len"]
-        self.scorer = WindowedFrequencyScorer(self.model["pdfa"], forget_seconds)
-        self.rules = LiveStatus(forget_seconds if warmup_s is None else warmup_s)
+        self.scorer = WindowedFrequencyScorer(self.model["pdfa"], self.forget_seconds)
         self.symbols = deque(maxlen=self.length)
-        self.t0 = None
+        self.pairs = deque(maxlen=self.length)      # each symbol's flow, for the peak trace
+
+    def swap(self, calibration):
+        """Score with a newly learned machine from the next window on."""
+        self._load(calibration)
+        self.rules.warmup_s = (self.last_window + 1) * WINDOW_SIZE + self.forget_seconds
 
     def window(self, closed, t0):
         """The verdict for one closed window from Windower (t0: the stream's first packet)."""
-        self.t0 = t0
         flows = closed["flow_rows"]
-        peak, unlikely = np.nan, False
+        peak, unlikely, top = np.nan, False, None
         if len(flows):
-            for symbol, start in zip(encode(flows, self.model["enc"]), flows["start_ts"]):
+            for symbol, start, src, dst in zip(encode(flows, self.model["enc"]), flows["start_ts"],
+                                               flows["src_ip"], flows["dst_ip"]):
                 self.symbols.append(symbol)
+                self.pairs.append((src, dst))
                 if len(self.symbols) < self.length:
                     continue
                 trace = tuple(self.symbols)
-                score = self.scorer.score(trace, float(start) - t0)
-                peak = score if np.isnan(peak) else max(peak, score)
+                # the scorer wants time order; a re-learned machine may see an older flow first
+                score = self.scorer.score(trace, max(float(start) - t0, self.scorer.last_when))
+                if np.isnan(peak) or score > peak:
+                    peak, top = score, (trace, tuple(self.pairs))
                 unlikely |= trace_score(self.model["pdfa"], trace) < self.cutoffs["likelihood"]
         scored = not np.isnan(peak)
         flagged = bool(scored and peak > self.cutoffs["windowed"])
         verdict = self.rules.step(closed["t"], scored, flagged, bool(unlikely))
-        return {"t": closed["t"], "peak": None if not scored else float(peak),
-                "cutoff": float(self.cutoffs["windowed"]), "flagged": flagged,
-                "likelihood_flag": bool(unlikely), **verdict,
-                **{k: closed[k] for k in ("packets", "bytes", "flows", "dropped",
-                                          "new_endpoints", "endpoints", "late", "pairs")}}
+        self.last_window = closed["t"]
+        out = {"t": closed["t"], "peak": None if not scored else float(peak),
+               "cutoff": float(self.cutoffs["windowed"]), "flagged": flagged,
+               "likelihood_flag": bool(unlikely), **verdict}
+        if top is not None and (flagged or unlikely):
+            # why: the trace behind the peak, and who its flows were between
+            out["top"] = {"symbols": list(top[0]),
+                          "pairs": [[str(a), str(b)] for a, b in dict.fromkeys(top[1])
+                                    if a is not None and b is not None]}
+        return out
+
+
+def describe(calibration, forget_seconds=FORGET_SECONDS, lateness=None):
+    """What a page needs to know about a calibration: the cutoff and what it rests on."""
+    cal = calibration["cutoffs"]["calibration"]
+    return {"cutoff": float(calibration["cutoffs"]["windowed"]),
+            "train_flows": int(calibration["train_flows"]) if "train_flows" in calibration
+            else len(calibration["train"]),
+            "held_windows": cal["windowed_windows"], "benign_rate": cal["windowed_benign_rate"],
+            "trace_len": calibration["model"]["trace_len"],
+            "forget_seconds": float(forget_seconds), "lateness": lateness,
+            "persistence": PERSISTENCE_WINDOW, "clear_windows": CLEAR_WINDOWS}
+
+
+def no_verdict(closed):
+    """A closed window from a tap with no machine yet: counted, not judged."""
+    return {"t": closed["t"], "peak": None, "cutoff": None, "flagged": False,
+            "likelihood_flag": False, "alert": False, "released": False, "status": "learning",
+            "forgetting_shown": False}
+
+
+WINDOW_FACTS = ("packets", "bytes", "flows", "dropped", "new_endpoints", "endpoints", "late", "pairs")
+
+
+def _blank_to_none(values):
+    return {k: (None if isinstance(v, float) and np.isnan(v) else v) for k, v in values.items()}
+
+
+def load_packets(path):
+    """A recording's packets as a frame of FLOW_COLUMNS: a pcap/pcapng dissected, a CSV as read."""
+    path = Path(path)
+    try:
+        kind = detect_format(path)
+    except (ValueError, OSError):
+        kind = "csv" if path.suffix.lower() == ".csv" else None
+    if kind in ("pcap", "pcapng"):
+        return pd.DataFrame([packet_row(frame) for frame in CaptureReader(str(path)).frames()],
+                            columns=FLOW_COLUMNS)
+    if kind != "csv":
+        raise ValueError(f"{path.name}: not a CSV, pcap or pcapng file")
+    frame = normalize_columns(pd.read_csv(path, low_memory=False))
+    missing = [c for c in FLOW_COLUMNS if c not in frame.columns]
+    if missing:
+        raise ValueError(f"{path.name} is missing packet columns: {', '.join(missing)}")
+    return frame[FLOW_COLUMNS]
+
+
+def packet_rows(packets):
+    """A packet frame as the row dicts Windower takes, blanks as None."""
+    for row in packets.to_dict("records"):
+        yield _blank_to_none(row)
 
 
 def frame_rows(path):
-    """Packet rows of a capture file in order: pcap/pcapng through convert, a CSV as read."""
-    from viz.sources import _kind, load_packets
-    if _kind(path) in ("pcap", "pcapng"):
-        for frame in CaptureReader(str(path)).frames():
-            yield packet_row(frame)
-        return
-    frame = load_packets(path)
-    for row in frame.itertuples(index=False):
-        values = dict(zip(frame.columns, row))
-        yield {k: (None if isinstance(v, float) and np.isnan(v) else v) for k, v in values.items()}
+    """Packet rows of a capture file, in order."""
+    return packet_rows(load_packets(path))
 
 
 def live_flows(rows, lateness=LATENESS):
@@ -279,24 +337,19 @@ def live_flows(rows, lateness=LATENESS):
     return pd.concat(parts, ignore_index=True)
 
 
-def calibrate_live(path_or_packets, forget_seconds=FORGET_SECONDS, lateness=LATENESS):
-    """page.calibrate on a benign recording, with flows cut by the live rule.
+def calibrate_live(source, forget_seconds=FORGET_SECONDS, lateness=LATENESS):
+    """methods.calibration.calibrate on benign packets, with flows cut by the live rule.
 
+    `source` is a recording's path or a packet frame (what a tap buffered from its stream).
     Offline, a DNS lookup whose source port is reused half a minute later is one long flow and
     is dropped; live it is two short ones and is kept. Training on the offline flows would
     teach a live tap that its own DNS is unusual, so the live monitor learns from the
     flows it will see.
     """
-    from viz.page import calibrate
-    from viz.sources import load_packets
-    if isinstance(path_or_packets, pd.DataFrame):
-        packets = path_or_packets
-        rows = ({k: (None if isinstance(v, float) and np.isnan(v) else v) for k, v in r.items()}
-                for r in packets.to_dict("records"))
-    else:
-        packets = load_packets(path_or_packets)
-        rows = frame_rows(path_or_packets)
-    return calibrate(packets, forget_seconds, flows=live_flows(rows, lateness))
+    packets = source if isinstance(source, pd.DataFrame) else load_packets(source)
+    if packets.empty:
+        raise ValueError("Too few training flows: no packets")
+    return calibrate(packets, forget_seconds, flows=live_flows(packet_rows(packets), lateness))
 
 
 def replay(path, calibration, forget_seconds=FORGET_SECONDS, lateness=LATENESS):
@@ -306,92 +359,13 @@ def replay(path, calibration, forget_seconds=FORGET_SECONDS, lateness=LATENESS):
     verdicts = []
     for row in frame_rows(path):
         for closed in windower.add(row):
-            verdicts.append(detector.window(closed, windower.t0))
+            verdicts.append(_verdict(detector, closed, windower.t0))
     for closed in windower.flush():
-        verdicts.append(detector.window(closed, windower.t0))
+        verdicts.append(_verdict(detector, closed, windower.t0))
     return verdicts
 
 
-# ---------------------------------------------------------------- the per-tap worker
-
-def watch(stream, calibration, emit, record=None, forget_seconds=FORGET_SECONDS,
-          lateness=LATENESS, clock=time.time, tick_every=0.5):
-    """Score a pcap byte stream until it ends: one `emit(dict)` per closed window.
-
-    A reader thread takes packets; this thread closes windows on wall time while the tap is
-    quiet. `record`, a binary file, gets the stream's bytes as they arrive (a valid pcap).
-    Each window carries `wall`, the wall-clock time its second began, and `lag`, how long
-    after its end it was scored (about lateness + 1 s when keeping up).
-    """
-    windower = Windower(lateness)
-    detector = LiveDetector(calibration, forget_seconds)
-    lock, done = threading.Lock(), threading.Event()
-    failure = []
-
-    def publish(closed_windows):
-        for closed in closed_windows:
-            verdict = detector.window(closed, windower.t0)
-            start = windower.offset + windower.t0 + closed["t"] * WINDOW_SIZE
-            verdict.update(kind="window", wall=start, lag=round(clock() - start - WINDOW_SIZE, 2))
-            emit(verdict)
-
-    def read():
-        try:
-            for frame in PcapStream(stream, tee=record.write if record else None).frames():
-                row = packet_row(frame)
-                with lock:
-                    publish(windower.add(row, wall=clock()))
-        except Exception as error:     # a broken stream ends this tap, and says why
-            failure.append(f"{type(error).__name__}: {error}")
-        finally:
-            done.set()
-
-    reader = threading.Thread(target=read, daemon=True)
-    reader.start()
-    while not done.wait(tick_every):
-        with lock:
-            publish(windower.tick(clock()))
-    with lock:
-        publish(windower.flush())
-    emit({"kind": "end", "error": failure[0] if failure else None, "late": windower.late})
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(description="Score one tap's live pcap stream (stdin).")
-    parser.add_argument("command", choices=["watch"])
-    parser.add_argument("--label", required=True)
-    parser.add_argument("--baseline", required=True, help="the tap's benign recording (csv or pcap)")
-    parser.add_argument("--record", help="also write the stream to this pcap")
-    parser.add_argument("--forget", type=float, default=FORGET_SECONDS)
-    parser.add_argument("--lateness", type=int, default=LATENESS)
-    args = parser.parse_args(argv)
-
-    def emit(message):
-        message["label"] = args.label
-        try:
-            sys.stdout.write(json.dumps(message) + "\n")
-            sys.stdout.flush()
-        except BrokenPipeError:     # the monitor stopped listening: stop quietly
-            sys.stderr.close()
-            os._exit(0)
-
-    try:
-        calibration = calibrate_live(Path(args.baseline).expanduser(), args.forget, args.lateness)
-    except Exception as error:
-        emit({"kind": "end", "error": f"could not learn {args.label}: {error}"})
-        return 1
-    cal = calibration["cutoffs"]["calibration"]
-    emit({"kind": "ready", "cutoff": float(calibration["cutoffs"]["windowed"]),
-          "train_flows": len(calibration["train"]), "held_windows": cal["windowed_windows"],
-          "benign_rate": cal["windowed_benign_rate"], "baseline": str(args.baseline)})
-    record = open(args.record, "wb") if args.record else None
-    try:
-        watch(sys.stdin.buffer, calibration, emit, record, args.forget, args.lateness)
-    finally:
-        if record:
-            record.close()
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+def _verdict(detector, closed, t0):
+    """One window's verdict with its traffic facts, as a tap reports it."""
+    judged = detector.window(closed, t0) if detector is not None else no_verdict(closed)
+    return {**judged, **{k: closed[k] for k in WINDOW_FACTS}}

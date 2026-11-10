@@ -25,20 +25,11 @@ is a tool for the machine it runs on, never a service to expose.
   GET  /api/export        the current bundle as a static page (outputs/harness_export.html)
   GET  /api/live          ?path=&speed= -> text/event-stream of 1-second windows (replay)
 
-Live test mode (viz/monitor.py), for a local cluster from localcluster/collect.py:
-  GET  /api/cluster          the running local profile, its taps and their baselines
-  POST /api/monitor/start    {taps, record} -> start capturing and scoring those taps
-  POST /api/monitor/stop
-  GET  /api/monitor/stream   text/event-stream of windows, alerts, attacks
-  POST /api/attack           {scenario, seconds} -> launch one of the profile's attacks
-  POST /api/attack/stop
-  POST /api/baseline         {seconds} -> record benign (default 60 s), then re-learn the watched taps
-
 Every POST must come from this page: a request whose Origin is another site is refused, so
-no web page open in the same browser can launch an attack or read a path.
+no web page open in the same browser can read a path. Watching a running cluster is a
+separate program, live/serve.py; this one only reads recordings.
 """
 import json
-import queue
 import signal
 import sys
 import threading
@@ -97,15 +88,6 @@ class Harness:
         self.notes = []   # problems, shown as an error on the Data tab
         self.info = []    # plain remarks, shown beside its note
         self.initial_scan = ""
-        self._monitor = None
-
-    @property
-    def monitor(self):
-        """The live monitor, made on first use (it imports localcluster/collect.py)."""
-        if self._monitor is None:
-            from viz.monitor import Monitor
-            self._monitor = Monitor()
-        return self._monitor
 
     def manifest_rows(self, root=None, method="tcp"):
         root = root or self.kubedata_root
@@ -211,10 +193,6 @@ def make_handler(harness):
                 return self.guarded(self.export)
             if url.path == "/api/live":
                 return self.guarded(lambda: self.live(parse_qs(url.query)))
-            if url.path == "/api/cluster":
-                return self.guarded(lambda: self.send_json(harness.monitor.state()))
-            if url.path == "/api/monitor/stream":
-                return self.guarded(self.monitor_stream)
             self.send_error_json("not found", 404)
 
         def do_HEAD(self):
@@ -224,15 +202,7 @@ def make_handler(harness):
         def do_POST(self):
             url = urlparse(self.path)
             routes = {"/api/scan": self.scan, "/api/manifest": self.manifest,
-                      "/api/build": self.build, "/api/upload": self.upload,
-                      "/api/monitor/start": lambda: self.send_json(harness.monitor.start(
-                          **_pick(self.read_json(), labels="taps", record="record"))),
-                      "/api/monitor/stop": lambda: self.send_json(harness.monitor.stop()),
-                      "/api/attack": lambda: self.send_json(harness.monitor.launch(
-                          **_pick(self.read_json(), scenario="scenario", seconds="seconds"))),
-                      "/api/attack/stop": lambda: self.send_json(harness.monitor.stop_attack()),
-                      "/api/baseline": lambda: self.send_json(harness.monitor.record_baseline(
-                          **_pick(self.read_json(), seconds="seconds")))}
+                      "/api/build": self.build, "/api/upload": self.upload}
             if url.path not in routes:
                 return self.send_error_json("not found", 404)
             if not same_origin(self.headers):
@@ -317,34 +287,7 @@ def make_handler(harness):
             except (BrokenPipeError, ConnectionResetError):
                 pass   # the page pressed Stop
 
-        def monitor_stream(self):
-            events, past = harness.monitor.subscribe()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            try:
-                for event in past:
-                    self.wfile.write(f"data: {json.dumps(event)}\n\n".encode("utf-8"))
-                self.wfile.flush()
-                while True:
-                    try:
-                        event = events.get(timeout=15)
-                        self.wfile.write(f"data: {json.dumps(event)}\n\n".encode("utf-8"))
-                    except queue.Empty:
-                        self.wfile.write(b": keep-alive\n\n")
-                    self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                pass   # the page closed or reloaded
-            finally:
-                harness.monitor.unsubscribe(events)
-
     return Handler
-
-
-def _pick(request, **names):
-    """{argument: request[key]} for the keys present: the monitor's arguments from a body."""
-    return {arg: request[key] for arg, key in names.items() if key in request}
 
 
 def same_origin(headers):
@@ -429,8 +372,6 @@ def main(argv=None):
     except KeyboardInterrupt:
         print("\nstopped")
     finally:
-        if harness._monitor is not None:   # captures and attack Jobs must not outlive the page
-            harness.monitor.shutdown()
         server.server_close()
 
 

@@ -404,49 +404,7 @@ table.taps tbody tr:hover td { background: var(--surface-2); }
 .data-card .readout { font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 12.5px; }
 .data-card .t-2 { color: var(--ink-2); }
 
-/* live tab: the local cluster watched as it runs (viz/monitor.py) */
-.live-routers { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
-.live-nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
-.live-node { border: 1px solid var(--ring); border-radius: 10px; padding: 8px 10px; background: var(--surface-2); }
-.live-node.down { border-color: var(--critical); }
-.live-node-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 13px; }
-.live-node-head .t-2 { margin-left: auto; font-size: 11.5px; }
-.live-pods { display: flex; flex-wrap: wrap; gap: 5px; }
-.pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 8px;
-        border-radius: 999px; background: var(--surface); border: 1px solid var(--ring); }
-.pill.down { border-color: var(--critical); }
-.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none; }
-.tapchips { margin-bottom: 4px; }
-.tapchip { display: inline-flex !important; flex-direction: row !important; align-items: center; gap: 6px !important;
-           font-size: 12.5px !important; color: var(--ink) !important; padding: 3px 9px; border-radius: 999px;
-           border: 1px solid var(--ring); background: var(--surface-2); cursor: pointer; }
-.tapchip.off { opacity: .55; }
-.tapchip.nobase { opacity: .35; cursor: default; }
-.tapchip input { margin: 0; }
-.attack-row { display: flex; flex-wrap: wrap; gap: 8px; }
-.attack-btn { display: flex !important; flex-direction: column; align-items: flex-start; gap: 1px;
-              border-color: color-mix(in srgb, var(--critical) 45%, var(--ring)) !important; }
-.attack-btn span { font-size: 11px; color: var(--ink-2); max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
-.attack-live { color: var(--critical); font-size: 13px; }
-.small-note { font-size: 12px; margin: 8px 0 0 !important; }
-.canvas .strip svg { position: static; inset: auto; display: block; width: 100%; }
-.strip + .strip { border-top: 1px solid var(--ring); }
-.strip .score { fill: none; stroke: var(--accent); stroke-width: 1.6px; }
-.strip .cut { stroke: var(--critical); stroke-dasharray: 4 3; stroke-width: 1px; }
-.strip .attack-span { fill: color-mix(in srgb, var(--critical) 10%, transparent); }
-.strip-label { font-size: 12.5px; font-weight: 650; fill: var(--ink); }
-.strip-status { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; fill: var(--muted); }
-.strip-status.st-alert, .strip-status.st-failed { fill: var(--critical); }
-.strip-status.st-flagged, .strip-status.st-unseen { fill: var(--serious); }
-.strip-status.st-normal, .strip-status.st-released { fill: var(--good-ink); }
-.strip-meta { font-size: 10.5px; fill: var(--muted); font-variant-numeric: tabular-nums; }
-.strip-meta.bad { fill: var(--critical); }
-.strip-meta.cut-label { fill: var(--critical); }
-.strip-meta.peak-label { fill: var(--accent); font-weight: 650; }
-.live-log { max-height: 260px; overflow: auto; font-size: 12.5px; display: flex; flex-direction: column; gap: 3px; }
-.live-log .bad b { color: var(--critical); }
-.live-log .good b { color: var(--good-ink); }
-.live-log .attack { color: var(--critical); }
+/* collapsible cards on the Data tab */
 .data-card h3 .spacer { flex: 1; }
 .data-card > h3 { cursor: pointer; user-select: none; }
 .data-card > h3 button, .data-card > h3 input, .data-card > h3 select { cursor: auto; }
@@ -476,25 +434,3 @@ svg .pod.grow, svg .ext.grow, svg .svc.grow { stroke: var(--accent); stroke-widt
 .focus-card-title { font-size: 17px; font-weight: 700; fill: var(--ink); }
 .focus-card-sub { font-size: 12px; fill: var(--ink-2); }
 .plan-warn { font-size: 13px !important; border: 1px solid var(--serious); border-radius: 8px; padding: 8px 10px; }
-.input-switch button { padding: 6px 14px; display: inline-flex; gap: 6px; align-items: baseline; }
-.input-switch button .t-2 { font-size: 11.5px; color: var(--muted); font-weight: 400; }
-.input-switch button:disabled { opacity: .45; cursor: default; }
-.live-progress { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
-.live-progress:empty { display: none; }
-.prog-row { display: flex; align-items: baseline; gap: 10px; font-size: 13px; color: var(--ink-2); }
-.prog-clock { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 44px; }
-.prog-bar { height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-bottom: 4px; }
-.prog-bar i { display: block; height: 100%; background: var(--accent); transition: width .9s linear; }
-.prog-bar.busy i { width: 30%; animation: prog-slide 1.4s ease-in-out infinite; }
-@keyframes prog-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
-
-/* live mode on tabs 2-4 */
-.tap.live-alert .tap-dot { stroke: var(--critical); stroke-width: 3px; }
-.live-big .score { fill: none; stroke: var(--accent); stroke-width: 2px; }
-.live-big .cut { stroke: var(--critical); stroke-dasharray: 5 4; }
-.live-big .cut-label { fill: var(--critical); }
-.live-big .attack-span { fill: color-mix(in srgb, var(--critical) 9%, transparent); }
-.live-big .attack-label { fill: var(--critical); font-weight: 650; }
-.live-big .now-dot { fill: var(--accent); }
-.live-big .axis text { fill: var(--muted); font-size: 10.5px; }
-.live-big .axis path, .live-big .axis line { stroke: var(--axis); }

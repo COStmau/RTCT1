@@ -10,8 +10,8 @@ step before it, so the harness can point at any capture rather than only the KUB
   manifest_assignments(...)   the assignment rows today's page is built from, read from the
                               KUBEDATA manifest by the same rules viz/page.py applies
   build(assignments, ...)     assignment rows -> the page bundle, with its provenance
-  ReplaySource                a capture replayed as a stream of 1-second windows: the first
-                              step towards live input. TapSource is the stub for the real one.
+  ReplaySource                a capture replayed as a stream of 1-second windows (counts only;
+                              scoring a running cluster is the separate live monitor, live/)
 
 An assignment row is {path, role, vantage, level, scenario}. `role` is benign, attack or
 ignore. A tap's label is `<level>-<name>` (pod-nginx, node-child1, router-any), because the
@@ -368,9 +368,7 @@ class LiveSource:
     """A source of packets that arrive over time, seen as 1-second windows.
 
     `windows()` yields one dict per second of capture time, in order:
-    {t, packets, bytes, flows, new_endpoints, endpoints}. The detection side is not wired to
-    it yet; this is the contract a real collector will meet, so the page and the scorer can
-    be written against it now.
+    {t, packets, bytes, flows, new_endpoints, endpoints}. Counts only: nothing here is scored.
     """
 
     def windows(self):
@@ -380,8 +378,7 @@ class LiveSource:
 class ReplaySource(LiveSource):
     """A capture file replayed as if it were arriving now, `speed` times faster than real.
 
-    The stand-in for a live feed: it exercises the same per-second contract with traffic
-    whose ground truth is known. `sleep` is injectable so tests run it instantly.
+    `sleep` is injectable so tests run it instantly.
     """
 
     def __init__(self, path, speed=1.0, loader=load_packets, sleep=time.sleep):
@@ -417,21 +414,3 @@ class ReplaySource(LiveSource):
             yield window
             if t < last:
                 self.sleep(1.0 / self.speed)
-
-
-class TapSource(LiveSource):
-    """Not built yet: packets from a running collector instead of a file.
-
-    The intended shape: a collector at a tap (ptcpdump or tcpdump writing pcapng to stdout,
-    or an eBPF exporter) feeds frames through convert.read and convert.rows, one packet row
-    at a time, into the same 1-second windowing ReplaySource does. Windows close on a
-    watermark (capture time plus a lateness allowance), so late frames are counted rather than
-    reordering the past. Until then the harness replays files.
-    """
-
-    def __init__(self, command=None):
-        self.command = command
-
-    def windows(self):
-        raise NotImplementedError(
-            "Live taps are not wired yet; replay a capture instead (ReplaySource).")
