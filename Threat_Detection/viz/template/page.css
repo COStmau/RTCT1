@@ -403,3 +403,34 @@ table.taps tbody tr:hover td { background: var(--surface-2); }
 .data-card details summary { cursor: pointer; color: var(--ink-2); font-size: 13px; margin-top: 4px; }
 .data-card .readout { font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 12.5px; }
 .data-card .t-2 { color: var(--ink-2); }
+
+/* collapsible cards on the Data tab */
+.data-card h3 .spacer { flex: 1; }
+.data-card > h3 { cursor: pointer; user-select: none; }
+.data-card > h3 button, .data-card > h3 input, .data-card > h3 select { cursor: auto; }
+.data-card h3 .card-toggle { width: 30px; height: 30px; flex: 0 0 30px; display: inline-flex;
+  align-items: center; justify-content: center; font-size: 15px; line-height: 1; color: var(--muted);
+  background: none; border: 0; border-radius: 8px; padding: 0; margin: -7px -6px -7px -8px;
+  align-self: center; transition: transform .15s, background .12s; }
+.data-card h3 .card-toggle:hover { color: var(--ink); background: var(--surface-2); }
+.data-card.collapsed h3 { margin-bottom: 0; }
+.data-card.collapsed h3 .card-toggle { transform: rotate(-90deg); }
+.data-card.collapsed > :not(h3) { display: none; }
+
+/* cluster map focus: hover brings an element forward, click pins it */
+.focus-bg { fill: transparent; }
+.ext-label.crowded { display: none; }
+.focusing [data-el]:not(.lit), .focusing [data-for]:not(.lit) { opacity: .16; transition: opacity .12s; }
+.focusing .link:not(.lit) { stroke-opacity: .05; }
+.focusing .link.lit { stroke: var(--accent); stroke-opacity: .9; }
+.focusing .link.new.lit { stroke: var(--critical); }
+/* scoped to SVG: "grow" also marks HTML form labels in the data tab, which must not scale */
+svg .grow:not(.host-box) { transform: scale(1.3); transform-box: fill-box; transform-origin: center; transition: transform .12s; }
+svg .host-box.grow { stroke: var(--accent); stroke-width: 2.5px; }
+svg .pod.grow, svg .ext.grow, svg .svc.grow { stroke: var(--accent); stroke-width: 2.5px; }
+.focusing [data-for].lit { font-weight: 650; }
+.focus-card { pointer-events: none; }
+.focus-card-bg { fill: var(--surface); stroke: var(--accent); stroke-width: 1.5px; filter: drop-shadow(0 2px 6px rgba(0,0,0,.18)); }
+.focus-card-title { font-size: 17px; font-weight: 700; fill: var(--ink); }
+.focus-card-sub { font-size: 12px; fill: var(--ink-2); }
+.plan-warn { font-size: 13px !important; border: 1px solid var(--serious); border-radius: 8px; padding: 8px 10px; }

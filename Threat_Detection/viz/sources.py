@@ -10,8 +10,8 @@ step before it, so the harness can point at any capture rather than only the KUB
   manifest_assignments(...)   the assignment rows today's page is built from, read from the
                               KUBEDATA manifest by the same rules viz/page.py applies
   build(assignments, ...)     assignment rows -> the page bundle, with its provenance
-  ReplaySource                a capture replayed as a stream of 1-second windows: the first
-                              step towards live input. TapSource is the stub for the real one.
+  ReplaySource                a capture replayed as a stream of 1-second windows (counts only;
+                              scoring a running cluster is the separate live monitor, live/)
 
 An assignment row is {path, role, vantage, level, scenario}. `role` is benign, attack or
 ignore. A tap's label is `<level>-<name>` (pod-nginx, node-child1, router-any), because the
@@ -288,6 +288,11 @@ def build(assignments, profile=None, forget=FORGET_SECONDS, selected=None, allow
               for v in drawn}
     bundle = page.build_pages(inputs, benign, forget, selected=selected or page.DEFAULT_VANTAGE,
                               profile=profile)
+    better = better_preset(benign, profile)
+    if better:
+        name, count = better
+        notes.append(f"the {profile.name} address plan found no pod addresses, but {count} addresses "
+                     f"fall in the {name} plan's pod range: rebuild with the {name} preset")
     thin = sorted(v for v, why in bundle["absent"].items() if why == "too few flows")
     if thin:
         notes.append(f"left off {', '.join(thin)}: too few benign flows to learn from "
@@ -295,6 +300,36 @@ def build(assignments, profile=None, forget=FORGET_SECONDS, selected=None, allow
     drawn = [v for v in drawn if v in bundle["vantages"]]
     bundle["source"] = provenance(assignments, profile, forget, allow_bulk, drawn, notes, origin)
     return bundle
+
+
+def better_preset(captures, profile):
+    """(preset, addresses) when `profile` puts no address in its pod range but a preset would.
+
+    Choosing kubeadm for k3s traffic (or the reverse) does not fail: every pod lands outside
+    the cluster as a LAN device, and the map fills with unlabelled-looking addresses. This
+    names the preset that fits, so the Data tab can say so.
+    """
+    import ipaddress
+    addresses = set()
+    for packets in captures.values():
+        for column in ("src_ip", "dst_ip"):
+            addresses.update(str(a) for a in packets[column].dropna().unique())
+    parsed = []
+    for address in addresses:
+        try:
+            parsed.append(ipaddress.ip_address(address))
+        except ValueError:
+            continue
+
+    def in_pods(plan):
+        nets = [ipaddress.ip_network(c) for c in plan.pod_cidrs]
+        return sum(any(a in n for n in nets if a.version == n.version) for a in parsed)
+
+    if in_pods(profile):
+        return None
+    counts = {name: in_pods(plan) for name, plan in topology.PROFILES.items() if name != profile.name}
+    name = max(counts, key=counts.get, default=None)
+    return (name, counts[name]) if name and counts[name] else None
 
 
 def provenance(assignments, profile, forget, allow_bulk, drawn, notes, origin):
@@ -333,9 +368,7 @@ class LiveSource:
     """A source of packets that arrive over time, seen as 1-second windows.
 
     `windows()` yields one dict per second of capture time, in order:
-    {t, packets, bytes, flows, new_endpoints, endpoints}. The detection side is not wired to
-    it yet; this is the contract a real collector will meet, so the page and the scorer can
-    be written against it now.
+    {t, packets, bytes, flows, new_endpoints, endpoints}. Counts only: nothing here is scored.
     """
 
     def windows(self):
@@ -345,8 +378,7 @@ class LiveSource:
 class ReplaySource(LiveSource):
     """A capture file replayed as if it were arriving now, `speed` times faster than real.
 
-    The stand-in for a live feed: it exercises the same per-second contract with traffic
-    whose ground truth is known. `sleep` is injectable so tests run it instantly.
+    `sleep` is injectable so tests run it instantly.
     """
 
     def __init__(self, path, speed=1.0, loader=load_packets, sleep=time.sleep):
@@ -382,21 +414,3 @@ class ReplaySource(LiveSource):
             yield window
             if t < last:
                 self.sleep(1.0 / self.speed)
-
-
-class TapSource(LiveSource):
-    """Not built yet: packets from a running collector instead of a file.
-
-    The intended shape: a collector at a tap (ptcpdump or tcpdump writing pcapng to stdout,
-    or an eBPF exporter) feeds frames through convert.read and convert.rows, one packet row
-    at a time, into the same 1-second windowing ReplaySource does. Windows close on a
-    watermark (capture time plus a lateness allowance), so late frames are counted rather than
-    reordering the past. Until then the harness replays files.
-    """
-
-    def __init__(self, command=None):
-        self.command = command
-
-    def windows(self):
-        raise NotImplementedError(
-            "Live taps are not wired yet; replay a capture instead (ReplaySource).")

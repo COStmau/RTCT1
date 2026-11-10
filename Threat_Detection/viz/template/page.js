@@ -121,7 +121,8 @@ function defs() {
 
 // Lay the cluster out inside `box` and draw it into `g`. Returns element positions by id
 // so callers can draw on top (flows, taps). Everything is placed by rules over the bundle.
-function renderCluster(g, cluster, box, { focus = null, compact = false, onTap = null } = {}) {
+function renderCluster(g, cluster, box, { focus = null, compact = false, onTap = null, onPage = null, tapNote = null } = {}) {
+  const tapOnPage = onPage || (v => Boolean(B && B.vantages[v.label]));
   const pos = new Map();
   const pad = compact ? 6 : 16;
   const rows = compact
@@ -156,20 +157,21 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     const cp = column.kind === "host" && column.host.roles.includes("control-plane");
     const ghost = column.kind === "lane" || !column.host.name;
     hostG.append("rect").attr("class", `host-box ${cp ? "cp" : ""} ${ghost ? "ghost" : ""}`)
+      .attr("data-el", column.kind === "host" ? column.host.id : null)
       .attr("x", r.x).attr("y", r.y).attr("width", r.w).attr("height", r.h).attr("rx", compact ? 6 : 12);
     const head = compact ? 14 : (ghost ? 30 : 58);
     if (column.kind === "host") {
       const h = column.host;
       pos.set(h.id, { x: r.x + r.w / 2, y: r.y + head / 2 + 4, box: r, kind: "host" });
       if (!compact || h.name) {
-        hostG.append("text").attr("class", compact ? "t-small" : "t-title")
+        hostG.append("text").attr("class", compact ? "t-small" : "t-title").attr("data-for", h.id)
           .attr("x", r.x + (compact ? 6 : 12)).attr("y", r.y + (compact ? 12 : 20))
           .text(h.name || h.ip);
       }
       if (!compact) {
         const lines = h.name ? [`${h.ip} · ${h.roles.join(" · ")}`, h.pod_cidr ? `pods ${h.pod_cidr}` : "no pod subnet"]
                              : ["seen in traffic only"];
-        lines.forEach((line, i) => hostG.append("text").attr("class", "t-small t-muted detail")
+        lines.forEach((line, i) => hostG.append("text").attr("class", "t-small t-muted detail").attr("data-for", h.id)
           .attr("x", r.x + 12).attr("y", r.y + 35 + i * 13).text(fit(line, r.w - 24)));
       }
     } else if (!compact) {
@@ -177,6 +179,7 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
         .text("pods with no claimed node");
     }
     hover(hostG.append("rect").attr("x", r.x).attr("y", r.y).attr("width", r.w).attr("height", head)
+      .attr("data-hit", column.kind === "host" ? column.host.id : null)
       .attr("fill", "transparent").datum(column), c => c.kind === "host"
         ? `<div class="tt-title">${c.host.name ? "node " + c.host.name : "host " + c.host.ip}</div>
            <div class="tt-row">${c.host.ip} · ${c.host.roles.join(", ")}</div>
@@ -196,17 +199,17 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
         pos.set(p.id, { x: cx, y: cy, r: rr, kind: "pod" });
         const circle = hostG.append("circle")
           .attr("class", `pod ${p.host_network ? "hostnet" : p.name ? "named" : ""} ${p.new ? "new" : ""}`)
-          .attr("data-id", p.id).attr("cx", cx).attr("cy", cy).attr("r", rr).datum(p);
+          .attr("data-id", p.id).attr("data-el", p.id).attr("cx", cx).attr("cy", cy).attr("r", rr).datum(p);
         hover(circle, d => `<div class="tt-title">${d.name || "pod " + d.ip}</div>
           <div class="tt-row">${d.host_network ? "host network: shares the node's address " + d.ip + ", so its traffic is drawn on the node" : "pod address " + d.ip}</div>
           ${d.new ? `<div class="tt-row">never seen in benign traffic</div>` : ""}`);
         if (p.name && !compact && rr > 16) {
           const label = p.name.replace(/^pod-/, "");
-          hostG.append("text").attr("class", "t-small").attr("text-anchor", "middle")
+          hostG.append("text").attr("class", "t-small").attr("text-anchor", "middle").attr("data-for", p.id)
             .attr("x", cx).attr("y", cy + 4).text(label.length * 6 > rr * 2 ? label.slice(0, Math.floor(rr / 3.2)) + "…" : label)
             .style("pointer-events", "none");
           if (p.host_network) {
-            hostG.append("text").attr("class", "t-small t-muted").attr("text-anchor", "middle")
+            hostG.append("text").attr("class", "t-small t-muted").attr("text-anchor", "middle").attr("data-for", p.id)
               .attr("x", cx).attr("y", cy + 16).text("host net").style("pointer-events", "none");
           }
         }
@@ -223,18 +226,24 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
   pos.set("uplink", { x: box.x + box.w * 0.92, y: upY, kind: "network" });
   if (!compact) {
     g.append("text").attr("class", "t-section detail").attr("x", box.x).attr("y", upY - 8).text("LAN uplink");
-    g.append("text").attr("class", "t-section detail").attr("x", box.x).attr("y", top.y + top.h * 0.24 + 4).text("outside");
+    g.append("text").attr("class", "t-section detail").attr("x", box.x).attr("y", top.y + top.h * 0.24 + 4)
+      .text(box.w * 0.8 / Math.max(outside.length, 1) < 70 ? `outside · ${outside.length}` : "outside")
+      .append("title").text("hover an address to name it");
   }
+  // an IP label needs about 70 px; closer than that the labels overprint each other, so they
+  // wait for focus (hover or click) instead, and the row's heading says how many there are
+  const crowded = box.w * 0.8 / Math.max(outside.length, 1) < 70;
   outside.forEach((e, i) => {
     const ex = box.x + box.w * (0.16 + 0.8 * (i + 0.5) / outside.length), ey = top.y + top.h * 0.24;
     pos.set(e.id, { x: ex, y: ey, r: compact ? 5 : 9, kind: "external" });
-    hover(g.append("circle").attr("class", `ext ${e.kind} ${e.new ? "new" : ""}`).attr("cx", ex).attr("cy", ey).attr("r", compact ? 5 : 9).datum(e),
+    hover(g.append("circle").attr("class", `ext ${e.kind} ${e.new ? "new" : ""}`).attr("data-el", e.id).attr("cx", ex).attr("cy", ey).attr("r", compact ? 5 : 9).datum(e),
       d => (d.kind === "host"
         ? `<div class="tt-title">host ${d.ip}</div><div class="tt-row">${d.roles.join(", ")} · serves a cluster port; no capture of its own</div>`
         : `<div class="tt-title">${d.kind === "internet" ? "the internet" : "LAN device " + d.ip}</div>
            ${d.note ? `<div class="tt-row">${d.note}; not proven to be a node</div>` : ""}`)
         + (d.new ? `<div class="tt-row">never seen in benign traffic</div>` : ""));
-    if (!compact) g.append("text").attr("class", "t-small t-2 detail").attr("text-anchor", "middle")
+    if (!compact) g.append("text").attr("class", `t-small t-2 detail ext-label ${crowded && e.kind !== "internet" ? "crowded" : ""}`)
+      .attr("data-for", e.id).attr("text-anchor", "middle")
       .attr("x", ex).attr("y", ey + 23).text(e.kind === "internet" ? "internet" : e.ip);
   });
 
@@ -249,13 +258,15 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
   // services (the cluster's virtual IPs) along the bottom
   cluster.services.forEach((s, i) => {
     const sx = box.x + box.w * (i + 0.5) / Math.max(cluster.services.length, 1), sy = services.y + services.h * 0.5;
-    const w = compact ? 46 : 150, h = compact ? 14 : 30;
+    // a pill per service, as wide as the row allows: seven services must not overprint
+    const room = box.w / Math.max(cluster.services.length, 1) - 8;
+    const w = compact ? Math.min(46, room) : Math.min(150, Math.max(room, 40)), h = compact ? 14 : 30;
     pos.set(s.id, { x: sx, y: sy - h / 2, kind: "service" });
-    hover(g.append("rect").attr("class", `svc ${s.new ? "new" : ""}`).attr("x", sx - w / 2).attr("y", sy - h / 2)
+    hover(g.append("rect").attr("class", `svc ${s.new ? "new" : ""}`).attr("data-el", s.id).attr("x", sx - w / 2).attr("y", sy - h / 2)
       .attr("width", w).attr("height", h).attr("rx", h / 2).datum(s),
       d => `<div class="tt-title">service ${d.ip}</div><div class="tt-row">${d.port_names.join(", ") || "no well-known port"}</div>`);
-    if (!compact) g.append("text").attr("class", "detail").attr("text-anchor", "middle").attr("x", sx).attr("y", sy + 4)
-      .text(`${s.ip}${s.port_names.length ? " · " + s.port_names.join(", ") : ""}`).style("pointer-events", "none");
+    if (!compact) g.append("text").attr("class", "detail").attr("data-for", s.id).attr("text-anchor", "middle").attr("x", sx).attr("y", sy + 4)
+      .text(fit(s.name ? `${s.name} · ${s.ip}` : `${s.ip}${s.port_names.length ? " · " + s.port_names.join(", ") : ""}`, w - 12)).style("pointer-events", "none");
   });
   if (!compact && cluster.services.length) g.append("text").attr("class", "t-section detail")
     .attr("x", box.x).attr("y", services.y + 12).text("services");
@@ -282,9 +293,9 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     if (p.kind === "host") { tx = p.box.x + p.box.w - 14; ty = p.box.y + 14; }
     else if (p.kind === "pod") { tx = p.x + p.r * 0.72; ty = p.y - p.r * 0.72; }
     else if (p.kind === "network") { tx = box.x + box.w * (0.78 + 0.14 * networkTaps.indexOf(v) / Math.max(networkTaps.length, 1)); }
-    const isFocus = v.label === focus, onPage = Boolean(B.vantages[v.label]);
+    const isFocus = v.label === focus, here = tapOnPage(v);
     const tg = taps.append("g")
-      .attr("class", `tap ${isFocus ? "focus" : ""} ${onPage ? "on-page" : "off-page"}`)
+      .attr("class", `tap ${isFocus ? "focus" : ""} ${here ? "on-page" : "off-page"}`)
       .attr("data-label", v.label).attr("transform", `translate(${tx},${ty})`).datum(v);
     if (isFocus) tg.append("circle").attr("class", "tap-halo").attr("r", compact ? 8 : 12);
     tg.append("circle").attr("class", "tap-dot").attr("r", compact ? 3.5 : 5);
@@ -292,12 +303,13 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     tg.append("circle").attr("class", "tap-hit").attr("r", compact ? 8 : 12);
     if (isFocus && !compact) tg.append("text").attr("class", "t-small halo").attr("x", 10).attr("y", -8).text(`listening: ${v.label}`);
     hover(tg, d => `<div class="tt-title">capture tap: ${d.label}</div><div class="tt-row">${d.level}-level recording</div>
-      <div class="tt-row">${d.label === focus ? "the tap this page replays"
+      <div class="tt-row">${tapNote ? tapNote(d) : d.label === focus ? "the tap this page replays"
         : B.vantages[d.label] ? "click to replay from this tap"
         : absentWhy(d.label)}</div>`);
-    if (onTap && onPage && !isFocus) tg.on("click", (event, d) => { hideTip(); onTap(d.label); });
+    if (onTap && here && !isFocus) tg.on("click", (event, d) => { hideTip(); onTap(d.label); });
     if (isFocus) pos.set("__focus__", { x: tx, y: ty });
   }
+  if (!compact) clusterFocus(g, cluster, pos, edges, box, label);
   return { pos, edges, taps };
 
   function label(id) {
@@ -307,6 +319,110 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     if (pod) return pod.name || pod.ip;
     return id.replace(/^\w+:/, "");
   }
+}
+
+// Focus on the full-size map: hovering an element brings it forward (it grows, its
+// conversation partners and links stay lit, everything else fades) and a card names it in a
+// larger type; clicking pins that focus until the background or the element is clicked again.
+// The compact maps leave this off: their highlighting belongs to the replay.
+function clusterFocus(g, cluster, pos, edges, box, nameOf) {
+  const near = new Map();
+  for (const e of cluster.edges) {
+    if (!near.has(e.src)) near.set(e.src, new Set());
+    if (!near.has(e.dst)) near.set(e.dst, new Set());
+    near.get(e.src).add(e.dst);
+    near.get(e.dst).add(e.src);
+  }
+  const hostOf = new Map(cluster.pods.map(p => [p.id, p.host]));
+  const card = g.append("g").attr("class", "focus-card");
+  let pinned = null;
+
+  // the background takes the click that clears a pin
+  g.insert("rect", ":first-child").attr("class", "focus-bg")
+    .attr("x", box.x).attr("y", box.y).attr("width", box.w).attr("height", box.h)
+    .on("click.focus", () => { pinned = null; set(null); });
+
+  // [title, detail lines]: what the hover tooltip said, in the card instead
+  function describe(id) {
+    const host = cluster.hosts.find(h => h.id === id);
+    if (host) {
+      const count = cluster.pods.filter(p => p.host === id).length;
+      return [host.name ? `node ${host.name}` : `host ${host.ip}`,
+              [`${host.ip} · ${host.roles.join(", ") || "no role seen"}`,
+               host.name ? `${host.pod_cidr ? "pod subnet " + host.pod_cidr : "no pod subnet claimed"} · ${count} pod${count === 1 ? "" : "s"}`
+                         : "serves a cluster port; no capture of its own"]];
+    }
+    const pod = cluster.pods.find(p => p.id === id);
+    if (pod) {
+      const on = cluster.hosts.find(h => h.id === pod.host);
+      const where = on ? ` on ${on.name || on.ip}` : "";
+      return [pod.name ? pod.name.replace(/^pod-/, "") : `pod ${pod.ip}`,
+              [pod.host_network ? `host network${where}: shares the node's address ${pod.ip}` : `pod ${pod.ip}${where}`,
+               pod.new ? "never seen in benign traffic" : null]];
+    }
+    const svc = cluster.services.find(x => x.id === id);
+    if (svc) return [`service ${svc.ip}`, [svc.port_names.join(", ") || "no well-known port", svc.new ? "never seen in benign traffic" : null]];
+    const ext = cluster.external.find(x => x.id === id);
+    if (ext) return [ext.kind === "internet" ? "the internet" : ext.ip,
+                     [ext.kind === "internet" ? "addresses outside every private range"
+                       : ext.note ? `LAN device: ${ext.note}; not proven to be a node` : "LAN device",
+                      ext.new ? "never seen in benign traffic" : null]];
+    return [nameOf(id), []];
+  }
+
+  function drawCard(id) {
+    const at = pos.get(id);
+    if (!at) return;
+    const [title, details] = describe(id);
+    const partners = (near.get(id) || new Set()).size;
+    const lines = [...details, `${partners} conversation partner${partners === 1 ? "" : "s"}`].filter(Boolean);
+    const bg = card.append("rect").attr("class", "focus-card-bg").attr("rx", 8);
+    const t = card.append("text").attr("class", "focus-card-title").attr("x", 12).attr("y", 22).text(title);
+    lines.forEach((line, i) => card.append("text").attr("class", "focus-card-sub").attr("x", 12).attr("y", 40 + i * 15).text(line));
+    const width = Math.max(t.node().getComputedTextLength(), ...card.selectAll(".focus-card-sub").nodes().map(n => n.getComputedTextLength())) + 24;
+    const height = 30 + lines.length * 15;
+    bg.attr("width", width).attr("height", height);
+    const anchorY = at.kind === "host" ? at.box.y : at.y - (at.r || 12);
+    let x = Math.min(Math.max((at.kind === "host" ? at.box.x + at.box.w / 2 : at.x) - width / 2, box.x), box.x + box.w - width);
+    let y = anchorY - height - 10;
+    if (y < box.y) y = (at.kind === "host" ? at.box.y + 60 : at.y + (at.r || 12) + 10);
+    card.attr("transform", `translate(${x},${y})`).raise();
+  }
+
+  function set(id, edge = null) {
+    g.classed("focusing", Boolean(id || edge));
+    g.selectAll(".lit").classed("lit", false);
+    g.selectAll(".grow").classed("grow", false);
+    edges.classed("lit", false);
+    card.selectAll("*").remove();
+    if (!id && !edge) return;
+    const lit = new Set(edge ? [edge.src, edge.dst] : [id, ...(near.get(id) || [])]);
+    for (const x of [...lit]) if (hostOf.get(x)) lit.add(hostOf.get(x));
+    g.selectAll("[data-el], [data-for]").classed("lit", function () { return lit.has(this.dataset.el || this.dataset.for); });
+    edges.classed("lit", e => edge ? e === edge : e.src === id || e.dst === id);
+    if (id) {
+      // grow the element itself; a pod or address comes to the front with its own labels
+      g.selectAll("[data-el]").filter(function () { return this.dataset.el === id; }).classed("grow", true)
+        .each(function () { if (!this.classList.contains("host-box")) d3.select(this).raise(); });
+      g.selectAll("[data-for]").filter(function () { return this.dataset.for === id; }).raise();
+      g.selectAll(".tap").raise();
+      drawCard(id);
+    }
+  }
+
+  const keyOf = node => node.dataset.el || node.dataset.hit;
+  g.selectAll("[data-el], [data-hit]")
+    .on("pointerenter", null).on("pointermove", null)   // the card replaces their tooltips
+    .on("pointerenter.focus", function () { if (!pinned) set(keyOf(this)); })
+    .on("pointerleave.focus", () => set(pinned))
+    .on("click.focus", function (event) {
+      event.stopPropagation();
+      const id = keyOf(this);
+      pinned = pinned === id ? null : id;
+      set(pinned || id);
+    });
+  edges.on("pointerenter.focus", (event, e) => { if (!pinned) set(null, e); })
+    .on("pointerleave.focus", () => set(pinned));
 }
 
 // why a tap on the map has no block on this page: bulk transfer is policy, anything else
@@ -351,7 +467,10 @@ function actCluster() {
         : `a pod with its own address (${focusPod.ip}) on <b>${focusHost ? focusHost.name || focusHost.ip : "an unattributed subnet"}</b>: it hears only that pod's traffic.`)
     : focus && focus.level === "node" ? "a whole node's interface."
     : "a router-level tap on the shared network.";
+  // a build under the wrong address plan still draws: say so where the mess shows
+  const planNote = ((B.source && B.source.notes) || []).find(n => n.includes("address plan found no pod addresses"));
   panel.html(`
+    ${planNote ? `<p class="data-warn plan-warn">${planNote} (Data tab, Cluster profile).</p>` : ""}
     <h2>The testbed</h2>
     <p class="big">${named.length} nodes, ${c.pods.filter(p => !p.host_network).length} pod addresses,
       ${c.services.length} services, ${c.vantages.length} capture taps.</p>
@@ -379,7 +498,8 @@ function actCluster() {
       <span><i class="disc" style="background:var(--accent)"></i>the tap this page replays · hollow taps switch to theirs</span>
       <span><i style="background:var(--muted);height:4px"></i>conversation, width by packets (log)</span>
     </div>
-    <p style="margin-top:12px">Hover anything for its addresses, ports and packet counts.</p>`);
+    <p style="margin-top:12px">Hover anything to bring it forward with its conversation partners and
+    its addresses, ports and packet counts; click to keep it in focus, click the background to let go.</p>`);
 }
 
 // ---------------------------------------------------------------- act 2: learning
@@ -1831,6 +1951,41 @@ function setMode(next) {
 // other act reads. As a static file it says what the baked bundle came from.
 
 const dataView = d3.select("#dataview");
+
+// Every .data-card on the Data tab gets a collapse toggle in its heading. The panels re-render
+// often, so the toggle is added by a mutation observer and the collapsed cards are remembered by title.
+const collapsedCards = new Set();
+const cardKey = section => [...(section.querySelector("h3")?.childNodes || [])]
+  .filter(n => n.nodeType === Node.TEXT_NODE).map(n => n.textContent).join("").trim();
+function decorateCards(root) {
+  root.querySelectorAll("section.data-card > h3").forEach(h3 => {
+    const section = h3.parentElement;
+    if (!h3.querySelector(":scope > .card-toggle")) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "card-toggle";
+      btn.title = "Collapse or expand this section";
+      btn.textContent = "▾";
+      h3.prepend(btn);
+    }
+    const shut = collapsedCards.has(cardKey(section));
+    section.classList.toggle("collapsed", shut);
+    h3.querySelector(":scope > .card-toggle").setAttribute("aria-expanded", String(!shut));
+  });
+}
+dataView.on("click.cards", function (event) {
+  const toggle = event.target.closest(".card-toggle");
+  const head = event.target.closest("section.data-card > h3");
+  if (!toggle && !head) return;
+  // clicks on the heading's own controls (Refresh, inputs, selects) keep their normal behaviour
+  const control = event.target.closest("button,input,select,textarea,label,a");
+  if (!toggle && control && head.contains(control)) return;
+  const section = (toggle || head).parentElement;
+  const key = cardKey(section);
+  if (collapsedCards.has(key)) collapsedCards.delete(key); else collapsedCards.add(key);
+  decorateCards(this);
+});
+new MutationObserver(() => decorateCards(dataView.node())).observe(dataView.node(), { childList: true, subtree: true });
 // API rows are plain JSON (paths as typed), so they are escaped here; bundle strings arrive
 // escaped from Python and are inserted as they are.
 const esc = value => String(value ?? "").replace(/[&<>"']/g,
@@ -2102,9 +2257,10 @@ function renderData() {
         <a class="button ${B ? "" : "disabled"}" href="/api/export" ${B ? "" : 'aria-disabled="true"'}>Export static page</a></div>
       ${B && B.source ? `<details><summary>Current page: built from</summary>${provenanceHtml(B.source, true)}</details>` : ""}
     </section>
-    <section class="data-card"><h3>5 · Live input <span class="badge">preview</span></h3>
-      <p class="t-2">A capture replayed as if it were arriving now, windowed per second. This is the shape a live
-      collector will feed; detection is not wired to the stream yet, so nothing here is scored.</p>
+    <section class="data-card"><h3>5 · Replay as a stream <span class="badge">counts only</span></h3>
+      <p class="t-2">A capture replayed as if it were arriving now, windowed per second: packets, bytes, flows and
+      new endpoints, not scored. Scoring traffic as it happens is the separate live monitor
+      (<span class="mono">live/serve.py</span>).</p>
       <div class="data-row">
         <label class="grow">Replay<select id="l-path">${liveFiles.map(f => `<option value="${esc(f.path)}" ${f.path === data.live.path ? "selected" : ""}>${esc(f.name || f.path)}</option>`).join("") || "<option value=''>no capture listed</option>"}</select></label>
         <label>Speed<select id="l-speed">${["1", "10", "50", "200"].map(s => `<option value="${s}" ${s === data.live.speed ? "selected" : ""}>${s}×</option>`).join("")}</select></label>
@@ -2213,9 +2369,16 @@ function selectVantage(label) {
   player.capture = Math.max(same, 0);
   player.t = same >= 0 ? beforeT + before.t0 - S.playback.captures[same].t0 : capture().begin;
   d3.select("#vantage").property("value", label);
+  bundleSubtitle();
+  try { localStorage.setItem(TAP_KEY, label); } catch (e) { /* storage may be blocked */ }
+}
+
+// the header for the built bundle: tap picker and a line about the selected tap
+function bundleSubtitle() {
+  d3.select(".pick").style("display", B ? null : "none");
+  if (!S) return d3.select("#subtitle").text(SERVER ? "nothing built yet · start on the Data tab" : "no bundle");
   d3.select("#subtitle").text(`${S.meta.vantage} · ${S.meta.trace_len}-flow traces · `
     + `${S.meta.forget_seconds} s anomaly clock · built ${S.meta.generated.slice(0, 10)}`);
-  try { localStorage.setItem(TAP_KEY, label); } catch (e) { /* storage may be blocked */ }
 }
 
 // the remembered tap is keyed to the build, so a page rebuilt with --vantage opens there

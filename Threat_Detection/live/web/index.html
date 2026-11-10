@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live monitor</title>
+<link rel="stylesheet" href="/static/live.css">
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <span class="brand-title">Live monitor</span>
+      <span class="brand-sub" id="subtitle">looking for a cluster …</span>
+    </div>
+    <span class="spacer"></span>
+    <div class="bar-actions" id="actions"></div>
+    <button class="ghost" id="theme" title="Toggle light / dark">◐</button>
+  </header>
+  <div id="banner"></div>
+  <main class="grid">
+    <div class="col">
+      <section class="card" id="map-card">
+        <h3>Cluster <span class="sub" id="map-sub"></span></h3>
+        <svg id="map"></svg>
+      </section>
+      <section class="card">
+        <h3>Taps <span class="sub" id="taps-sub"></span><span class="spacer"></span><span id="taps-actions"></span></h3>
+        <div id="strips"></div>
+      </section>
+    </div>
+    <aside class="col side">
+      <section class="card" id="detail"></section>
+      <section class="card" id="attacks"></section>
+      <section class="card"><h3>Events</h3><div id="log" class="log"></div></section>
+    </aside>
+  </main>
+  <div class="tooltip" id="tooltip" role="status"></div>
+</div>
+<script src="/static/vendor/d3.v7.9.0.min.js"></script>
+<script src="/static/live.js"></script>
+</body>
+</html>

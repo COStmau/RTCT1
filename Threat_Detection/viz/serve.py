@@ -24,8 +24,13 @@ is a tool for the machine it runs on, never a service to expose.
   POST /api/build         {assignments, profile, forget, selected, allow_bulk} -> bundle
   GET  /api/export        the current bundle as a static page (outputs/harness_export.html)
   GET  /api/live          ?path=&speed= -> text/event-stream of 1-second windows (replay)
+
+Every POST must come from this page: a request whose Origin is another site is refused, so
+no web page open in the same browser can read a path. Watching a running cluster is a
+separate program, live/serve.py; this one only reads recordings.
 """
 import json
+import signal
 import sys
 import threading
 import traceback
@@ -200,6 +205,8 @@ def make_handler(harness):
                       "/api/build": self.build, "/api/upload": self.upload}
             if url.path not in routes:
                 return self.send_error_json("not found", 404)
+            if not same_origin(self.headers):
+                return self.send_error_json("refused: this request did not come from the harness page", 403)
             self.guarded(routes[url.path])
 
         def page(self):
@@ -283,6 +290,19 @@ def make_handler(harness):
     return Handler
 
 
+def same_origin(headers):
+    """True unless the request carries an Origin that is not this server's own address.
+
+    A browser sends Origin on every cross-site POST, and a page cannot forge it; a request
+    without one comes from a tool such as curl, not from a web page.
+    """
+    origin = headers.get("Origin")
+    if origin is None:
+        return True
+    host = headers.get("Host", "")
+    return origin in (f"http://{host}", f"https://{host}")
+
+
 def serve(harness, port=DEFAULT_PORT, host=HOST):
     """A server bound to `host`, 127.0.0.1 by default (port 0 picks a free one).
 
@@ -344,6 +364,9 @@ def main(argv=None):
     print(f"Harness at {url}  (Ctrl-C to stop)")
     if args.open:
         webbrowser.open(url)
+    def terminated(signum, frame):   # a stop from a process manager cleans up like Ctrl-C
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, terminated)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

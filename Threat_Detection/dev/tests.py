@@ -3676,8 +3676,6 @@ class SourceChecks(_OutputsInTemp, unittest.TestCase):
         self.assertEqual(windows[0]["new_endpoints"], 2)
         self.assertEqual(windows[1]["new_endpoints"], 0)
         self.assertEqual(waits, [0.25] * 5)
-        with self.assertRaises(NotImplementedError):
-            next(sources.TapSource().windows())
 
 
 class HarnessParityChecks(unittest.TestCase):
@@ -4053,6 +4051,352 @@ class SettledStepsChecks(unittest.TestCase):
             with self.subTest(trial=trial):
                 nodes, settled = self.replay(traces)
                 self.assertEqual(set(settled), {n["id"] for n in nodes})
+
+
+class LiveChecks(unittest.TestCase):
+    """live/stream.py: the stream path agrees with the recording path wherever a stream can."""
+
+    @staticmethod
+    def rows(frame):
+        return [{k: (None if isinstance(v, float) and np.isnan(v) else v) for k, v in r.items()}
+                for r in frame.to_dict("records")]
+
+    def test_pcap_stream_reads_what_the_file_reader_reads(self):
+        import io
+        from convert.read import CaptureReader
+        from live import stream as live
+        datas = [_sll2(_ipv4(_tcp(40000 + i, 80, payload=bytes(i * 10)), 6,
+                             src="10.244.0.5", dst="10.96.0.7"), 0x0800) for i in range(12)]
+        frames = [(1771545908 + i // 3, (i * 125000) % 1000000, data, len(data) + 4)
+                  for i, data in enumerate(datas)]
+        blob = _pcap_bytes(frames)
+        tee = bytearray()
+        streamed = list(live.PcapStream(io.BytesIO(blob), tee=tee.extend).frames())
+        read = list(CaptureReader(str(_capture_file(blob, "s.pcap"))).frames())
+        self.assertEqual(streamed, read)
+        self.assertEqual(bytes(tee), blob)       # Record writes the same pcap that arrived
+        row = live.packet_row(streamed[3])
+        self.assertEqual((row["src_ip"], row["dst_ip"], row["dst_port"], row["proto"]),
+                         ("10.244.0.5", "10.96.0.7", 80, "tcp"))
+        # a stream cut mid-record ends cleanly with the frames that were whole
+        self.assertEqual(len(list(live.PcapStream(io.BytesIO(blob[:-5])).frames())), 11)
+
+    def test_windower_keeps_the_flows_segment_flows_keeps(self):
+        """With no 5-tuple reused, the causal rule and the offline rule keep the same flows."""
+        from live import stream as live
+        packets = flow_capture(vary=True)
+        offline, _ = statemachine.segment_flows(statemachine.make_flows(packets), packets["ts"].min())
+        online = live.live_flows(self.rows(packets))
+        columns = ["start_ts", "bytes", "duration"]
+        self.assertEqual(offline[columns].astype(float).values.tolist(),
+                         online[columns].astype(float).values.tolist())
+
+    def test_windower_drops_a_flow_that_spans_seconds(self):
+        from live import stream as live
+        base = {"frame_len": 60, "src_ip": "a", "dst_ip": "b", "dst_port": 53, "proto": "udp"}
+        rows = [dict(base, ts=t, src_port=port) for t, port in
+                ((0.25, 1), (1.25, 1),            # one 5-tuple across two seconds: dropped
+                 (0.5, 2), (0.6, 2),              # wholly inside second 0: kept
+                 (2.5, 3), (12.5, 3))]            # reused ten seconds later: first kept, reuse not
+        windower = live.Windower(lateness=2)
+        closed = [c for r in rows for c in windower.add(r)] + windower.flush()
+        kept = {c["t"]: list(c["flow_rows"]["start_ts"]) for c in closed if len(c["flow_rows"])}
+        self.assertEqual(kept, {0: [0.5], 2: [2.5]})
+        # each closed second also says who talked to whom, for the live map
+        self.assertEqual(closed[0]["pairs"], [["a", "b", 3]])
+        self.assertEqual(closed[5]["pairs"], [])
+        self.assertEqual([c["t"] for c in closed], list(range(13)))   # quiet seconds still close
+
+    def test_live_detector_reproduces_the_page(self):
+        """The same capture, streamed, gets the page's per-window peaks and statuses."""
+        from live import stream as live
+        benign, attack = flow_capture(vary=True), flow_capture(burst=(20, 30), vary=True)
+        calibration = viz.calibrate(benign)
+        page = viz.build_page(benign, {"flood": attack}, {}, "pod-web")
+        windows = page["playback"]["captures"][1]["windows"]
+        detector, windower = live.LiveDetector(calibration), live.Windower()
+        verdicts = []
+        for row in self.rows(attack):
+            verdicts += [detector.window(c, windower.t0) for c in windower.add(row)]
+        verdicts += [detector.window(c, windower.t0) for c in windower.flush()]
+        self.assertEqual([w["status"] for w in windows], [v["status"] for v in verdicts])
+        for w, v in zip(windows, verdicts):
+            if v["peak"] is None:
+                self.assertTrue(np.isnan(w["peak"]))
+            else:
+                self.assertAlmostEqual(w["peak"], v["peak"])
+        self.assertTrue(any(v["alert"] for v in verdicts))
+
+    def test_live_calibration_learns_from_live_cut_flows(self):
+        from live import stream as live
+        benign = flow_capture(vary=True)
+        calibration = live.calibrate_live(benign)
+        self.assertEqual(len(calibration["flows"]), len(live.live_flows(self.rows(benign))))
+        self.assertIn("windowed", calibration["cutoffs"])
+
+    def test_wrong_address_plan_is_named(self):
+        """k3s traffic built under kubeadm draws every pod as a LAN device; the build says so."""
+        from viz import sources
+        k3s = flow_capture()      # its pods are 10.42.x
+        self.assertIsNone(sources.better_preset({"pod-a": k3s}, cluster.K3S))
+        self.assertEqual(sources.better_preset({"pod-a": k3s}, cluster.KUBEADM)[0], "k3s")
+
+    def test_cross_site_posts_are_refused(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        from viz import serve
+        server = serve.serve(serve.Harness(quiet=True), port=0)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            def post(path, origin):
+                headers = {"Content-Type": "application/json"}
+                if origin:
+                    headers["Origin"] = origin
+                request = urllib.request.Request(base + path, data=b"{}", headers=headers)
+                try:
+                    with urllib.request.urlopen(request, timeout=10) as response:
+                        return response.status
+                except urllib.error.HTTPError as error:
+                    return error.code
+            for path in ("/api/scan", "/api/build"):
+                self.assertEqual(post(path, "http://evil.example"), 403, path)
+            self.assertEqual(post("/api/scan", base), 200)
+            self.assertEqual(post("/api/scan", None), 200)   # curl and tests send no Origin
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_stream_commands_write_pcap_to_stdout(self):
+        collect = _collect()
+        profile = collect.load_profile("general")
+        for tap in collect.taps(profile):
+            argv = collect.stream_argv(profile, tap, pod="api-x", bridge="br-123")
+            self.assertEqual(argv[argv.index("-w") + 1], "-", tap["label"])
+            self.assertIn("-U", argv)
+            self.assertNotIn("timeout", argv)
+            if tap["level"] == "pod":
+                self.assertEqual(argv[:3], ["kubectl", "--context", "k3d-rtct-general"])
+            else:   # a named container, so stopping the monitor can remove it
+                self.assertEqual(argv[argv.index("--name") + 1], collect.live_container(tap))
+
+    def test_cluster_summary_from_kubectl_json(self):
+        collect = _collect()
+        profile = collect.load_profile("general")
+        listed = [{"name": "rtct-general", "serversRunning": 1, "serversCount": 1,
+                   "agentsRunning": 2, "agentsCount": 2}]
+        node = lambda name, label, ready: {"metadata": {"name": name, "labels": {"rtct/name": label}},
+                                           "status": {"conditions": [{"type": "Ready", "status": ready}]}}
+        nodes = {"items": [node("k3d-a", "agent1", "True"), node("k3d-s", "server", "True")]}
+        pods = {"items": [{"metadata": {"name": "api-1", "labels": {"app": "api", "rtct/role": "workload"}},
+                           "status": {"phase": "Running", "podIP": "10.244.1.5",
+                                      "containerStatuses": [{"ready": True}, {"ready": True}]},
+                           "spec": {"nodeName": "k3d-a"}}]}
+        services = {"items": [{"metadata": {"name": "api", "namespace": "rtct"},
+                               "spec": {"clusterIP": "10.96.4.4", "ports": [{"name": "http", "port": 8080}]}},
+                              {"metadata": {"name": "headless", "namespace": "rtct"}, "spec": {"clusterIP": "None"}}]}
+        found = collect.summarize_cluster(profile, listed, nodes, pods, services)
+        self.assertEqual([(x["name"], x["ip"]) for x in found["services"]], [("api", "10.96.4.4")])
+        self.assertEqual(found["pods"][0]["namespace"], None)
+        self.assertFalse(found["pods"][0]["host_network"])
+        self.assertTrue(found["running"])
+        self.assertEqual([n["name"] for n in found["nodes"]], ["agent1", "server"])
+        self.assertEqual(found["pods"][0]["ip"], "10.244.1.5")
+        nodes["items"][1]["status"]["conditions"][0]["status"] = "False"
+        self.assertFalse(collect.summarize_cluster(profile, listed, nodes, pods)["running"])
+        self.assertFalse(collect.summarize_cluster(profile, [], nodes, pods)["running"])
+
+
+class _NoCluster:
+    """A provider with nothing behind it: what the monitor sees when no cluster is up."""
+
+    @staticmethod
+    def make():
+        from live.taps import TapProvider
+
+        class Nothing(TapProvider):
+            def discover(self):
+                return {"clusters": [], "inventory": None}
+        return Nothing()
+
+
+def _stream_capture(seconds=8, name="pod-api-tcp.pcap"):
+    """A pcap of one small request a second, as a tap would hand it over."""
+    data = [_sll2(_ipv4(_tcp(40000 + i, 80, payload=bytes(20)), 6, src="10.244.0.5", dst="10.96.0.7"), 0x0800)
+            for i in range(seconds)]
+    return _capture_file(_pcap_bytes([(1771545908 + i, 125000, d, len(d)) for i, d in enumerate(data)]), name)
+
+
+class MonitorChecks(unittest.TestCase):
+    """live/: the monitor app stands apart from the demo and runs with no cluster behind it."""
+
+    def test_the_demo_carries_no_live_code(self):
+        from viz import page
+        html = page.page_html(None, server=True)
+        for gone in ("/api/monitor", "/api/attack", "EventSource(\"/api/monitor"):
+            self.assertNotIn(gone, html)
+        for module in ("viz/page.py", "viz/serve.py", "viz/sources.py"):
+            text = Path(module).read_text(encoding="utf-8")
+            self.assertNotIn("from live", text, module)
+            self.assertNotIn("import live", text, module)
+        for module in sorted(Path("live").glob("*.py")):
+            text = module.read_text(encoding="utf-8")
+            self.assertNotIn("from viz", text, str(module))
+            self.assertNotIn("import viz", text, str(module))
+
+    def test_pace_writes_the_recording_as_a_stream_at_its_own_spacing(self):
+        import io
+        from live import stream, worker
+        path = _stream_capture(seconds=5)
+        out, waits, now = io.BytesIO(), [], [5000.0]
+
+        def sleep(seconds):
+            waits.append(seconds)
+            now[0] += seconds
+        worker.pace(path, out, speed=4, clock=lambda: now[0], sleep=sleep)
+        frames = list(stream.PcapStream(io.BytesIO(out.getvalue())).frames())
+        self.assertEqual(len(frames), 5)
+        self.assertEqual([f.ts_sec for f in frames], [5000 + i for i in range(5)])   # the clock moved to now
+        self.assertEqual([round(w, 3) for w in waits], [0.25] * 4)                   # four times as fast
+        self.assertEqual(stream.packet_row(frames[0])["dst_ip"], "10.96.0.7")
+
+    def test_a_tap_learns_from_its_own_stream_and_swaps_without_restarting(self):
+        import time
+        from live import stream, worker
+        packets = flow_capture(seconds=150, burst=(120, 135), vary=True)
+        rows = list(stream.packet_rows(packets))
+        emitted, now = [], [0.0]
+        tap = worker.Tap(emitted.append, clock=lambda: now[0])
+        tap.learn(60)
+
+        def feed(until):
+            while rows and rows[0]["ts"] < 1000.0 + until:
+                row = rows.pop(0)
+                now[0] = row["ts"]
+                tap.packet(row)
+
+        def wait_for_ready(count):
+            deadline = time.time() + 20
+            while sum(e["kind"] == "ready" for e in emitted) < count and time.time() < deadline:
+                time.sleep(0.02)
+            self.assertEqual(sum(e["kind"] == "ready" for e in emitted), count)
+
+        feed(62)
+        wait_for_ready(1)
+        before = [e for e in emitted if e["kind"] == "window"]
+        self.assertTrue(before and all(w["status"] == "learning" and w["peak"] is None for w in before))
+        ready = next(e for e in emitted if e["kind"] == "ready")
+        self.assertEqual(ready["source"], "stream")
+        self.assertEqual((ready["persistence"], ready["clear_windows"]), (3, 3))
+        feed(150)
+        tap.finish()
+        after = [e for e in emitted if e["kind"] == "window"][len(before):]
+        self.assertIn("warmup", {w["status"] for w in after[:10]})     # the clock starts cold at the swap
+        burst = [w for w in after if w["status"] == "alert"]
+        self.assertTrue(burst, "the hammered seconds must alert on the machine learned from the stream")
+        self.assertTrue(burst[0]["top"]["symbols"] and burst[0]["top"]["pairs"])   # and say why
+        # re-learning swaps the machine in place: the window count runs on, nothing restarts
+        detector, last = tap.detector, tap.detector.last_window
+        tap.detector.swap(stream.calibrate_live(flow_capture(seconds=60, vary=True)))
+        self.assertIs(tap.detector, detector)
+        self.assertEqual(tap.detector.rules.warmup_s, last + 1 + tap.forget_seconds)
+
+    def test_a_saved_machine_is_reused_only_for_the_settings_it_was_learned_with(self):
+        import tempfile
+        from live import stream, worker
+        calibration = stream.calibrate_live(flow_capture(seconds=60, vary=True))
+        path = Path(tempfile.mkdtemp()) / "models" / "pod-api.pkl"
+        saved = worker.save_model(path, calibration, 8.0, 2, "stream")
+        loaded = worker.load_model(path, 8.0, 2)
+        self.assertEqual(loaded["cutoffs"]["windowed"], saved["cutoffs"]["windowed"])
+        self.assertEqual(worker.announce(loaded, 8.0, 2)["train_flows"], len(calibration["train"]))
+        # and it scores a stream exactly as the machine it was saved from does
+        attack = _capture_file(b"", "x.csv")
+        flow_capture(seconds=40, burst=(20, 30), vary=True).to_csv(attack, index=False)
+        strip = lambda verdicts: [(v["peak"], v["status"]) for v in verdicts]
+        self.assertEqual(strip(stream.replay(attack, loaded)), strip(stream.replay(attack, calibration)))
+        self.assertIsNone(worker.load_model(path, 30.0, 2))
+        self.assertIsNone(worker.load_model(path.with_name("absent.pkl"), 8.0, 2))
+
+    def test_monitor_watches_a_replayed_recording_end_to_end(self):
+        import tempfile
+        import time
+        from live.monitor import Monitor
+        from live.taps import ReplayProvider
+        out = Path(tempfile.mkdtemp())
+        provider = ReplayProvider([_stream_capture(seconds=8)], speed=50, out_root=out)
+        self.assertEqual([t["label"] for t in provider.taps()], ["pod-api"])
+        monitor = Monitor(provider)
+        events, past = monitor.subscribe()
+        self.assertEqual(past, [])
+        try:
+            state = monitor.start()
+            self.assertEqual([(t["label"], t["watching"]) for t in state["taps"]], [("pod-api", True)])
+            deadline = time.time() + 60
+            while monitor.taps["pod-api"].state != "ended" and time.time() < deadline:
+                time.sleep(0.1)
+            run = monitor.taps["pod-api"]
+            self.assertEqual(run.state, "ended")          # a recording ending is not a failure to restart
+            self.assertEqual(run.restarts, 0)
+            got = []
+            while not events.empty():
+                got.append(events.get())
+            windows = [e for e in got if e["kind"] == "window"]
+            self.assertEqual(sum(w["packets"] for w in windows), 8)
+            self.assertEqual({w["status"] for w in windows}, {"learning"})   # 8 s is no baseline: counted, not judged
+            self.assertEqual([e["seq"] for e in got], sorted(e["seq"] for e in got))
+            # a page that reconnects gets only what it missed; a new page gets it all, windows apart
+            middle = got[len(got) // 2]["seq"]
+            _, missed = monitor.subscribe(since=middle)
+            self.assertEqual([e["seq"] for e in missed], [e["seq"] for e in got if e["seq"] > middle])
+            _, everything = monitor.subscribe()
+            self.assertEqual(len([e for e in everything if e["kind"] == "window"]), len(windows))
+            snapshot = next(t for t in monitor.state()["taps"] if t["label"] == "pod-api")
+            self.assertEqual((snapshot["state"], snapshot["machine"]), ("ended", "stream"))
+            session = Path(monitor.state()["session"])
+        finally:
+            monitor.shutdown()
+        logged = [json.loads(line) for line in (session / "events.jsonl").read_text().splitlines()]
+        self.assertEqual(len([e for e in logged if e["kind"] == "window"]), len(windows))
+        self.assertTrue(all("pairs" not in e for e in logged))
+        self.assertTrue((session / "attacks.json").exists())
+        self.assertFalse(monitor.taps)
+
+    def test_the_monitor_refuses_what_it_cannot_do(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        from live import serve
+        from live.monitor import Monitor, MonitorError
+        monitor = Monitor(_NoCluster.make())
+        self.assertIsNone(monitor.state()["profile"])
+        for refused in (monitor.start, lambda: monitor.launch("scan", 30), monitor.learn, monitor.stop_attack):
+            with self.assertRaises(MonitorError):
+                refused()
+        server = serve.serve(monitor, port=0, quiet=True)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            def post(path, origin):
+                headers = {"Content-Type": "application/json", **({"Origin": origin} if origin else {})}
+                try:
+                    with urllib.request.urlopen(urllib.request.Request(base + path, data=b"{}", headers=headers),
+                                                timeout=10) as response:
+                        return response.status
+                except urllib.error.HTTPError as error:
+                    return error.code
+            for path in ("/api/attack", "/api/taps/start", "/api/taps/stop", "/api/learn"):
+                self.assertEqual(post(path, "http://evil.example"), 403, path)
+            self.assertEqual(post("/api/taps/stop", base), 200)
+            self.assertEqual(post("/api/attack", None), 400)        # no cluster, so nothing to attack
+            with urllib.request.urlopen(base + "/static/../serve.py", timeout=10) as response:
+                self.fail(f"served a file outside web/: {response.status}")
+        except urllib.error.HTTPError as error:
+            self.assertEqual(error.code, 404)
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":

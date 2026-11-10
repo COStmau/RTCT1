@@ -36,10 +36,12 @@ from viz import layout
 from viz import sources
 from core.data_io import (MANIFEST_NAME, level_from_label, load_manifest, resolve_output,
                      timebase_issues)
-from core.detectors import BENIGN_QUANTILE, PERSISTENCE_WINDOW, persistent_mask
+from core.detectors import BENIGN_QUANTILE, PERSISTENCE_WINDOW
 from core.evaluation import BULK_LABELS
 from core.reporting import CLEAR_WINDOWS
 from core.features import WINDOW_SIZE
+# the detector itself is shared with the live monitor (live/), so it lives outside viz/
+from methods.calibration import RELEASE_SHOWN, WINDOW_STATUSES, WindowRules, calibrate
 from methods.pdfa import (encode, fit_model, load_flow_packets, make_flows, segment_flows,
                           split_flows)
 from methods.scores import (FORGET_SECONDS, TRAIN_COUNTS, FrequencyScorer, WindowedFrequencyScorer,
@@ -51,9 +53,6 @@ from methods.scores import (FORGET_SECONDS, TRAIN_COUNTS, FrequencyScorer, Windo
 THIN_CAPTURE = ("Too few training flows", "Insufficient benign flows")
 DEFAULT_VANTAGE = "pod-lidar"   # its 5 s replay loop is what FORGET_SECONDS was sized for
 HELD_OUT = "benign (held out)"
-# strongest first; "warmup" and "nodata" are insufficient evidence, never "normal"
-WINDOW_STATUSES = ("alert", "flagged", "unseen", "nodata", "warmup", "released", "normal")
-RELEASE_SHOWN = 2           # windows after a release that still say "released"
 MAX_STEP_DETAIL = 400       # merge steps drawn one by one; the rest are counted
 MAX_STREAM = 2000           # training flows shown in the symbol stream
 PAGE_HTML = "state_machine.html"
@@ -80,35 +79,13 @@ def build_page(benign, targets, cluster_captures, vantage, forget_seconds=FORGET
     capture length alone, so it gets no single cutoff: each window is compared with the most
     the whole benign recording reached by the same age.
     """
-    t0 = float(benign["ts"].min())
-    flows, dropped = segment_flows(make_flows(benign), t0)
-    train, holdout = split_flows(flows)
-    events = []
-    model = fit_model(train, trace=events)
+    cal = calibrate(benign, forget_seconds)
+    t0, flows, dropped, train, holdout = (cal["t0"], cal["flows"], cal["dropped"], cal["train"],
+                                          cal["holdout"])
+    model, events, cutoffs, n_windows = cal["model"], cal["events"], cal["cutoffs"], cal["n_windows"]
     if found is None:
         found = topology.infer_cluster(cluster_captures, profile)
 
-    n_windows = n_windows_for(benign)
-    first_held = int((float(holdout["start_ts"].iloc[0]) - t0) // WINDOW_SIZE)
-    warm = frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds)
-    by_age = frequency_scores_by_window(model, flows, t0, n_windows, None)
-    held_traces = score_flows(model, holdout)
-    held_windows = warm[first_held + 1:]
-    held_windows = held_windows[np.isfinite(held_windows)]
-    cutoffs = {
-        "likelihood": score_cutoff(held_traces),
-        "windowed": frequency_cutoff(held_windows),
-        "cumulative_reference": list(pd.Series(by_age).cummax().to_numpy()),
-    }
-    # what each cutoff rests on: a 95th percentile of a dozen windows sits next to their
-    # maximum, so the page shows the sample size and the share of held-out benign it flags
-    cutoffs["calibration"] = {
-        "nominal_rate": BENIGN_QUANTILE,
-        "windowed_windows": int(len(held_windows)),
-        "windowed_benign_rate": float(np.mean(held_windows > cutoffs["windowed"])),
-        "likelihood_traces": len(held_traces),
-        "likelihood_benign_rate": float(np.mean([v < cutoffs["likelihood"] for _, v in held_traces])),
-    }
     # the held-out replay runs on the whole recording so its clock is warm; only the traces
     # ending in the held-out part are kept
     captures = [_capture(HELD_OUT, flows, t0, n_windows, float(benign["ts"].max()) - t0,
@@ -379,26 +356,13 @@ def _windows(traces, n_windows, cutoffs, warmup_s):
     known = np.array(cutoffs["cumulative_reference"][:n_windows], dtype=float)
     reference[:len(known)] = known
     held = np.nan_to_num(cumulative, nan=-np.inf) > np.nan_to_num(reference, nan=np.inf)
-    alert = persistent_mask(flagged).to_numpy()
-    windows, pending, clean, since_release, alerted = [], False, 0, None, False
+    rules = WindowRules(warmup_s)
+    windows = []
     for w in range(n_windows):
-        pending = pending or bool(alert[w])
-        clean = 0 if flagged[w] else clean + 1 if scored[w] else clean
-        released = pending and scored[w] and clean >= CLEAR_WINDOWS
-        if released:
-            pending, since_release = False, 0
-        elif since_release is not None:
-            since_release = since_release + 1 if clean else None
-        status = ("alert" if alert[w] else "flagged" if flagged[w] else "unseen" if unlikely[w]
-                  else "nodata" if not scored[w] else "warmup" if w * WINDOW_SIZE < warmup_s
-                  else "released" if since_release is not None and since_release <= RELEASE_SHOWN
-                  else "normal")
+        verdict = rules.step(w, bool(scored[w]), bool(flagged[w]), bool(unlikely[w]),
+                             bool(held[w]))
         windows.append({"index": w, "peak": peak[w], "flagged": bool(flagged[w]),
-                        "likelihood_flag": bool(unlikely[w]), "alert": bool(alert[w]),
-                        "released": released, "status": status,
-                        "forgetting_shown": bool(alerted and scored[w] and not flagged[w]
-                                                 and held[w])})
-        alerted = alerted or bool(alert[w])
+                        "likelihood_flag": bool(unlikely[w]), **verdict})
     return windows
 
 

@@ -5,15 +5,15 @@ the project virtualenv: `.venv/bin/python`.
 
 ## Try it on your machine
 
-The sponsor's captures are not in this repository. What is here is the page built from
+The provided dataset is not in this repository. What is here is the page built from
 them (`baked_demo/`), and the harness that opens on it and loads your own captures. Pick one:
 
-**1. Just look (nothing to install).** Open `baked_demo/state_machine.html` in a browser. It is
-self-contained and works offline: the cluster map, the state machine learning, and every
-attack replayed through the detector.
+**1. Look only (no install).** Open `baked_demo/state_machine.html` in a browser. The file is
+self-contained and works offline. It shows the cluster map, the state machine learning, and
+every attack replayed through the detector.
 
-**2. Run the harness (Python 3.11 or newer).** One command sets itself up the first time
-(a virtualenv in `.venv`, a few minutes) and opens the page in your browser:
+**2. Run the harness (Python 3.11 or newer).** One command builds a virtualenv in `.venv` on
+the first run. The setup takes a few minutes. The command then opens the page in your browser:
 
 ```bash
 git clone https://github.com/COStmau/RTCT1.git
@@ -21,13 +21,16 @@ cd RTCT1/Threat_Detection
 python3 run.py          # Windows: py -3.11 run.py
 ```
 
-It opens on the baked page. The **Data** tab (see "The harness" below) loads your own
-packet CSVs or pcap/pcapng files and rebuilds every tab from them. `python3 run.py --data
-<folder>` scans a folder on start; `--port`, `--no-open` also work. Ctrl-C stops it.
-No Python 3.11? Get it from [python.org](https://www.python.org/downloads/); on Windows tick
-"Add python.exe to PATH" and use the `py` launcher.
+The harness opens on the baked page. Its **Data** tab loads your own packet CSVs or
+pcap/pcapng files, and rebuilds every tab from them (see "The harness" below).
+`python3 run.py --data <folder>` scans a folder on start. `--port` and `--no-open` also work.
+Press Ctrl-C to stop the harness.
+If you do not have Python 3.11, get it from [python.org](https://www.python.org/downloads/). On
+Windows, tick "Add python.exe to PATH" and use the `py` launcher.
 
-**3. Docker (nothing but Docker).**
+**3. Docker (only Docker needed).**
+
+I haven't been able to test this yet.
 
 ```bash
 cd RTCT1/Threat_Detection
@@ -36,19 +39,20 @@ docker run --rm -p 127.0.0.1:8765:8765 rtct-detect
 # then open http://127.0.0.1:8765/
 ```
 
-To load your captures, mount them and scan on start:
+To load your captures, mount the folder and scan it on start:
 `docker run --rm -p 127.0.0.1:8765:8765 -v "$PWD/captures:/data" rtct-detect python viz/serve.py --host 0.0.0.0 --data /data`
 (PowerShell: `-v "${PWD}/captures:/data"`).
 
-No captures of your own? With Docker and [k3d](https://k3d.io) you can record some from a
-local cluster; see "Collecting new captures" below (macOS/Linux).
+If you have no captures of your own, Docker and [k3d](https://k3d.io) can record some from a
+local cluster. See "Collecting new captures" below (macOS and Linux).
 
-The repository is private: ask Charles to add your GitHub account as a collaborator, or
-the clone asks for a login and then says it is not found. `demo.py` items 1-8 need the
-dataset itself (`local_paths.py`); without it they say so and skip.
+The repository is private. Ask Charles to add your GitHub account as a collaborator. Without
+access, the clone asks for a login and then reports that the repository is not found.
+`demo.py` items 1-8 need the dataset itself (`local_paths.py`). Without the dataset, they
+print a message and skip.
 
-The page is rebuilt into `baked_demo/` with `.venv/bin/python viz/bake.py` on a machine that has
-the captures; it refuses to write if a local path is left in it.
+Rebuild the page into `baked_demo/` with `.venv/bin/python viz/bake.py`, on a machine that has
+the captures. The script refuses to write a page that still holds a local path.
 
 ## How it fits together
 
@@ -62,8 +66,7 @@ packet CSVs ──► data_io ──► features ──► detectors ──► r
 
 `core/data_io.py` → `core/features.py` → `core/detectors.py` → `core/reporting.py`. Nothing
 downstream reaches back upstream, and none of the four import `local_paths.py`, so they are
-portable and testable on their own. That one-way arrow is enforced by a test, not by
-convention: `core/` may not import `methods/`, `viz/`, `convert/`, `demo` or `local_paths`,
+portable and testable on their own. `core/` may not import `methods/`, `viz/`, `convert/`, `demo` or `local_paths`,
 nor anything in `dev/` (`experiments`, `verdicts`, `metrics`, `statemachine`).
 
 ```
@@ -74,7 +77,7 @@ convert/       capture files -> the sponsor's packet CSVs.
 dev/           how it was built and judged: experiments, verdicts, tests, design notes.
 ```
 
-This README covers what ships. Everything under `dev/` (the measurements, the keep-or-drop
+Everything under `dev/` (the measurements, the keep-or-drop
 rules, the unit suite, the progress log and the rearchitecting notes) is mapped in
 [`dev/README.md`](dev/README.md). Nothing outside `dev/` imports from it.
 
@@ -88,7 +91,7 @@ outside itself.
 
 | File | What it does |
 |---|---|
-| `core/__init__.py` | The front door, and the whole subsystem in six calls: `load_capture` → `make_windows` → `split_reference` → `build_detector` → `pipeline` → `annotate`. Its docstring is the shortest correct description of this folder. |
+| `core/__init__.py` | The whole subsystem in six calls: `load_capture` → `make_windows` → `split_reference` → `build_detector` → `pipeline` → `annotate`. Its docstring is the shortest correct description of this folder. |
 | `core/data_io.py` | The input format and where output goes. Names every capture, reads the packet columns, checks the timebase and snaplen saturation, builds and caches the manifest, resolves `outputs/`. |
 | `core/features.py` | Packets → one row per second. The 13 features, the 9 the detectors read by default (`DETECTION_FEATURES`), the ablation groups, and the temporal train/held-out split. Stateless: no baseline, no thresholds, no detection. |
 | `core/detectors.py` | Every detection method behind one interface (each reads `DETECTION_FEATURES` unless built with `features=None`): `fit` → `calibrate` → `score` → `flag`, with optional `explain`. The z-score baseline is median + MAD. Add one by writing a class and adding it to `REGISTRY`. |
@@ -106,7 +109,7 @@ outside itself.
 | `viz/bake.py` | Builds the harness's default bundle from KUBEDATA and writes it, with every local path rewritten to `KUBEDATA/...`, into `baked_demo/`. |
 | `viz/layout.py` | Computed positions for the page: the prefix tree as an icicle, the learned machine in columns. |
 | `viz/serve.py` | The harness: the same page served from a local, standard-library server, so its **Data** tab can load other captures and rebuild. Binds 127.0.0.1 only. Opens already built on today's page when `local_paths.KUBEDATA_ROOT` is set. `demo.py` item 12. See "The harness" below. |
-| `viz/sources.py` | What the harness reads: scans folders (CSV, pcap, pcapng, told by magic number), loads a file as flow packets (converting captures through `convert/`), turns role/tap assignments into a bundle with its provenance, and replays a capture as a stream of 1-second windows (`ReplaySource`; `TapSource` is the stub for a live collector). |
+| `viz/sources.py` | What the harness reads: scans folders (CSV, pcap, pcapng, told by magic number), loads a file as flow packets (converting captures through `convert/`), turns role/tap assignments into a bundle with its provenance, and replays a capture as a stream of 1-second windows (`ReplaySource`, counts only). |
 | `localcluster/collect.py` | A local k3s cluster (k3d on Docker) that records new captures in the KUBEDATA layout: `up`, `run <scenario>`, `all`, `status`, `down`. Two profiles in `localcluster/profiles/`: `lab` (the lab look-alike) and `general` (a generic app on the kubeadm address plan). See "Collecting new captures" below. |
 | `localcluster/traffic.py` | Every workload and attack in those clusters as one stdlib script with modes, mounted into the pods from a ConfigMap. |
 
@@ -137,7 +140,7 @@ independent of it; see "Capture to packet rows" below.
 
 ## Run it
 
-The virtualenv is built once from the pinned runtime:
+Build the virtualenv once from the pinned runtime:
 `python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
 
 ```bash
@@ -164,25 +167,25 @@ The menu, in order:
 12  Harness         the visualization served live: load any captures on its Data tab
 ```
 
-Items 4-7, 9 and 11 run scripts in `dev/`; in a copy without `dev/` they say so and skip.
-The page also builds directly:
+Items 4-7, 9 and 11 run scripts in `dev/`. In a copy without `dev/`, they print a message and
+skip. You can also build the page directly:
 
 ```bash
 .venv/bin/python viz/page.py        # interactive page, every steady tap; --vantage pod-nginx opens on it
 ```
 
-The experiments, the tests and the capture diff run from `dev/`; their commands are in
+The experiments, the tests and the capture diff live in `dev/`. Their commands are in
 `dev/README.md`.
 
-Generated files always land in `Threat_Detection/outputs/`, whichever directory you run
-from. Delete `outputs/capture_manifest.csv` after any dataset change, or the sweep scores
-the previous inventory.
+Generated files always go to `Threat_Detection/outputs/`, whatever directory you start from.
+After you change the dataset, delete `outputs/capture_manifest.csv`. Otherwise the sweep
+scores the previous inventory.
 
 ## The harness
 
-`viz/page.py` bakes one dataset into a static page. The harness serves that page live, so
-someone with other captures (another cluster, another attack) can use it without editing
-code:
+`viz/page.py` bakes one dataset into a static page. The harness serves the same page live. A
+person with other captures (another cluster, another attack) can then use the page without
+editing code:
 
 ```bash
 cd Threat_Detection
@@ -190,36 +193,40 @@ python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once
 .venv/bin/python viz/serve.py --open                                    # or: demo.py 12
 ```
 
-It adds no dependencies. Options: `--port`, `--data <folder>` (scanned when the page opens),
-and `--no-preload` (start empty rather than building today's KUBEDATA page). The page gains
-a first tab, **Data**:
+The harness adds no dependencies. The options are `--port`, `--data <folder>` (a folder that
+the harness scans when the page opens), and `--no-preload` (start empty instead of building
+today's KUBEDATA page). The page gains a first tab, **Data**. Do these steps:
 
-1. **Source.** Load the KUBEDATA manifest (tcp or ptcp), scan any folders (recursively), or
-   drop files onto the page. Uploads go to `outputs/uploads/`.
-2. **Captures.** One row per file. Set its role, level, tap name and scenario:
-   - **benign** trains a tap. The first 70% is learned and the last 30% is held out to set
-     its cutoffs. Every benign capture also draws the cluster map. A tap needs exactly one.
-   - **attack** is replayed against the tap of the same name.
+1. **Source.** Load the KUBEDATA manifest (tcp or ptcp). Or scan folders, which the harness
+   searches recursively. Or drop files onto the page. Uploads go to `outputs/uploads/`.
+2. **Captures.** The table has one row per file. Set the role, level, tap name and scenario of
+   each file.
+   - **benign** trains a tap. The harness learns the first 70% and holds out the last 30% to
+     set that tap's cutoffs. Each benign capture also draws the cluster map. A tap needs
+     exactly one benign capture.
+   - **attack** is replayed against the tap with the same name.
    - **ignore** leaves the file out.
-   - A tap is named `level-name` (`pod-nginx`, `node-child1`, `router-any`). The level tells
+   - A tap name is `level-name` (`pod-nginx`, `node-child1`, `router-any`). The level tells
      the map where the capture listened.
-   Names and folders are used to guess these; check them.
-3. **Cluster profile.** The address plan the map assumes, held in `viz/cluster.ClusterProfile`:
-   pod and service CIDRs, the per-node pod subnet size, control-plane, kubelet and NFS ports,
-   and flannel's `.0`/`.1` rule. `k3s` is the testbed's. `kubeadm` uses 10.244/16 pods and
-   10.96/12 services. Any field can be edited.
+   The harness guesses these values from file names and folders. Check each guess.
+3. **Cluster profile.** The address plan that the map assumes, held in
+   `viz/cluster.ClusterProfile`: pod and service CIDRs, the per-node pod subnet size,
+   the control-plane, kubelet and NFS ports, and flannel's `.0`/`.1` rule. `k3s` is the
+   testbed's plan. `kubeadm` uses 10.244/16 for pods and 10.96/12 for services. You can edit
+   any field.
 4. **Parameters and build.** Set the anomaly clock, the tap to open on, and whether to draw
-   bulk-transfer taps. Build runs the same pipeline the static page does, then the other tabs
-   redraw. **Export static page** writes the result as one offline file (`outputs/harness_export.html`; it never overwrites `state_machine.html`). Its Data tab lists
-   what it was built from.
-5. **Live input (preview).** A capture replayed at 1-200x as a stream of 1-second windows
-   (packets, bytes, flows, new endpoints). It is the contract a live collector will meet;
-   detection is not wired to it yet.
+   bulk-transfer taps. **Build page** runs the same pipeline as the static page. The other
+   tabs then redraw. **Export static page** writes the result to one offline file,
+   `outputs/harness_export.html`. It never overwrites `state_machine.html`. The Data tab of
+   the exported page lists what it was built from.
+5. **Replay as a stream.** A capture replayed at 1-200x as a stream of 1-second windows
+   (packets, bytes, flows, new endpoints). The harness does not score this stream. Scoring
+   live traffic is a separate program, the live monitor (see "Live monitor").
 
 A capture is a packet CSV with `ts, frame_len, src_ip, dst_ip, src_port, dst_port, proto`
-(headers like `Src IP` are accepted), or a pcap/pcapng file. Captures are converted to the
-sponsor's 34-column rows by `convert/` and cached in `outputs/converted/`. With the manifest
-loaded and the default settings, the harness builds exactly the bundle `viz/page.py` writes.
+(headers like `Src IP` are accepted), or a pcap/pcapng file. `convert/` changes captures into
+the sponsor's 34-column rows and caches them in `outputs/converted/`. With the manifest loaded
+and the default settings, the harness builds exactly the bundle that `viz/page.py` writes.
 `HarnessParityChecks` holds it to that.
 
 ## Collecting new captures
@@ -275,6 +282,74 @@ outside the repo.
 - `core/evaluation.BULK_LABELS` drops router-any, node-child4 and pod-robot-controller because
   the *lab* recordings carry bulk transfers. Local recordings don't, so tick "draw bulk-transfer
   taps" in the harness to see those taps.
+
+## Live monitor
+
+The demo above (`viz/`) explains recordings and is kept as it is. Watching a cluster as it runs
+is a separate program, `live/`, with its own server and its own dashboard. The two share the
+detector (`methods/calibration.py`: one calibration, one set of alert and release rules) and
+nothing else, so a live tap and a replayed recording of it can be checked against each other.
+
+```bash
+.venv/bin/python localcluster/collect.py up --profile general
+.venv/bin/python live/serve.py --open                         # http://127.0.0.1:8766
+```
+
+No cluster is needed to try it: recordings can be played back as if they were taps.
+
+```bash
+.venv/bin/python live/serve.py --open --replay ~/rtct-data/general/"http-flood attack"/"pcapng files"/pod-api-tcp.pcap --speed 10
+```
+
+One screen:
+
+- **Cluster:** nodes, pods and services from Kubernetes itself (nothing inferred), with who talked
+  to whom in the last 30 s at the watched taps. Each tap's dot is its latest verdict; click one to
+  follow it.
+- **Taps:** one strip per tap: the windowed score against its cutoff over the last three minutes,
+  the status band under it, attacks shaded. Watch or stop taps one at a time or all at once; pods
+  and nodes are the default (router taps carry every packet between nodes).
+- **The selected tap:** its verdict in words, the trace behind the latest flagged window and who
+  its flows were between (also drawn in red on the map), and what its detector rests on.
+- **Attacks** (local cluster only): the profile's own scenarios for 5-300 s, shaded on every strip.
+  The event log gives each tap's alert latency from the attack's start and its release after the end.
+- **Events:** alerts, releases, attacks, and taps that stopped or stalled.
+
+Where a tap's machine comes from, first that applies: one saved by an earlier run
+(`live/models/<label>.pkl`); the tap's benign recording from `collect.py run benign`, when that is
+newer; otherwise the tap's own stream, whose first 60 s are taken as benign. So a cluster with no
+recording at all can be watched straight away. **Re-learn** does the last of these on demand, for
+one tap or all: the next N seconds are learned from while the old machine keeps scoring, then the
+new one is swapped in. Nothing restarts, and open alerts carry over. Use it whenever benign traffic
+has drifted (a running app's data grows, and response sizes move between bins). It is refused
+while an attack is running, and attacks are refused while a tap is learning.
+
+A tap is two processes, the capture piped into a scoring worker (`live/worker.py watch`), so taps
+score on separate cores. The monitor supervises them: a capture that dies (a pod restarted, a
+dropped `kubectl exec`) is restarted with a growing delay on the pod's new name, a tap that stops
+closing windows is called stalled and then restarted, and one tap failing leaves the rest alone.
+A window scored more than 5 s late is marked `behind`.
+
+Everything a session produced is kept under `~/rtct-data/<profile>/live/`:
+`session-<time>/events.jsonl` (every verdict, alert and attack), `attacks.json`, and, with
+**Record packets** on, each tap's packets in `live attack/pcapng files/<label>-tcp.pcap`, laid out
+so the demo's Data tab or `--replay` can read them back.
+
+| File | What it does |
+|---|---|
+| `methods/calibration.py` | The detector both programs use: `calibrate` (the machine and its cutoffs from benign packets) and `WindowRules` (alert, release and status, one window at a time). |
+| `live/stream.py` | A pcap byte stream (`tcpdump -w -`) read without seeking, closed one second at a time into flows, and scored. Also `replay`, a recording through the same path. |
+| `live/worker.py` | One tap's scoring process: learns or loads its machine, re-learns on command, writes one JSON line per closed second. `pace` plays a recording back as a stream. |
+| `live/taps.py` | Where packets come from, as a small provider interface: the local k3d clusters (`LocalClusterProvider`) or recordings (`ReplayProvider`). A deployed cluster is a third provider. |
+| `live/monitor.py` | The monitor: supervises each tap's processes, keeps the snapshot and the event stream a page needs, launches attacks, writes the session log. |
+| `live/serve.py` | Its server (standard library, 127.0.0.1): the dashboard in `live/web/`, `/api/state`, and `/api/stream`, which resumes from where a page left off. |
+
+One rule has to change for a stream: offline, a 5-tuple whose packets span more than one second
+anywhere in the capture is dropped; live, a flow is kept in its second only if its 5-tuple appeared
+in no earlier second (within 120 s) and in none of the next two. So each window is scored about
+three seconds after it ends, and a tap is always trained on flows cut the live way
+(`live.stream.calibrate_live`). The two rules disagree only on reused 5-tuples, such as DNS lookups
+that reuse a source port half a minute later.
 
 ## Capture to packet rows
 
