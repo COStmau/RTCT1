@@ -5,7 +5,7 @@ the project virtualenv: `.venv/bin/python`.
 
 ## Try it on your machine
 
-The sponsor's captures are not in this repository. What is here is the page built from
+The provided dataset is not in this repository. What is here is the page built from
 them (`baked_demo/`), and the harness that opens on it and loads your own captures. Pick one:
 
 **1. Just look (nothing to install).** Open `baked_demo/state_machine.html` in a browser. It is
