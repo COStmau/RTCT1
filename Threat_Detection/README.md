@@ -64,8 +64,7 @@ packet CSVs ──► data_io ──► features ──► detectors ──► r
 
 `core/data_io.py` → `core/features.py` → `core/detectors.py` → `core/reporting.py`. Nothing
 downstream reaches back upstream, and none of the four import `local_paths.py`, so they are
-portable and testable on their own. That one-way arrow is enforced by a test, not by
-convention: `core/` may not import `methods/`, `viz/`, `convert/`, `demo` or `local_paths`,
+portable and testable on their own. `core/` may not import `methods/`, `viz/`, `convert/`, `demo` or `local_paths`,
 nor anything in `dev/` (`experiments`, `verdicts`, `metrics`, `statemachine`).
 
 ```
@@ -76,7 +75,7 @@ convert/       capture files -> the sponsor's packet CSVs.
 dev/           how it was built and judged: experiments, verdicts, tests, design notes.
 ```
 
-This README covers what ships. Everything under `dev/` (the measurements, the keep-or-drop
+Everything under `dev/` (the measurements, the keep-or-drop
 rules, the unit suite, the progress log and the rearchitecting notes) is mapped in
 [`dev/README.md`](dev/README.md). Nothing outside `dev/` imports from it.
 
@@ -90,7 +89,7 @@ outside itself.
 
 | File | What it does |
 |---|---|
-| `core/__init__.py` | The front door, and the whole subsystem in six calls: `load_capture` → `make_windows` → `split_reference` → `build_detector` → `pipeline` → `annotate`. Its docstring is the shortest correct description of this folder. |
+| `core/__init__.py` | The whole subsystem in six calls: `load_capture` → `make_windows` → `split_reference` → `build_detector` → `pipeline` → `annotate`. Its docstring is the shortest correct description of this folder. |
 | `core/data_io.py` | The input format and where output goes. Names every capture, reads the packet columns, checks the timebase and snaplen saturation, builds and caches the manifest, resolves `outputs/`. |
 | `core/features.py` | Packets → one row per second. The 13 features, the 9 the detectors read by default (`DETECTION_FEATURES`), the ablation groups, and the temporal train/held-out split. Stateless: no baseline, no thresholds, no detection. |
 | `core/detectors.py` | Every detection method behind one interface (each reads `DETECTION_FEATURES` unless built with `features=None`): `fit` → `calibrate` → `score` → `flag`, with optional `explain`. The z-score baseline is median + MAD. Add one by writing a class and adding it to `REGISTRY`. |
