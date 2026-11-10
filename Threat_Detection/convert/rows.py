@@ -189,7 +189,7 @@ def format_cell(value):
 def write_capture_rows(pcap_path, csv_path):
     """Write the capture as a sponsor-format CSV. Returns {'rows': n, 'warnings': [...]}."""
     warnings, rows = [], 0
-    with open(csv_path, "w", newline="") as handle:
+    with open(csv_path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)                # csv's default line ending is \r\n, as theirs
         writer.writerow(COLUMNS)
         for row in capture_rows(pcap_path, warnings):

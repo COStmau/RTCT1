@@ -53,7 +53,7 @@ def load_profile(name):
     folder = HERE / "profiles" / name
     if not (folder / "profile.json").exists():
         raise SystemExit(f"no profile {name!r}; choose one of {', '.join(profile_names())}")
-    profile = json.loads((folder / "profile.json").read_text())
+    profile = json.loads((folder / "profile.json").read_text(encoding="utf-8"))
     profile["name"], profile["folder"] = name, folder
     return profile
 

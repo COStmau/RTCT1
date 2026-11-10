@@ -3712,6 +3712,70 @@ class HarnessParityChecks(unittest.TestCase):
         self.assertEqual(_strip_volatile(harness), _strip_volatile(static))
 
 
+class BakedPageChecks(unittest.TestCase):
+    """baked/ is what a clone with no dataset opens on, so it must load and carry no local path."""
+
+    def test_baked_files_load_and_carry_no_local_path(self):
+        from viz import bake
+        bundle_path = bake.BAKED_DIR / bake.BUNDLE_FILE
+        page_path = bake.BAKED_DIR / bake.PAGE_FILE
+        if not bundle_path.exists():
+            self.skipTest("baked/ not built (run viz/bake.py)")
+        bundle = bake.load_bundle(bundle_path)
+        self.assertTrue(bundle["vantages"])
+        self.assertIn(bundle["selected"], bundle["vantages"])
+        for f in bundle["source"]["files"]:
+            self.assertTrue(f["path"].startswith("KUBEDATA/"), f["path"])
+        self.assertEqual(bake.leaks(json.dumps(bundle)), [])
+        self.assertEqual(bake.leaks(page_path.read_text(encoding="utf-8")), [])
+
+    def test_scrub_rewrites_paths_under_the_root(self):
+        import tempfile
+        from viz import bake
+        root = Path(tempfile.mkdtemp()) / "KUBEDATA-somewhere"
+        inside = root / "benign" / "csv files" / "pod-web-tcp.csv"
+        bundle = {"source": {"files": [{"name": inside.name, "path": str(inside)},
+                                       {"name": "x.csv", "path": "/elsewhere/x.csv"}],
+                             "notes": [f"read {root}/benign"]},
+                  "vantages": {}}
+        clean = bake.scrub(bundle, str(root))
+        self.assertEqual(clean["source"]["files"][0]["path"],
+                         "KUBEDATA/benign/csv files/pod-web-tcp.csv")
+        self.assertEqual(clean["source"]["files"][1]["path"], "x.csv")
+        self.assertNotIn(str(root), json.dumps(clean))
+        self.assertTrue(bake.leaks(str(Path.home() / "x")))
+
+    def test_harness_opens_on_a_saved_bundle(self):
+        import gzip
+        import tempfile
+        import threading
+        import urllib.request
+        from viz import serve
+        folder = Path(tempfile.mkdtemp())
+        saved = folder / "bundle.json.gz"
+        bundle = sources.build([{"path": str(_write_csv(flow_capture(), folder, "pod-web-tcp.csv")),
+                                 "role": "benign", "level": "pod", "vantage": "pod-web"}])
+        saved.write_bytes(gzip.compress(viz.to_json(bundle).encode("utf-8")))
+        harness = serve.Harness(quiet=True)
+        harness.load(saved)
+        server = serve.serve(harness, port=0, host="127.0.0.1")
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            with urllib.request.urlopen(base + "/api/state", timeout=30) as response:
+                state = json.loads(response.read().decode("utf-8"))
+            self.assertTrue(state["has_bundle"])
+            self.assertEqual(state["source"]["drawn"], ["pod-web"])
+            with urllib.request.urlopen(base + "/", timeout=30) as response:
+                self.assertNotIn("window.VIZ = null;", response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            server.server_close()
+        with self.assertRaises(ValueError):
+            (folder / "not.json").write_text("{}", encoding="utf-8")
+            harness.load(folder / "not.json")
+
+
 class HarnessServerChecks(_OutputsInTemp, unittest.TestCase):
     """The local server: one request per route, on a free port, against fixture captures."""
 

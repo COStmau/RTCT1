@@ -552,8 +552,16 @@ def main(argv=None, manifest=None):
     args = parser.parse_args(argv)
 
     if manifest is None:
-        import local_paths
-        manifest = load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest)
+        try:
+            import local_paths
+            root = getattr(local_paths, "KUBEDATA_ROOT", "")
+        except ImportError:
+            root = ""
+        if not root:
+            raise ValueError("Building the page needs the KUBEDATA captures (KUBEDATA_ROOT in "
+                             "local_paths.py). Without them, baked/state_machine.html is this "
+                             "page already built.")
+        manifest = load_manifest(root, name=args.manifest)
     cluster_captures = benign_captures(manifest, args.method)
     vantages = list(args.vantages or steady_vantages(cluster_captures, args.allow_bulk))
     if args.vantage and args.vantage not in vantages:

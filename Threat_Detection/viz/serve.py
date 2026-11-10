@@ -9,6 +9,9 @@ Run it with:  .venv/bin/python viz/serve.py                 (opens on today's pa
                                                             local_paths.KUBEDATA_ROOT is set)
               .venv/bin/python viz/serve.py --open --data ~/captures
               .venv/bin/python viz/serve.py --no-preload --port 9000
+              .venv/bin/python viz/serve.py --bundle baked/bundle.json.gz
+
+With no KUBEDATA_ROOT (a fresh clone), it opens on the baked page in baked/bundle.json.gz.
 
 Python standard library only. It binds 127.0.0.1: it reads any path you type into it, so it
 is a tool for the machine it runs on, never a service to expose.
@@ -43,6 +46,9 @@ from viz import page
 from viz import sources
 
 HOST = "127.0.0.1"
+BAKED_BUNDLE = Path(__file__).resolve().parents[1] / "baked" / "bundle.json.gz"
+BAKED_NOTE = ("Opened on the baked KUBEDATA page; the raw captures are not included. "
+              "Load your own captures on this tab and Build to replace it.")
 EXPORT_HTML = "harness_export.html"   # never state_machine.html: that is viz/page.py's page
 DEFAULT_PORT = 8765
 MAX_UPLOAD = 2 * 1024 ** 3        # bytes; captures are large, but not unbounded
@@ -58,7 +64,7 @@ def recorded_preset(root):
     if not root:
         return None
     try:
-        name = json.loads((Path(root).expanduser() / "profile.json").read_text()).get("harness_profile")
+        name = json.loads((Path(root).expanduser() / "profile.json").read_text(encoding="utf-8")).get("harness_profile")
     except (OSError, ValueError, AttributeError):
         return None
     return name if name in topology.PROFILES else None
@@ -74,7 +80,8 @@ class Harness:
         self.manifest_name = manifest_name
         self.session = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.lock = threading.Lock()
-        self.notes = []
+        self.notes = []   # problems, shown as an error on the Data tab
+        self.info = []    # plain remarks, shown beside its note
         self.initial_scan = ""
 
     def manifest_rows(self, root=None, method="tcp"):
@@ -93,6 +100,16 @@ class Harness:
         """Build today's default page from KUBEDATA, so the harness opens where the demo does."""
         rows = self.manifest_rows()
         bundle = sources.build(rows, origin="KUBEDATA manifest")
+        with self.lock:
+            self.bundle = bundle
+        return bundle
+
+    def load(self, path):
+        """Open on a bundle saved by viz/bake.py (.json or .json.gz), with no dataset needed."""
+        from viz.bake import load_bundle
+        bundle = load_bundle(path)
+        if "vantages" not in bundle:
+            raise ValueError(f"{path} is not a page bundle")
         with self.lock:
             self.bundle = bundle
         return bundle
@@ -116,7 +133,7 @@ class Harness:
                              "upload_folder": str(sources.resolve_output(sources.UPLOAD_DIR) / self.session),
                              "scan": self.initial_scan},
                 "roles": list(sources.ROLES), "levels": ["pod", "node", "router"],
-                "notes": self.notes}
+                "notes": self.notes, "info": self.info}
 
 
 def make_handler(harness):
@@ -266,9 +283,13 @@ def make_handler(harness):
     return Handler
 
 
-def serve(harness, port=DEFAULT_PORT):
-    """A server bound to 127.0.0.1 (port 0 picks a free one). Call serve_forever() on it."""
-    server = ThreadingHTTPServer((HOST, port), make_handler(harness))
+def serve(harness, port=DEFAULT_PORT, host=HOST):
+    """A server bound to `host`, 127.0.0.1 by default (port 0 picks a free one).
+
+    Call serve_forever() on it. Only the Docker image binds 0.0.0.0, inside its container,
+    and its README publishes the port on the host's 127.0.0.1 alone.
+    """
+    server = ThreadingHTTPServer((host, port), make_handler(harness))
     server.daemon_threads = True
     return server
 
@@ -283,6 +304,11 @@ def main(argv=None):
                         help="start empty instead of building today's KUBEDATA page")
     parser.add_argument("--data", default=None, help="a folder to scan when the page opens")
     parser.add_argument("--manifest", default=MANIFEST_NAME)
+    parser.add_argument("--bundle", default=None,
+                        help="open on a saved bundle (.json or .json.gz) instead of building one; "
+                             "defaults to baked/bundle.json.gz when there is no KUBEDATA_ROOT")
+    parser.add_argument("--host", default=HOST,
+                        help="address to bind (default 127.0.0.1; the Docker image uses 0.0.0.0)")
     args = parser.parse_args(argv)
 
     root = None
@@ -294,7 +320,18 @@ def main(argv=None):
     harness = Harness(root, args.manifest)
     if args.data:
         harness.initial_scan = str(Path(args.data).expanduser())
-    if root and not args.no_preload:
+    bundle_path = args.bundle or (None if root or args.no_preload or not BAKED_BUNDLE.is_file()
+                                  else BAKED_BUNDLE)
+    if bundle_path:
+        try:
+            built = harness.load(bundle_path)
+            if Path(bundle_path).resolve() == BAKED_BUNDLE:
+                harness.info.append(BAKED_NOTE)
+            print(f"Opened {bundle_path}: {len(built['vantages'])} taps, opens on {built['selected']}")
+        except (OSError, ValueError) as error:
+            harness.notes.append(f"Could not open {bundle_path}: {error}")
+            print(f"  could not open {bundle_path}: {error}")
+    elif root and not args.no_preload:
         print(f"Building today's page from {root} (pass --no-preload to skip) ...")
         try:
             built = harness.preload()
@@ -302,8 +339,8 @@ def main(argv=None):
         except Exception as error:   # the harness still opens; the Data tab says why
             harness.notes.append(f"Preload failed: {error}")
             print(f"  preload failed: {error}")
-    server = serve(harness, args.port)
-    url = f"http://{HOST}:{server.server_address[1]}/"
+    server = serve(harness, args.port, args.host)
+    url = f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '') else args.host}:{server.server_address[1]}/"
     print(f"Harness at {url}  (Ctrl-C to stop)")
     if args.open:
         webbrowser.open(url)

@@ -3,6 +3,53 @@
 Offline analysis of the KUBEDATA packet captures. Run everything from this folder with
 the project virtualenv: `.venv/bin/python`.
 
+## Try it on your machine
+
+The sponsor's captures are not in this repository. What is here is the page built from
+them (`baked/`), and the harness that opens on it and loads your own captures. Pick one:
+
+**1. Just look (nothing to install).** Open `baked/state_machine.html` in a browser. It is
+self-contained and works offline: the cluster map, the state machine learning, and every
+attack replayed through the detector.
+
+**2. Run the harness (Python 3.11 or newer).** One command sets itself up the first time
+(a virtualenv in `.venv`, a few minutes) and opens the page in your browser:
+
+```bash
+git clone -b Charles https://github.com/COStmau/RTCT1.git
+cd RTCT1/Threat_Detection
+python3 run.py          # Windows: py -3.11 run.py
+```
+
+It opens on the baked page. The **Data** tab (see "The harness" below) loads your own
+packet CSVs or pcap/pcapng files and rebuilds every tab from them. `python3 run.py --data
+<folder>` scans a folder on start; `--port`, `--no-open` also work. Ctrl-C stops it.
+No Python 3.11? Get it from [python.org](https://www.python.org/downloads/); on Windows tick
+"Add python.exe to PATH" and use the `py` launcher.
+
+**3. Docker (nothing but Docker).**
+
+```bash
+cd RTCT1/Threat_Detection
+docker build -t rtct-detect .
+docker run --rm -p 127.0.0.1:8765:8765 rtct-detect
+# then open http://127.0.0.1:8765/
+```
+
+To load your captures, mount them and scan on start:
+`docker run --rm -p 127.0.0.1:8765:8765 -v "$PWD/captures:/data" rtct-detect python viz/serve.py --host 0.0.0.0 --data /data`
+(PowerShell: `-v "${PWD}/captures:/data"`).
+
+No captures of your own? With Docker and [k3d](https://k3d.io) you can record some from a
+local cluster; see "Collecting new captures" below (macOS/Linux).
+
+The repository is private: ask Charles to add your GitHub account as a collaborator, or
+the clone asks for a login and then says it is not found. `demo.py` items 1-8 need the
+dataset itself (`local_paths.py`); without it they say so and skip.
+
+The page is rebuilt into `baked/` with `.venv/bin/python viz/bake.py` on a machine that has
+the captures; it refuses to write if a local path is left in it.
+
 ## How it fits together
 
 Data flows one way through four layers, and each layer only knows the one below it:
@@ -56,6 +103,7 @@ outside itself.
 |---|---|
 | `viz/page.py` | The state machine as one interactive page, `outputs/state_machine.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). One page carries every steady capture tap (`--vantages` to choose; `--vantage` picks the one it opens on): click a tap on the map or use the header picker to switch the learning and detection acts, and the Detection tab's *Across taps* view lines one scenario up at every tap on a shared capture-time axis. Self-contained (about 3 MB for the 8 steady taps; past 15 MB the other taps' per-trace breakdown is dropped); opens offline. `demo.py` item 10. The renderer is `viz/template/`. Bulk-transfer vantages (`core/evaluation.BULK_LABELS`) never set a cutoff, so they are left out unless `--allow-bulk`, and the page then marks their verdicts as inspection only. Each cutoff shows how many held-out windows it rests on and how often it actually flags them; capture text is HTML-escaped in the bundle. |
 | `viz/cluster.py` | The k3s cluster's shape inferred from benign traffic: nodes, pods (including host-network ones), services, conversations and where each capture listened. |
+| `viz/bake.py` | Builds the harness's default bundle from KUBEDATA and writes it, with every local path rewritten to `KUBEDATA/...`, into `baked/`. |
 | `viz/layout.py` | Computed positions for the page: the prefix tree as an icicle, the learned machine in columns. |
 | `viz/serve.py` | The harness: the same page served from a local, standard-library server, so its **Data** tab can load other captures and rebuild. Binds 127.0.0.1 only. Opens already built on today's page when `local_paths.KUBEDATA_ROOT` is set. `demo.py` item 12. See "The harness" below. |
 | `viz/sources.py` | What the harness reads: scans folders (CSV, pcap, pcapng, told by magic number), loads a file as flow packets (converting captures through `convert/`), turns role/tap assignments into a bundle with its provenance, and replays a capture as a stream of 1-second windows (`ReplaySource`; `TapSource` is the stub for a live collector). |
@@ -79,6 +127,9 @@ independent of it; see "Capture to packet rows" below.
 | `demo.py` | A menu over the whole subsystem. Items 1-3 are presentations (pair demo, plain-language walkthrough, state machine); 4-7 run experiments from `dev/`; 8 regenerates every artifact; 9 runs the tests (`dev/tests.py`); 10 builds the interactive state-machine visualization page; 11 summarizes the last capture-conversion diff; 12 starts the harness (`viz/serve.py`). |
 | `local_paths.py` | Your local dataset paths. Not committed; copy `local_paths.example.py` and fill it in. Only the entry points and experiments read it, never `core/`. |
 | `dev/` | Development material, not shipped: experiments, verdicts, tests and design notes. Mapped in `dev/README.md`. |
+| `run.py` | The one-command start for any machine: makes `.venv`, installs `requirements.txt` once, opens the harness. Standard library only. See "Try it on your machine". |
+| `baked/` | The KUBEDATA page, prebuilt and with no capture data: `state_machine.html` (opens offline) and `bundle.json.gz` (what the harness opens on when there is no `KUBEDATA_ROOT`). Written by `viz/bake.py`. |
+| `Dockerfile` | The harness in a container, for a machine with only Docker. |
 | `requirements.txt` | The pinned runtime: Python 3.11 with numpy, pandas, matplotlib and scikit-learn at the versions the numbers were measured under. |
 | `EVENT_LOG.md` | The detection → response event contract (`LogV1`, carries the capture-relative second). |
 | `outputs/` | Everything generated. Safe to delete; `demo.py` item 8 rebuilds it. `outputs/SHOWCASE.md` is every measured result as one file. |
@@ -90,7 +141,7 @@ The virtualenv is built once from the pinned runtime:
 `python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
 
 ```bash
-cd /Users/cos/Documents/school/ECEN403/RTCT1/Threat_Detection
+cd Threat_Detection
 .venv/bin/python demo.py            # menu
 .venv/bin/python demo.py 2          # one item, no menu
 .venv/bin/python demo.py all        # sweep, ablation, compare, features, then the report

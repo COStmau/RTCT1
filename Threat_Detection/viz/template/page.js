@@ -1880,6 +1880,7 @@ async function dataInit() {
       data.allowBulk = state.source.allow_bulk;
       data.note = `Showing the ${state.source.files.length} captures the current page was built from (${esc(state.source.origin)}).`;
     }
+    if ((state.info || []).length) data.note = [data.note, ...state.info.map(esc)].filter(Boolean).join(" ");
     if ((state.notes || []).length) data.error = state.notes.join(" ");
     if (state.defaults.scan) { data.scanPath = state.defaults.scan; await dataScan(); return; }
   } catch (e) {
