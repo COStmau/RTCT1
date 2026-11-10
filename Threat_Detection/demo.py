@@ -37,7 +37,7 @@ DETECTOR = "z_score"
 
 
 NO_DATA = ("This item needs the KUBEDATA captures, set in local_paths.py (copy "
-           "local_paths.example.py). Without them: open baked/state_machine.html, or run "
+           "local_paths.example.py). Without them: open baked_demo/state_machine.html, or run "
            "`python run.py` (item 12) for the harness on the baked page.")
 
 

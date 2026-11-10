@@ -1,4 +1,4 @@
-# baked/
+# baked_demo/
 
 The results of the KUBEDATA build, precomputed so that a clone with no dataset still has
 something to look at. No raw capture is in here.

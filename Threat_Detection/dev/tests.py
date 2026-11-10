@@ -3713,14 +3713,14 @@ class HarnessParityChecks(unittest.TestCase):
 
 
 class BakedPageChecks(unittest.TestCase):
-    """baked/ is what a clone with no dataset opens on, so it must load and carry no local path."""
+    """baked_demo/ is what a clone with no dataset opens on, so it must load and carry no local path."""
 
     def test_baked_files_load_and_carry_no_local_path(self):
         from viz import bake
         bundle_path = bake.BAKED_DIR / bake.BUNDLE_FILE
         page_path = bake.BAKED_DIR / bake.PAGE_FILE
         if not bundle_path.exists():
-            self.skipTest("baked/ not built (run viz/bake.py)")
+            self.skipTest("baked_demo/ not built (run viz/bake.py)")
         bundle = bake.load_bundle(bundle_path)
         self.assertTrue(bundle["vantages"])
         self.assertIn(bundle["selected"], bundle["vantages"])

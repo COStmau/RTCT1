@@ -7,4 +7,4 @@
 ## Try the threat detection demo
 
 See [Threat_Detection/README.md](Threat_Detection/README.md#try-it-on-your-machine):
-open `Threat_Detection/baked/state_machine.html`, or run `python3 run.py` in `Threat_Detection/`.
+open `Threat_Detection/baked_demo/state_machine.html`, or run `python3 run.py` in `Threat_Detection/`.
