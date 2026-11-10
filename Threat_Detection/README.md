@@ -16,7 +16,7 @@ attack replayed through the detector.
 (a virtualenv in `.venv`, a few minutes) and opens the page in your browser:
 
 ```bash
-git clone -b Charles https://github.com/COStmau/RTCT1.git
+git clone https://github.com/COStmau/RTCT1.git
 cd RTCT1/Threat_Detection
 python3 run.py          # Windows: py -3.11 run.py
 ```
