@@ -110,7 +110,7 @@ def pta_to_pdfa_map(pdfa, nodes):
     return mapping
 
 
-def settled_steps(nodes, steps):
+def settled_steps(nodes, steps, root=None):
     """{prefix-tree id: the step after which it belongs to a kept (red) state; 0 = from start}.
 
     Replays the red-blue steps on the prefix tree's ids with the same fold as
@@ -118,33 +118,62 @@ def settled_steps(nodes, steps):
     candidate's children only fold into that red state's children, which may still be
     candidates themselves, so they settle later, when their own group turns red or folds into
     a red one. Colouring a merged subtree at once would show states that do not exist yet.
+
+    The replay mirrors the learner move for move, ids standing for its node objects: a folded
+    state is never deleted (the learner's stale references stay valid too, and once merges
+    make loops a fold can reach them again), a state folded into itself is skipped, and a
+    candidate's owner is found the way the learner's fringe finds it, by scanning the red
+    states in the order they turned red.
+
+    Child order matters: when two folds add the same symbol to a state, the first one wins,
+    and the learner walks each state's children in insertion order (the order the symbols
+    first appeared in the traces), not sorted. Pass the prefix tree `root` the nodes were
+    laid out from (icicle(root)) so the replay uses that order; without it, symbol order is
+    assumed, which only agrees when no fold adds a symbol twice.
     """
+    by_path = {node["path"]: node["id"] for node in nodes}
     children = {node["id"]: {} for node in nodes}
-    parent = {}
-    for node in nodes:
-        if node["parent"] is not None:
-            children[node["parent"]][node["symbol"]] = node["id"]
-            parent[node["id"]] = (node["parent"], node["symbol"])
+    if root is not None:
+        stack = [(root, ())]
+        while stack:
+            source, path = stack.pop()
+            for symbol, child in source.children.items():   # insertion order, as learned
+                children[by_path[path]][symbol] = by_path[path + (symbol,)]
+                stack.append((child, path + (symbol,)))
+    else:
+        for node in nodes:
+            if node["parent"] is not None:
+                children[node["parent"]][node["symbol"]] = node["id"]
     members = {node["id"]: {node["id"]} for node in nodes}
-    red = {nodes[0]["id"]}
+    red = [nodes[0]["id"]]
     settled = {nodes[0]["id"]: 0}
 
     def fold(target, other):
-        members[target] |= members.pop(other)
-        for symbol, child in list(children.pop(other).items()):
+        if target == other:          # as methods.pdfa._fold_into
+            return
+        members[target] |= members[other]
+        for symbol, child in list(children[other].items()):
             if symbol in children[target]:
                 fold(children[target][symbol], child)
             else:
                 children[target][symbol] = child
-                parent[child] = (target, symbol)
+
+    def owner_of(blue):
+        """The red state and symbol whose edge leads to `blue`, as the learner's fringe[0]."""
+        reds = set(red)
+        for state in red:
+            for symbol, child in sorted(children[state].items()):
+                if child == blue and child not in reds:
+                    return state, symbol
+        raise ValueError(f"candidate {blue} hangs off no kept state; the steps do not replay")
 
     for index, step in enumerate(steps, start=1):
         blue, target = step["blue"], step["red"]
         if step["kind"] == "promote":
-            red.add(blue)
+            red.append(blue)
             newly = members[blue]
         else:
-            owner, symbol = parent[blue]
+            owner, symbol = owner_of(blue)
             children[owner][symbol] = target
             fold(target, blue)
             newly = members[target]

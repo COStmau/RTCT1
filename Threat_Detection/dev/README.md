@@ -66,7 +66,7 @@ applying it. They exist so a verdict cannot be chosen after seeing the numbers.
 ## Run it
 
 ```bash
-cd /Users/cos/Documents/school/ECEN403/RTCT1/Threat_Detection
+cd Threat_Detection
 .venv/bin/python dev/tests.py                                       # the unit suite
 .venv/bin/python dev/experiments/sweep.py                           # all 88 captures, about 8 seconds
 .venv/bin/python dev/experiments/sweep.py --groups volume,size_timing,diversity,flags,protocol --out ablation_results.csv

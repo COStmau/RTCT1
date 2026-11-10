@@ -1,0 +1,27 @@
+{
+  "description": "The lab look-alike: the KUBEDATA taps, nodes and pods, with stand-in workloads.",
+  "cluster": "rtct-lab",
+  "namespace": "rtct",
+  "harness_profile": "k3s",
+  "cidrs": {"pod": "10.42.0.0/16", "service": "10.43.0.0/16"},
+  "nodes": {"server-0": "child4", "agent-0": "child1", "agent-1": "child2", "agent-2": "gchild9"},
+  "attack_node": "child2",
+  "workloads": [
+    {"name": "nginx", "image": "nginx", "node": "child4", "tap": true,
+     "ports": [{"port": 80}]},
+    {"name": "robot-controller", "mode": "controller", "node": "child4", "host_network": true,
+     "tap": true, "ports": [{"port": 8080}, {"port": 7400, "protocol": "UDP"}]},
+    {"name": "lidar", "mode": "lidar", "node": "child1", "tap": true},
+    {"name": "camera", "mode": "camera", "node": "child2", "tap": true},
+    {"name": "robot-hardware", "mode": "hardware", "node": "gchild9", "tap": true}
+  ],
+  "attacks": {
+    "http-flood": {"kind": "job", "mode": "flood-http",
+                   "args": {"url_host": "nginx", "port": 80, "threads": 16}},
+    "scan": {"kind": "scan", "targets": ["10.42.0.0/22", "10.43.0.0/24"]},
+    "lateral": {"kind": "exec", "from": "camera", "mode": "lateral",
+                "args": {"targets": "kubernetes.default:443,nginx:8080,robot-controller:22,kube-dns.kube-system:9153"}},
+    "sensor-flood": {"kind": "job", "mode": "flood-udp",
+                     "args": {"host": "robot-controller", "port": 7400, "rate": 600}}
+  }
+}

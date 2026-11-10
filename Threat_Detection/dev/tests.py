@@ -44,6 +44,7 @@ from verdicts import root_count as root_verdict
 from viz import cluster
 from viz import layout
 from viz import page as viz
+from viz import sources
 
 # The pre-refactor function names, mapped onto their layer homes. The old
 # DetectorChecks class pins behavior through these aliases so the assertions read the same
@@ -404,6 +405,7 @@ class EntryPointChecks(unittest.TestCase):
 
     ENTRY_POINTS = {
         "viz/page.py": "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))",
+        "viz/serve.py": "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))",
         **{f"dev/experiments/{name}.py":
            "sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).resolve().parents[1])]"
            for name in ("compare", "cv_calibration", "feature_set", "feature_value", "flag_scores",
@@ -2464,6 +2466,19 @@ class VizBundleChecks(unittest.TestCase):
         bundle = viz.build_pages(inputs, captures)
         self.assertEqual(bundle["absent"], {"pod-nginx": "not chosen", bulk: "bulk transfer"})
 
+    def test_thin_tap_is_left_off_not_fatal(self):
+        """A benign capture with a handful of long-lived connections (a redis pool) has too few
+        flows to learn from; the page drops that tap with the reason instead of failing, and
+        only fails when no tap at all can be learned."""
+        thin = self.benign[self.benign["ts"] < self.benign["ts"].min() + 0.5].head(3)
+        captures = {"pod-lidar": self.benign, "pod-redis": thin}
+        inputs = {"pod-lidar": (self.benign, {"flood": self.attack}), "pod-redis": (thin, {})}
+        bundle = viz.build_pages(inputs, captures)
+        self.assertEqual(list(bundle["vantages"]), ["pod-lidar"])
+        self.assertEqual(bundle["absent"].get("pod-redis"), "too few flows")
+        with self.assertRaisesRegex(ValueError, "No tap could be learned"):
+            viz.build_pages({"pod-redis": (thin, {})}, captures)
+
     def test_captures_carry_their_first_packet_time(self):
         """Taps record side by side; the page lines one scenario up across them on t0."""
         bundle, inputs, _ = self.two_vantages()
@@ -3499,6 +3514,545 @@ class PcapCorpusChecks(unittest.TestCase):
                 pcap_rows.write_capture_rows(pcap, regenerated)
                 pd.testing.assert_frame_equal(make_windows(data_io.load_capture(str(regenerated))),
                                               make_windows(data_io.load_capture(str(csv_path))))
+
+
+# --- The harness: profiles, sources, the local server --------------------------------------
+
+def _write_csv(frame, folder, name):
+    path = Path(folder) / name
+    frame.to_csv(path, index=False)
+    return path
+
+
+def _strip_volatile(bundle):
+    """A bundle as JSON with build times and provenance removed, for equality checks."""
+    parsed = json.loads(viz.to_json(bundle))
+    parsed.pop("source", None)
+    for block in parsed["vantages"].values():
+        block["meta"].pop("generated", None)
+    return parsed
+
+
+class _OutputsInTemp:
+    """Point outputs/ (uploads, converted captures, the exported page) at a temp folder."""
+
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+        from viz import sources
+        self.out = Path(tempfile.mkdtemp())
+        resolve = lambda name=None: self.out / name if name else self.out
+        self.patches = [mock.patch.object(sources, "resolve_output", resolve),
+                        mock.patch.object(viz, "resolve_output", resolve)]
+        for patch in self.patches:
+            patch.start()
+
+    def tearDown(self):
+        for patch in self.patches:
+            patch.stop()
+
+
+class ClusterProfileChecks(unittest.TestCase):
+    """The k3s address plan became a profile; the default must change nothing."""
+
+    def test_default_profile_is_todays_inference(self):
+        captures = ClusterChecks().captures()
+        found = cluster.infer_cluster(captures)
+        again = cluster.infer_cluster(captures, cluster.K3S)
+        self.assertEqual(found, again)
+        self.assertEqual(found["profile"]["name"], "k3s")
+        self.assertEqual(found["networks"], cluster.NETWORKS)
+
+    def test_kubeadm_preset_moves_the_pod_range(self):
+        self.assertEqual(cluster.classify("10.244.1.5", cluster.KUBEADM), "pod")
+        self.assertEqual(cluster.classify("10.42.1.5", cluster.KUBEADM), "private")
+        self.assertEqual(cluster.classify("10.96.0.10", cluster.KUBEADM), "service")
+        self.assertEqual(cluster.classify("10.42.1.5"), "pod")
+
+    def test_profile_round_trips_and_validates(self):
+        for profile in cluster.PROFILES.values():
+            self.assertEqual(cluster.profile_from_dict(profile.to_dict()), profile)
+        custom = cluster.profile_from_dict({"pod_cidrs": "10.1.0.0/16, 10.2.0.0/16",
+                                            "control_plane_ports": "6443 2379"})
+        self.assertEqual(custom.pod_cidrs, ("10.1.0.0/16", "10.2.0.0/16"))
+        self.assertEqual(custom.control_plane_ports, (6443, 2379))
+        with self.assertRaises(ValueError):
+            cluster.profile_from_dict({"pod_cidrs": ["10.300.0.0/16"]})
+        with self.assertRaises(ValueError):
+            cluster.profile_from_dict({"pods": ["10.1.0.0/16"]})
+
+    def test_locate_uses_the_profile_the_cluster_was_built_with(self):
+        captures = {"pod-a": flow_capture()}
+        found = cluster.infer_cluster(captures, cluster.KUBEADM)
+        self.assertEqual(cluster.locate(found, "10.244.3.9")["kind"], "pod")
+        self.assertEqual(cluster.locate(found, "10.42.3.9")["kind"], "lan")
+
+
+class SourceChecks(_OutputsInTemp, unittest.TestCase):
+    """Files in: what scan reports, what load accepts, and how assignments become a page."""
+
+    def test_scan_tells_captures_by_magic_and_guesses_roles(self):
+        import tempfile
+        root = Path(tempfile.mkdtemp())
+        (root / "benign" / "csv files").mkdir(parents=True)
+        (root / "nginx attack" / "csv files").mkdir(parents=True)
+        _write_csv(flow_capture(), root / "benign" / "csv files", "pod-web-tcp.csv")
+        _write_csv(flow_capture(), root / "nginx attack" / "csv files", "pod-web-tcp.csv")
+        (root / "odd.csv").write_bytes(_pcap_bytes([(1, 0, b"x" * 20, 20)]))   # a pcap named .csv
+        rows = {(Path(r["path"]).parent.parent.name, r["name"]): r for r in sources.scan(root)}
+        benign = rows[("benign", "pod-web-tcp.csv")]
+        attack = rows[("nginx attack", "pod-web-tcp.csv")]
+        self.assertEqual((benign["role"], benign["vantage"], benign["level"], benign["method"]),
+                         ("benign", "web", "pod", "tcp"))
+        self.assertEqual((attack["role"], attack["scenario"]), ("attack", "nginx attack"))
+        odd = next(r for r in rows.values() if r["name"] == "odd.csv")
+        self.assertEqual(odd["kind"], "pcap")
+        with self.assertRaises(ValueError):
+            sources.scan(root / "missing")
+
+    def test_a_csv_without_flow_columns_is_named_not_crashed(self):
+        import tempfile
+        folder = Path(tempfile.mkdtemp())
+        path = _write_csv(flow_capture().drop(columns=["dst_port"]), folder, "short.csv")
+        self.assertIn("dst_port", sources.describe_file(path)["problem"])
+        with self.assertRaisesRegex(ValueError, "dst_port"):
+            sources.load_packets(path)
+
+    def test_header_spelling_is_forgiven(self):
+        import tempfile
+        frame = flow_capture().rename(columns={"src_ip": "Src IP", "frame_len": "Frame Len"})
+        path = _write_csv(frame, tempfile.mkdtemp(), "spelled.csv")
+        loaded = sources.load_packets(path)
+        self.assertEqual(list(loaded.columns), statemachine.FLOW_COLUMNS)
+
+    def test_a_pcap_is_converted_then_loaded(self):
+        frames = [(1000 + s, 0, _sll2(_ipv4(_tcp(40000 + s, 80), 6, "10.42.0.5", "10.43.0.1"), 0x0800), 60)
+                  for s in range(5)]
+        path = _capture_file(_pcap_bytes(frames), "pod-x-tcp.pcapng")
+        loaded = sources.load_packets(path)
+        self.assertEqual(len(loaded), 5)
+        self.assertEqual(set(loaded["dst_ip"]), {"10.43.0.1"})
+        self.assertTrue(any((self.out / sources.CONVERTED_DIR).iterdir()))
+
+    def test_build_records_what_it_was_built_from(self):
+        import tempfile
+        folder = Path(tempfile.mkdtemp())
+        benign = _write_csv(flow_capture(), folder, "b.csv")
+        attack = _write_csv(flow_capture(burst=(20, 25)), folder, "a.csv")
+        rows = [{"path": str(benign), "role": "benign", "vantage": "web", "level": "pod"},
+                {"path": str(attack), "role": "attack", "vantage": "web", "level": "pod",
+                 "scenario": "flood"}]
+        bundle = sources.build(rows, profile=cluster.KUBEADM)
+        self.assertEqual(list(bundle["vantages"]), ["pod-web"])
+        scenarios = [c["scenario"] for c in bundle["vantages"]["pod-web"]["playback"]["captures"]]
+        self.assertEqual(scenarios, [viz.HELD_OUT, "flood"])
+        self.assertEqual([(f["role"], f["tap"]) for f in bundle["source"]["files"]],
+                         [("benign", "pod-web"), ("attack", "pod-web")])
+        self.assertEqual(bundle["cluster"]["profile"]["name"], "kubeadm")
+
+    def test_attack_only_and_ambiguous_input_is_refused(self):
+        import tempfile
+        path = str(_write_csv(flow_capture(), tempfile.mkdtemp(), "a.csv"))
+        with self.assertRaisesRegex(ValueError, "No benign capture"):
+            sources.build([{"path": path, "role": "attack", "vantage": "web", "scenario": "x"}])
+        with self.assertRaisesRegex(ValueError, "two captures"):
+            sources.build([{"path": path, "role": "benign", "vantage": "web"}] * 2)
+        with self.assertRaisesRegex(ValueError, "tap name"):
+            sources.build([{"path": path, "role": "benign", "vantage": "a b"}])
+
+    def test_upload_names_cannot_leave_their_folder(self):
+        for bad in ("../x.csv", "a/b.csv", ".hidden", "", "..", "a\\b.csv"):
+            with self.subTest(name=bad), self.assertRaises(ValueError):
+                sources.safe_upload_name(bad)
+        self.assertEqual(sources.safe_upload_name("pod-a (1).csv"), "pod-a (1).csv")
+
+    def test_replay_windows_every_second_in_order(self):
+        import tempfile
+        path = _write_csv(flow_capture(seconds=6), tempfile.mkdtemp(), "r.csv")
+        waits = []
+        windows = list(sources.ReplaySource(path, speed=4, sleep=waits.append).windows())
+        self.assertEqual([w["t"] for w in windows], list(range(6)))
+        self.assertEqual(sum(w["packets"] for w in windows), len(flow_capture(seconds=6)))
+        self.assertEqual(windows[0]["new_endpoints"], 2)
+        self.assertEqual(windows[1]["new_endpoints"], 0)
+        self.assertEqual(waits, [0.25] * 5)
+        with self.assertRaises(NotImplementedError):
+            next(sources.TapSource().windows())
+
+
+class HarnessParityChecks(unittest.TestCase):
+    """The harness must reproduce today's page: the same manifest gives the same bundle."""
+
+    def test_manifest_build_matches_the_static_page_path(self):
+        import tempfile
+        folder = Path(tempfile.mkdtemp())
+        bulk = sorted(evaluation.BULK_LABELS)[0]
+        rows = []
+        for scenario, label, frame in (
+                ("benign", "pod-lidar", flow_capture(vary=True)),
+                ("benign", "pod-nginx", flow_capture(start=1000.5)),
+                ("benign", bulk, flow_capture()),
+                ("flood attack", "pod-lidar", flow_capture(burst=(20, 25))),
+                ("flood attack", "pod-nginx", flow_capture(burst=(10, 30))),
+                ("udp attack", "pod-lidar", flow_capture(proto="udp", seconds=30))):
+            path = _write_csv(frame, folder, f"{scenario}-{label}-tcp.csv".replace(" ", "_"))
+            rows.append({"scenario": scenario, "level": data_io.level_from_label(label),
+                         "label": label, "method": "tcp", "path": str(path), "usable": True})
+        manifest = pd.DataFrame(rows)
+
+        captures = viz.benign_captures(manifest)
+        inputs = {}
+        for vantage in viz.steady_vantages(captures):
+            benign, targets, _ = viz.page_inputs(manifest, vantage, cluster_captures=captures)
+            inputs[vantage] = (benign, targets)
+        static = viz.build_pages(inputs, captures, selected=viz.DEFAULT_VANTAGE)
+        harness = sources.build(sources.manifest_assignments(manifest))
+
+        self.assertEqual(sorted(harness["vantages"]), ["pod-lidar", "pod-nginx"])
+        self.assertEqual(_strip_volatile(harness), _strip_volatile(static))
+
+
+class BakedPageChecks(unittest.TestCase):
+    """baked/ is what a clone with no dataset opens on, so it must load and carry no local path."""
+
+    def test_baked_files_load_and_carry_no_local_path(self):
+        from viz import bake
+        bundle_path = bake.BAKED_DIR / bake.BUNDLE_FILE
+        page_path = bake.BAKED_DIR / bake.PAGE_FILE
+        if not bundle_path.exists():
+            self.skipTest("baked/ not built (run viz/bake.py)")
+        bundle = bake.load_bundle(bundle_path)
+        self.assertTrue(bundle["vantages"])
+        self.assertIn(bundle["selected"], bundle["vantages"])
+        for f in bundle["source"]["files"]:
+            self.assertTrue(f["path"].startswith("KUBEDATA/"), f["path"])
+        self.assertEqual(bake.leaks(json.dumps(bundle)), [])
+        self.assertEqual(bake.leaks(page_path.read_text(encoding="utf-8")), [])
+
+    def test_scrub_rewrites_paths_under_the_root(self):
+        import tempfile
+        from viz import bake
+        root = Path(tempfile.mkdtemp()) / "KUBEDATA-somewhere"
+        inside = root / "benign" / "csv files" / "pod-web-tcp.csv"
+        bundle = {"source": {"files": [{"name": inside.name, "path": str(inside)},
+                                       {"name": "x.csv", "path": "/elsewhere/x.csv"}],
+                             "notes": [f"read {root}/benign"]},
+                  "vantages": {}}
+        clean = bake.scrub(bundle, str(root))
+        self.assertEqual(clean["source"]["files"][0]["path"],
+                         "KUBEDATA/benign/csv files/pod-web-tcp.csv")
+        self.assertEqual(clean["source"]["files"][1]["path"], "x.csv")
+        self.assertNotIn(str(root), json.dumps(clean))
+        self.assertTrue(bake.leaks(str(Path.home() / "x")))
+
+    def test_harness_opens_on_a_saved_bundle(self):
+        import gzip
+        import tempfile
+        import threading
+        import urllib.request
+        from viz import serve
+        folder = Path(tempfile.mkdtemp())
+        saved = folder / "bundle.json.gz"
+        bundle = sources.build([{"path": str(_write_csv(flow_capture(), folder, "pod-web-tcp.csv")),
+                                 "role": "benign", "level": "pod", "vantage": "pod-web"}])
+        saved.write_bytes(gzip.compress(viz.to_json(bundle).encode("utf-8")))
+        harness = serve.Harness(quiet=True)
+        harness.load(saved)
+        server = serve.serve(harness, port=0, host="127.0.0.1")
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            with urllib.request.urlopen(base + "/api/state", timeout=30) as response:
+                state = json.loads(response.read().decode("utf-8"))
+            self.assertTrue(state["has_bundle"])
+            self.assertEqual(state["source"]["drawn"], ["pod-web"])
+            with urllib.request.urlopen(base + "/", timeout=30) as response:
+                self.assertNotIn("window.VIZ = null;", response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            server.server_close()
+        with self.assertRaises(ValueError):
+            (folder / "not.json").write_text("{}", encoding="utf-8")
+            harness.load(folder / "not.json")
+
+
+class HarnessServerChecks(_OutputsInTemp, unittest.TestCase):
+    """The local server: one request per route, on a free port, against fixture captures."""
+
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        import threading
+        from viz import serve
+        self.folder = Path(tempfile.mkdtemp())
+        self.benign = _write_csv(flow_capture(), self.folder, "pod-web-tcp.csv")
+        self.server = serve.serve(serve.Harness(quiet=True), port=0)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        super().tearDown()
+
+    def call(self, path, body=None, headers=None, raw=None):
+        import urllib.error
+        import urllib.request
+        data = raw if raw is not None else (None if body is None else json.dumps(body).encode())
+        request = urllib.request.Request(self.base + path, data=data,
+                                         headers=headers or {"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.status, response.read().decode("utf-8")
+        except urllib.error.HTTPError as error:
+            return error.code, error.read().decode("utf-8")
+
+    def test_page_is_served_in_server_mode(self):
+        status, text = self.call("/")
+        self.assertEqual(status, 200)
+        self.assertIn("window.VIZ = null;", text)
+        self.assertIn("window.VIZ_SERVER = true;", text)
+        self.assertIn('data-act="data"', text)
+
+    def test_scan_build_and_export(self):
+        status, text = self.call("/api/scan", {"paths": [str(self.folder)]})
+        self.assertEqual(status, 200)
+        (row,) = json.loads(text)["files"]
+        self.assertEqual(row["path"], str(self.benign))
+        row["role"] = "benign"
+        status, text = self.call("/api/build", {"assignments": [row], "profile": {"name": "k3s"}})
+        self.assertEqual(status, 200, text)
+        self.assertEqual(list(json.loads(text)["vantages"]), ["pod-web"])
+        status, text = self.call("/api/state")
+        self.assertEqual(json.loads(text)["source"]["drawn"], ["pod-web"])
+        status, text = self.call("/api/export")
+        self.assertEqual(status, 200)
+        self.assertIn("window.VIZ_SERVER = false;", text)
+        self.assertTrue((self.out / "harness_export.html").exists())
+        self.assertFalse((self.out / viz.PAGE_HTML).exists())
+
+    def test_errors_come_back_as_messages(self):
+        status, text = self.call("/api/build", {"assignments": []})
+        self.assertEqual(status, 400)
+        self.assertIn("No benign capture", json.loads(text)["error"])
+        status, text = self.call("/api/scan", {"paths": [str(self.folder / "nope")]})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.call("/api/nothing")[0], 404)
+
+    def test_upload_lands_in_the_session_folder_and_refuses_escapes(self):
+        body = self.benign.read_bytes()
+        status, text = self.call("/api/upload", raw=body, headers={"X-Filename": "up.csv"})
+        self.assertEqual(status, 200, text)
+        stored = Path(json.loads(text)["file"]["path"])
+        self.assertEqual(stored.read_bytes(), body)
+        self.assertEqual(stored.parent.parent, self.out / sources.UPLOAD_DIR)
+        status, _ = self.call("/api/upload", raw=body, headers={"X-Filename": "../x.csv"})
+        self.assertEqual(status, 400)
+
+    def test_live_streams_windows_then_ends(self):
+        import urllib.parse
+        query = urllib.parse.urlencode({"path": str(self.benign), "speed": 10000})
+        status, text = self.call(f"/api/live?{query}")
+        self.assertEqual(status, 200)
+        events = [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: {\"t\"")]
+        self.assertEqual([e["t"] for e in events], list(range(60)))
+        self.assertIn("event: end", text)
+        self.assertEqual(self.call("/api/live?path=/nonexistent")[0], 400)
+
+
+class StaticPageModeChecks(unittest.TestCase):
+    def test_static_page_is_not_server_mode(self):
+        import tempfile
+        built = viz.build_page(flow_capture(), {}, {}, "pod-lidar")
+        page = viz.write_html(built, Path(tempfile.mkdtemp()) / "p.html").read_text()
+        self.assertIn("window.VIZ_SERVER = false;", page)
+        self.assertNotIn("window.VIZ = null;", page)
+
+
+# --- The local cluster that records new captures ------------------------------------------
+
+def _collect():
+    spec = importlib.util.spec_from_file_location("collect", "localcluster/collect.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class LocalClusterChecks(unittest.TestCase):
+    """localcluster/collect.py without a cluster: profiles, rendering, layout, commands."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.collect = _collect()
+        cls.profiles = {name: cls.collect.load_profile(name) for name in cls.collect.profile_names()}
+
+    def test_both_profiles_exist(self):
+        self.assertEqual(sorted(self.profiles), ["general", "lab"])
+
+    def test_recording_names_its_harness_preset(self):
+        """The harness opens a recording on the address plan its profile.json names, so a
+        general run is not mapped with the k3s plan; an unknown or missing one is ignored."""
+        import tempfile
+        from viz import serve
+        for name, profile in self.profiles.items():
+            self.assertIn(profile["harness_profile"], cluster.PROFILES, name)
+        with tempfile.TemporaryDirectory() as root:
+            self.assertIsNone(serve.recorded_preset(root))
+            (Path(root) / "profile.json").write_text(json.dumps({"harness_profile": "kubeadm"}))
+            self.assertEqual(serve.recorded_preset(root), "kubeadm")
+            (Path(root) / "profile.json").write_text(json.dumps({"harness_profile": "nope"}))
+            self.assertIsNone(serve.recorded_preset(root))
+            (Path(root) / "profile.json").write_text("not json")
+            self.assertIsNone(serve.recorded_preset(root))
+
+    def test_lab_taps_are_kubedata_labels(self):
+        labels = {t["label"] for t in self.collect.taps(self.profiles["lab"])}
+        self.assertEqual(labels, {"pod-nginx", "pod-lidar", "pod-camera", "pod-robot-controller",
+                                  "pod-robot-hardware", "node-child1", "node-child2", "node-child4",
+                                  "node-gchild9", "router-any", "router-flannel"})
+
+    def test_every_tap_is_a_level_name_label(self):
+        for name, profile in self.profiles.items():
+            for tap in self.collect.taps(profile):
+                with self.subTest(profile=name, tap=tap["label"]):
+                    self.assertEqual(data_io.level_from_label(tap["label"]), tap["level"])
+                    sources.assignment_label({"vantage": tap["label"], "level": tap["level"]})
+
+    def test_profile_address_plans_match_the_harness_presets(self):
+        for name, profile in self.profiles.items():
+            preset = cluster.PROFILES[profile["harness_profile"]]
+            with self.subTest(profile=name):
+                self.assertEqual(profile["cidrs"]["pod"], preset.pod_cidrs[0])
+                self.assertEqual(profile["cidrs"]["service"], preset.service_cidrs[0])
+        k3d = Path("localcluster/profiles/general/k3d.yaml").read_text()
+        self.assertIn("--cluster-cidr=10.244.0.0/16", k3d)
+        self.assertIn("--service-cidr=10.96.0.0/12", k3d)
+
+    def test_workloads_render_with_sidecars_on_tapped_pods_only(self):
+        for name, profile in self.profiles.items():
+            objects = self.collect.render_workloads(profile)
+            deployments = {o["metadata"]["name"]: o for o in objects if o["kind"] == "Deployment"}
+            for w in profile["workloads"]:
+                with self.subTest(profile=name, workload=w["name"]):
+                    pod = deployments[w["name"]]["spec"]["template"]["spec"]
+                    names = [c["name"] for c in pod["containers"]]
+                    self.assertEqual(names, ["app", "capture"] if w.get("tap") else ["app"])
+                    self.assertEqual(pod["nodeSelector"]["rtct/name"], w["node"])
+                    self.assertIn(w["node"], profile["nodes"].values())
+        controller = next(o for o in self.collect.render_workloads(self.profiles["lab"])
+                          if o["metadata"]["name"] == "robot-controller" and o["kind"] == "Deployment")
+        spec = controller["spec"]["template"]["spec"]
+        self.assertTrue(spec["hostNetwork"])
+        self.assertEqual(spec["dnsPolicy"], "ClusterFirstWithHostNet")
+
+    def test_every_mode_a_profile_names_exists_in_traffic(self):
+        spec = importlib.util.spec_from_file_location("traffic", "localcluster/traffic.py")
+        traffic = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(traffic)
+        for name, profile in self.profiles.items():
+            modes = [w["mode"] for w in profile["workloads"] if "mode" in w]
+            modes += [a["mode"] for a in profile["attacks"].values() if "mode" in a]
+            for mode in modes:
+                with self.subTest(profile=name, mode=mode):
+                    self.assertIn(mode, traffic.MODES)
+
+    def test_scans_stay_inside_the_cluster(self):
+        import ipaddress
+        for name, profile in self.profiles.items():
+            ranges = [ipaddress.ip_network(c) for c in profile["cidrs"].values()]
+            for target in profile["attacks"]["scan"]["targets"]:
+                with self.subTest(profile=name, target=target):
+                    net = ipaddress.ip_network(target)
+                    self.assertTrue(any(net.subnet_of(r) for r in ranges))
+
+    def test_attacks_render(self):
+        for name, profile in self.profiles.items():
+            for scenario, spec in profile["attacks"].items():
+                with self.subTest(profile=name, scenario=scenario):
+                    if spec["kind"] == "exec":
+                        workload, argv = self.collect.attack_exec_args(profile, scenario, 49)
+                        self.assertIn(workload, [w["name"] for w in profile["workloads"]])
+                        self.assertIn("seconds=49", argv)
+                    else:
+                        job = self.collect.render_attack_job(profile, scenario, 49)
+                        pod = job["spec"]["template"]["spec"]
+                        self.assertEqual(pod["nodeSelector"]["rtct/name"], profile["attack_node"])
+                        self.assertIn("49", " ".join(pod["containers"][0]["command"]))
+        with self.assertRaises(ValueError):
+            self.collect.attack_seconds(60, 60)
+        self.assertEqual(self.collect.attack_seconds(60, 10), 50)
+
+    def test_every_tap_gets_a_bounded_tcpdump(self):
+        profile = self.profiles["lab"]
+        for tap in self.collect.taps(profile):
+            with self.subTest(tap=tap["label"]):
+                argv = self.collect.capture_argv(profile, tap, 60, "/stage", "pod-x", "br-abc")
+                self.assertEqual(argv[argv.index("timeout"):argv.index("timeout") + 4],
+                                 ["timeout", "-s", "INT", "60"])
+                self.assertIn(f"{tap['label']}-tcp.pcap", argv[argv.index("-w") + 1])
+                if tap["label"] == "router-flannel":
+                    self.assertEqual(argv[-1], "udp port 8472")
+                if tap["level"] == "node":
+                    self.assertIn(f"container:{tap['container']}", argv)
+
+    def test_a_run_is_laid_out_like_kubedata(self):
+        """A fake run's CSVs read as a manifest, and its pcaps scan with the right roles."""
+        import tempfile
+        out = Path(tempfile.mkdtemp())
+        profile = self.profiles["lab"]
+        frame = flow_capture(seconds=5)
+        for scenario in ("benign", "http-flood"):
+            for label in ("pod-nginx", "node-child4"):
+                csv_file = self.collect.csv_path(out, scenario, label)
+                csv_file.parent.mkdir(parents=True, exist_ok=True)
+                frame.to_csv(csv_file, index=False)
+                pcap = self.collect.pcap_path(out, scenario, label)
+                pcap.parent.mkdir(parents=True, exist_ok=True)
+                pcap.write_bytes(_pcap_bytes([(1, 0, b"x" * 20, 20)]))
+        manifest = data_io.build_manifest(out)
+        self.assertEqual(set(manifest["scenario"]), {"benign", "http-flood attack"})
+        self.assertEqual(set(manifest["label"]), {"pod-nginx", "node-child4"})
+        rows = sources.manifest_assignments(manifest.assign(usable=True))
+        self.assertEqual(sorted(r["role"] for r in rows), ["attack", "attack", "benign", "benign"])
+        scanned = [r for r in sources.scan(out) if r["kind"] == "pcap"]
+        by = {(r["scenario"], r["vantage"], r["level"]): r["role"] for r in scanned}
+        self.assertEqual(by, {("benign", "nginx", "pod"): "benign", ("benign", "child4", "node"): "benign",
+                              ("http-flood attack", "nginx", "pod"): "attack",
+                              ("http-flood attack", "child4", "node"): "attack"})
+
+
+class SettledStepsChecks(unittest.TestCase):
+    """viz/layout.settled_steps replays ALERGIA's folds on prefix-tree ids. It must follow the
+    learner exactly, child insertion order and self-folds included, or it loses a state."""
+
+    @staticmethod
+    def replay(traces):
+        events = []
+        statemachine.learn_pdfa(traces, trace=events)
+        nodes = layout.icicle(events[0][1])
+        by_path = {n["path"]: n["id"] for n in nodes}
+        steps = [{"kind": e["kind"], "red": by_path[e["red_path"]], "blue": by_path[e["path"]]}
+                 for e in events[1:]]
+        return nodes, layout.settled_steps(nodes, steps, root=events[0][1])
+
+    def test_a_fold_that_adds_a_symbol_twice_follows_insertion_order(self):
+        # found by node-child4 of a local recording: sorted child order loses state 'b'
+        traces = [("b", "c", "b", "b", "b"), ("b", "b", "c", "a", "c"), ("a", "b", "a", "a", "c"),
+                  ("b", "c", "c", "c", "a"), ("b", "a", "c", "a", "c"), ("b", "b", "c", "a", "b"),
+                  ("b", "b", "c", "c", "a")]
+        nodes, settled = self.replay(traces)
+        self.assertEqual(set(settled), {n["id"] for n in nodes})
+
+    def test_random_traces_always_replay(self):
+        import random
+        rng = random.Random(0)
+        for trial in range(400):
+            alphabet = rng.choice(["ab", "abc", "abcd", "a"])
+            traces = [tuple(rng.choice(alphabet) for _ in range(5))
+                      for _ in range(rng.randint(5, 80))]
+            with self.subTest(trial=trial):
+                nodes, settled = self.replay(traces)
+                self.assertEqual(set(settled), {n["id"] for n in nodes})
 
 
 if __name__ == "__main__":

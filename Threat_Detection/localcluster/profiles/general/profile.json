@@ -1,0 +1,27 @@
+{
+  "description": "A generic shop app on a kubeadm-style address plan: deliberately not the lab.",
+  "cluster": "rtct-general",
+  "namespace": "rtct",
+  "harness_profile": "kubeadm",
+  "cidrs": {"pod": "10.244.0.0/16", "service": "10.96.0.0/12"},
+  "nodes": {"server-0": "server", "agent-0": "agent1", "agent-1": "agent2"},
+  "attack_node": "agent2",
+  "workloads": [
+    {"name": "frontend", "mode": "web", "node": "agent1", "replicas": 2, "tap": true,
+     "ports": [{"port": 80, "target": 8080}]},
+    {"name": "api", "mode": "api", "node": "agent2", "tap": true, "ports": [{"port": 8080}]},
+    {"name": "redis", "image": "redis", "node": "server", "tap": true, "ports": [{"port": 6379}]},
+    {"name": "store", "mode": "store", "node": "server", "tap": true, "ports": [{"port": 5432}]},
+    {"name": "worker", "mode": "worker", "node": "agent1", "tap": true},
+    {"name": "loadgen", "mode": "loadgen", "node": "agent2", "tap": false}
+  ],
+  "attacks": {
+    "http-flood": {"kind": "job", "mode": "flood-http",
+                   "args": {"url_host": "frontend", "port": 80, "threads": 16}},
+    "scan": {"kind": "scan", "targets": ["10.244.0.0/22", "10.96.0.0/24"]},
+    "lateral": {"kind": "exec", "from": "worker", "mode": "lateral",
+                "args": {"targets": "kubernetes.default:443,api:8080,frontend:22,kube-dns.kube-system:9153,redis:16379"}},
+    "sensor-flood": {"kind": "job", "mode": "flood-tcp",
+                     "args": {"host": "redis", "port": 6379, "threads": 16}}
+  }
+}

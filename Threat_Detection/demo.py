@@ -36,6 +36,22 @@ HERE = Path(__file__).resolve().parent
 DETECTOR = "z_score"
 
 
+NO_DATA = ("This item needs the KUBEDATA captures, set in local_paths.py (copy "
+           "local_paths.example.py). Without them: open baked/state_machine.html, or run "
+           "`python run.py` (item 12) for the harness on the baked page.")
+
+
+def _local_paths(*needed):
+    """local_paths, or a ValueError that says what to do instead on a copy with no dataset."""
+    try:
+        import local_paths
+    except ImportError:
+        raise ValueError(NO_DATA) from None
+    if any(not getattr(local_paths, name, "") for name in needed):
+        raise ValueError(f"{NO_DATA} (Missing: {', '.join(needed)}.)")
+    return local_paths
+
+
 def heading(text):
     print("\n" + text)
     print("=" * len(text))
@@ -51,7 +67,7 @@ def resolve_reference(benign_windows):
     window ever does both jobs. Without one, the capture is split by time and the later
     windows are held out. Either way the reference never sees evaluation traffic.
     """
-    import local_paths
+    local_paths = _local_paths("BENIGN_CSV", "ATTACK_CSV")
 
     evaluation_path = getattr(local_paths, "BENIGN_EVAL_CSV", "")
     if evaluation_path:
@@ -76,7 +92,7 @@ def _label_of(path):
 
 def pair_demo():
     """Two captures in, one report and one chart out."""
-    import local_paths
+    local_paths = _local_paths("BENIGN_CSV", "ATTACK_CSV")
 
     if not local_paths.BENIGN_CSV or not local_paths.ATTACK_CSV:
         raise ValueError("Set BENIGN_CSV and ATTACK_CSV in local_paths.py.")
@@ -109,7 +125,7 @@ def walkthrough():
 
     Ends by writing outputs/SHOWCASE.md: every measured result as one handover file.
     """
-    import local_paths
+    local_paths = _local_paths("BENIGN_CSV", "ATTACK_CSV")
 
     heading("WHAT THIS PROGRAM DOES")
     print("1. Read two recordings of traffic: one normal, one during an attack.")
@@ -251,7 +267,7 @@ def walkthrough():
 
 def state_machine():
     """PDFA anomaly detection on the same pair: what it learned, what flagged, two charts."""
-    import local_paths
+    local_paths = _local_paths("BENIGN_CSV", "ATTACK_CSV")
 
     heading("WHAT THIS PROGRAM DOES")
     print("1. Read two recordings: normal traffic and the web-flood attack.")
@@ -400,6 +416,13 @@ def pcap_diff():
     _run("dev/experiments/pcap_diff.py", "--report")
 
 
+# --- 12. The harness --------------------------------------------------------------
+
+def harness():
+    """The visualization served live: its Data tab loads other captures and rebuilds."""
+    _run("viz/serve.py", "--open")
+
+
 # --- 8. Everything ---------------------------------------------------------------
 
 def everything():
@@ -424,6 +447,7 @@ ITEMS = [
     ("Tests", run_tests, "the unit suite"),
     ("Visualization", viz_page, "the state machine learned and replayed, as an interactive page"),
     ("Pcap diff", pcap_diff, "regenerated packet rows against the sponsor CSVs"),
+    ("Harness", harness, "the visualization served live: load any captures on its Data tab"),
 ]
 
 

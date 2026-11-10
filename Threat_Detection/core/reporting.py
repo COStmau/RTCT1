@@ -234,7 +234,7 @@ def to_events(results, *, detector, pods):
 def write_events(events, path=None):
     """Write events as JSON Lines, one object per line. Returns the path."""
     path = Path(resolve_output(path or "events.jsonl"))
-    with open(path, "w") as handle:
+    with open(path, "w", encoding="utf-8") as handle:
         for event in events:
             handle.write(json.dumps(event) + "\n")
     return path
@@ -649,7 +649,7 @@ def write_report(sweep, ablation, manifest, comparison, chart_dir=None, path=Non
         f"ablation, the comparison and this report in order.")
     add("")
 
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
 

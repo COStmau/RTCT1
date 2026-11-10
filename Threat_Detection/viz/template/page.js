@@ -1,13 +1,15 @@
 // The state-machine page renderer. It owns no data: everything comes from window.VIZ,
-// the bundle viz/page.py builds from the pipeline. Positions come from the bundle's computed
+// the bundle viz/page.py builds from the pipeline. Served by viz/serve.py (VIZ_SERVER), the
+// Data tab can replace that bundle with one built from other captures; load() swaps it in. Positions come from the bundle's computed
 // layouts or from layout rules below that read only the bundle; colors are CSS roles.
 // Vendored D3: d3js.org v7.9.0, sha256 f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539
 (() => {
 "use strict";
 // the page carries several vantages around one shared cluster; S is the selected one, laid
 // out as a single-vantage block (meta, learning, playback, cluster) so every act reads it alike
-const B = window.VIZ;
-const VANTAGES = Object.keys(B.vantages);
+let B = window.VIZ;
+const SERVER = Boolean(window.VIZ_SERVER);
+let VANTAGES = B ? Object.keys(B.vantages) : [];
 let S = null;
 let mode = "detail";   // "detail": the three acts; "demo": the short concept walkthrough
 const svg = d3.select("#svg");
@@ -310,9 +312,12 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
 // why a tap on the map has no block on this page: bulk transfer is policy, anything else
 // was just not chosen when the page was built
 function absentWhy(label) {
-  return (B.absent || {})[label] === "bulk transfer"
+  const reason = (B.absent || {})[label];
+  return reason === "bulk transfer"
     ? "not on this page: a bulk-transfer tap never sets a cutoff (rebuild with --allow-bulk)"
-    : "not on this page: not chosen when it was built (add it with --vantages)";
+    : reason === "too few flows"
+      ? "not on this page: its benign capture has too few flows to learn a machine from"
+      : "not on this page: not chosen when it was built (add it with --vantages)";
 }
 
 // shorten text to fit a pixel width at the small label size
@@ -359,6 +364,7 @@ function actCluster() {
     <p>This page carries <b>${VANTAGES.length} taps</b>. Click any other tap on the map, or pick one
       at the top, and the learning and detection acts replay from there.${absent.length
         ? ` Not on this page (drawn faint): ${[["bulk transfer", "a bulk-transfer tap never sets a cutoff, so it is left out unless the page is built with <span class=\"mono\">--allow-bulk</span>"],
+                                               ["too few flows", "its benign capture has too few flows to learn a machine from (long-lived connections, such as a connection pool, make few flows)"],
                                                ["not chosen", "not chosen when the page was built; add with <span class=\"mono\">--vantages</span>"]]
             .map(([reason, why]) => {
               const these = absent.filter(l => ((B.absent || {})[l] || "not chosen") === reason);
@@ -1819,9 +1825,351 @@ function setMode(next) {
   show(currentAct);
 }
 
+// ---------------------------------------------------------------- act 1: data
+// What the page is built from. Served by viz/serve.py, this tab scans folders, takes uploads,
+// assigns each capture a role and tap, sets the cluster profile, and rebuilds the bundle every
+// other act reads. As a static file it says what the baked bundle came from.
+
+const dataView = d3.select("#dataview");
+// API rows are plain JSON (paths as typed), so they are escaped here; bundle strings arrive
+// escaped from Python and are inserted as they are.
+const esc = value => String(value ?? "").replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const PROFILE_FIELDS = [
+  ["pod_cidrs", "Pod CIDRs", "list"], ["service_cidrs", "Service CIDRs", "list"],
+  ["pod_subnet_prefix", "Per-node pod subnet prefix", "int"],
+  ["control_plane_ports", "Control-plane ports", "list"], ["kubelet_ports", "Kubelet ports", "list"],
+  ["nfs_port", "Storage (NFS) port", "int"], ["overlay_name", "Overlay name", "text"],
+  ["skip_bridge_hosts", "Skip .0/.1 of each pod subnet (flannel)", "bool"]];
+const data = {
+  ready: false, state: null, files: [], profile: null, preset: "k3s",
+  scanPath: "", root: "", method: "tcp", forget: null, allowBulk: false, selected: "",
+  busy: null, error: null, note: null,
+  live: { source: null, rows: [], path: "", speed: "10", status: "idle" },
+};
+
+async function api(path, body, { raw = false, headers = {} } = {}) {
+  const init = body === undefined ? {} : raw
+    ? { method: "POST", headers, body }
+    : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const res = await fetch(path, init);
+  let out = null;
+  try { out = await res.json(); } catch (e) { throw new Error(`${res.status} ${res.statusText}`); }
+  if (!res.ok || (out && out.error)) throw new Error((out && out.error) || res.statusText);
+  return out;
+}
+
+const levelOf = tap => (["pod", "node", "router"].find(l => String(tap || "").startsWith(l + "-")) || "pod");
+const rowFromSource = f => ({ path: f.path, name: f.name, kind: f.path.match(/\.pcap(ng)?$/i) ? "capture" : "csv",
+  role: f.role, vantage: f.tap || "", level: levelOf(f.tap), scenario: f.scenario || "", problem: null });
+
+async function dataInit() {
+  if (data.ready || !SERVER) return;
+  data.ready = true;
+  try {
+    const state = await api("/api/state");
+    data.state = state;
+    data.root = state.defaults.kubedata_root || "";
+    data.forget = state.defaults.forget;
+    data.profile = { ...state.profiles.k3s };
+    if (state.source) {
+      data.files = state.source.files.map(rowFromSource);
+      data.profile = { ...state.source.profile };
+      data.preset = state.profiles[data.profile.name] ? data.profile.name : "custom";
+      data.forget = state.source.forget_seconds;
+      data.allowBulk = state.source.allow_bulk;
+      data.note = `Showing the ${state.source.files.length} captures the current page was built from (${esc(state.source.origin)}).`;
+    }
+    if ((state.info || []).length) data.note = [data.note, ...state.info.map(esc)].filter(Boolean).join(" ");
+    if ((state.notes || []).length) data.error = state.notes.join(" ");
+    if (state.defaults.scan) { data.scanPath = state.defaults.scan; await dataScan(); return; }
+  } catch (e) {
+    data.error = `Could not reach the harness: ${e.message}`;
+  }
+  if (currentAct === "data") renderData();
+}
+
+async function dataRun(label, work) {
+  data.busy = label; data.error = null; renderData();
+  try { await work(); } catch (e) { data.error = e.message; }
+  data.busy = null;
+  if (currentAct === "data") renderData();
+}
+
+const dataScan = () => dataRun("Scanning", async () => {
+  const out = await api("/api/scan", { paths: data.scanPath.split("\n").map(s => s.trim()).filter(Boolean), recursive: true });
+  data.files = out.files;
+  data.note = `${out.files.length} capture files found. Check each one's role and tap, then build.`;
+});
+
+const dataManifest = () => dataRun("Reading the manifest", async () => {
+  const out = await api("/api/manifest", { root: data.root, method: data.method });
+  data.files = out.files.map(f => ({ ...f, name: f.path.split(/[\\/]/).pop(), problem: null }));
+  // a recording from localcluster/collect.py names its address plan; anything else is k3s
+  const recorded = out.preset && data.state.profiles[out.preset] ? out.preset : null;
+  data.preset = recorded || "k3s"; data.profile = { ...data.state.profiles[data.preset] };
+  const kubedata = data.root === (data.state.defaults.kubedata_root || null);
+  data.note = `${out.files.length} ${esc(data.method)} captures from the manifest at <span class="mono">${esc(data.root)}</span>`
+    + (kubedata ? ": the same inputs the static page uses." : ".")
+    + (recorded ? ` Its profile.json names the <b>${esc(recorded)}</b> address plan, so that preset is selected.` : "");
+});
+
+async function dataUpload(fileList) {
+  const files = [...fileList];
+  if (!files.length) return;
+  await dataRun(`Uploading ${files.length} file${files.length === 1 ? "" : "s"}`, async () => {
+    for (const file of files) {
+      const out = await api("/api/upload", file, { raw: true, headers: { "X-Filename": file.name } });
+      data.files = data.files.filter(f => f.path !== out.file.path).concat([out.file]);
+    }
+    data.note = `Uploaded ${files.length} file${files.length === 1 ? "" : "s"}. Set each one's role and tap below.`;
+  });
+}
+
+const dataBuild = () => dataRun("Building: learning the machine and replaying every capture", async () => {
+  const assignments = data.files.map(({ path, role, vantage, level, scenario }) => ({ path, role, vantage, level, scenario }));
+  const bundle = await api("/api/build", {
+    assignments, profile: { ...data.profile, name: data.preset }, forget: Number(data.forget),
+    allow_bulk: data.allowBulk, selected: data.selected || null,
+    origin: data.files.some(f => f.method) && data.files.every(f => f.method === data.method) ? "KUBEDATA manifest" : "files",
+  });
+  data.state = await api("/api/state");
+  load(bundle);
+  data.note = `Built ${Object.keys(bundle.vantages).length} taps.${(bundle.source.notes || []).length ? " " + bundle.source.notes.join(" ") : ""}`;
+  show("cluster");
+});
+
+function stopLive() {
+  if (data.live.source) data.live.source.close();
+  data.live.source = null;
+  if (data.live.status === "streaming") data.live.status = "stopped";
+}
+
+function startLive() {
+  stopLive();
+  const live = data.live;
+  live.rows = []; live.status = "connecting";
+  const query = new URLSearchParams({ path: live.path, speed: live.speed });
+  const source = new EventSource(`/api/live?${query}`);
+  live.source = source;
+  source.onmessage = e => {
+    live.status = "streaming";
+    live.rows.push(JSON.parse(e.data));
+    if (live.rows.length > 900) live.rows.shift();
+    drawLive();
+  };
+  source.addEventListener("end", () => { source.close(); live.source = null; live.status = "ended"; drawLive(); });
+  source.onerror = () => {
+    // EventSource retries a closed stream by itself; a replay that ended or failed should not
+    if (live.source !== source) return;
+    source.close(); live.source = null;
+    live.status = live.rows.length ? "ended" : "failed: is the file a readable capture?";
+    drawLive();
+  };
+  drawLive();
+}
+
+function drawLive() {
+  const live = data.live;
+  const box = dataView.select("#live-chart");
+  if (box.empty()) return;
+  d3.select("#live-status").text(live.status);
+  const last = live.rows[live.rows.length - 1];
+  d3.select("#live-now").html(last
+    ? `second <b>${fmt(last.t)}</b> · ${fmt(last.packets)} packets · ${d3.format(".3s")(last.bytes)}B · `
+      + `${fmt(last.flows)} flows · ${fmt(last.new_endpoints)} new endpoints (${fmt(last.endpoints)} seen)`
+    : "no windows yet");
+  const node = box.node(), w = Math.max(node.clientWidth, 300), h = 150;
+  box.selectAll("*").remove();
+  const s = box.append("svg").attr("width", w).attr("height", h).style("position", "static");
+  if (!live.rows.length) return;
+  const x = d3.scaleLinear().domain(d3.extent(live.rows, r => r.t)).range([40, w - 10]);
+  const series = [["packets", "var(--s1)", 8, h / 2 - 6], ["bytes", "var(--s2)", h / 2 + 6, h - 18]];
+  for (const [key, color, top, bottom] of series) {
+    const y = d3.scaleLinear().domain([0, d3.max(live.rows, r => r[key]) || 1]).nice().range([bottom, top]);
+    s.append("path").attr("d", d3.line().x(r => x(r.t)).y(r => y(r[key]))(live.rows))
+      .attr("fill", "none").style("stroke", color).attr("stroke-width", 1.5);
+    s.append("text").attr("class", "t-small t-2").attr("x", 40).attr("y", top + 10).text(`${key}/s`);
+    s.append("g").attr("transform", "translate(38,0)").attr("class", "axis")
+      .call(d3.axisLeft(y).ticks(2).tickFormat(d3.format(".2s")));
+  }
+  s.append("g").attr("class", "axis").attr("transform", `translate(0,${h - 16})`)
+    .call(d3.axisBottom(x).ticks(6).tickFormat(d => `${d}s`));
+}
+
+function provenanceHtml(src, escaped) {
+  if (!src) return `<p>This page carries no record of what it was built from.</p>`;
+  const e = escaped ? (v => v ?? "") : esc;
+  const rows = src.files.map(f => `<tr><td>${e(f.role)}</td><td class="mono">${e(f.tap)}</td><td>${e(f.scenario)}</td>
+      <td class="mono" title="${e(f.path)}">${e(f.name)}</td></tr>`).join("");
+  return `<dl class="kv">
+      <dt>built</dt><dd>${e(src.built)}</dd><dt>from</dt><dd>${e(src.origin)}</dd>
+      <dt>profile</dt><dd>${e(src.profile.name)} · pods ${e(src.profile.pod_cidrs.join(", "))} · services ${e(src.profile.service_cidrs.join(", "))}</dd>
+      <dt>anomaly clock</dt><dd>${e(src.forget_seconds)} s</dd>
+      <dt>taps drawn</dt><dd>${e(src.drawn.join(", "))}</dd></dl>
+    ${(src.notes || []).length ? `<p class="data-warn">${src.notes.map(e).join("<br>")}</p>` : ""}
+    <table class="data-table compact"><thead><tr><th>role</th><th>tap</th><th>scenario</th><th>file</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+function actData() {
+  panel.html(`<h2>Data</h2>
+    <p>Every act draws one <b>bundle</b>: the machine learned from each tap's benign capture, and
+    each capture replayed through it. This tab decides what goes in.</p>
+    <h2>A capture</h2>
+    <p>A packet CSV with <span class="mono">ts, frame_len, src_ip, dst_ip, src_port, dst_port, proto</span>
+    (header spelling is forgiven), or a raw <b>pcap/pcapng</b>, converted to the same rows first.</p>
+    <h2>Roles</h2>
+    <p><b>benign</b> trains a tap: the first 70% is learned, the last 30% held out to set its cutoffs.
+    Every benign capture also feeds the cluster map. <b>attack</b> is replayed against the tap
+    with the same name. A tap needs exactly one benign capture.</p>
+    <h2>Tap names</h2>
+    <p>A tap is <span class="mono">level-name</span> (pod-nginx, node-child1, router-any). The level
+    tells the map where it listened: a node tap claims a host, a pod tap names a pod.</p>
+    <h2>Cluster profile</h2>
+    <p>The address plan the map assumes. k3s is the testbed's; kubeadm uses 10.244/16 and 10.96/12.
+    Pods outside the pod CIDRs are drawn as LAN devices.</p>`);
+  if (!SERVER) {
+    dataView.html(`<div class="data-wrap">
+      <section class="data-card"><h3>This page is a static export</h3>
+        <p>It carries one baked bundle and cannot load other data. To point it at other captures, run the harness
+        from the <span class="mono">Threat_Detection</span> folder:</p>
+        <pre class="mono">.venv/bin/python viz/serve.py --open</pre></section>
+      <section class="data-card"><h3>Built from</h3>${provenanceHtml(B && B.source, true)}</section></div>`);
+    return;
+  }
+  dataInit();
+  renderData();
+}
+
+function renderData() {
+  if (!data.ready && SERVER) return;
+  const busy = Boolean(data.busy), dis = busy ? "disabled" : "";
+  const roleOpts = r => ["benign", "attack", "ignore"].map(o => `<option ${o === r ? "selected" : ""}>${o}</option>`).join("");
+  const levelOpts = l => ["pod", "node", "router"].map(o => `<option ${o === l ? "selected" : ""}>${o}</option>`).join("");
+  const counts = d3.rollup(data.files, v => v.length, f => f.role);
+  const rows = data.files.map((f, i) => `<tr class="${f.role === "ignore" ? "off" : ""}">
+      <td><select data-i="${i}" data-k="role" ${dis}>${roleOpts(f.role)}</select></td>
+      <td><select data-i="${i}" data-k="level" ${dis}>${levelOpts(f.level)}</select></td>
+      <td><input data-i="${i}" data-k="vantage" value="${esc(f.vantage)}" ${dis} size="16"></td>
+      <td><input data-i="${i}" data-k="scenario" value="${esc(f.role === "benign" ? "benign" : f.scenario)}" ${f.role === "benign" ? "disabled" : dis} size="14"></td>
+      <td class="mono" title="${esc(f.path)}">${esc(f.name || f.path)}</td>
+      <td>${esc(f.kind)}</td>
+      <td class="data-warn">${esc(f.problem || "")}</td></tr>`).join("");
+  const p = data.profile || {};
+  const field = ([key, label, type]) => type === "bool"
+    ? `<label class="check"><input type="checkbox" data-p="${key}" ${p[key] ? "checked" : ""} ${dis}> ${label}</label>`
+    : `<label>${label}<input data-p="${key}" value="${esc(Array.isArray(p[key]) ? p[key].join(", ") : p[key])}" ${dis}></label>`;
+  const presets = data.state ? Object.keys(data.state.profiles).concat(["custom"]) : ["k3s"];
+  const liveFiles = data.files.filter(f => f.kind !== "unknown" && !f.problem);
+  if (!liveFiles.some(f => f.path === data.live.path)) data.live.path = liveFiles.length ? liveFiles[0].path : "";
+  const benignTaps = [...new Set(data.files.filter(f => f.role === "benign").map(f => f.vantage.startsWith(f.level + "-") ? f.vantage : `${f.level}-${f.vantage}`))].sort();
+
+  dataView.html(`<div class="data-wrap">
+    ${data.busy ? `<div class="data-busy">${esc(data.busy)} …</div>` : ""}
+    ${data.error ? `<div class="data-error">${esc(data.error)}</div>` : ""}
+    ${data.note && !data.error ? `<div class="data-note">${data.note}</div>` : ""}
+    <section class="data-card"><h3>1 · Source</h3>
+      <div class="data-row">
+        <label class="grow">KUBEDATA root<input id="d-root" value="${esc(data.root)}" placeholder="/path/to/KUBEDATA" ${dis}></label>
+        <span class="seg">${["tcp", "ptcp"].map(m => `<button data-method="${m}" aria-pressed="${data.method === m}" ${dis}>${m}</button>`).join("")}</span>
+        <button id="d-manifest" ${dis}>Load manifest</button></div>
+      <div class="data-row">
+        <label class="grow">Folders or files (one per line; folders are searched recursively)
+          <textarea id="d-scan" rows="2" placeholder="~/captures/my-cluster" ${dis}>${esc(data.scanPath)}</textarea></label>
+        <button id="d-scan-go" ${dis}>Scan</button></div>
+      <label class="drop" id="d-drop">Drop CSV, pcap or pcapng files here, or <u>choose files</u>
+        <input type="file" id="d-file" multiple accept=".csv,.pcap,.pcapng,.cap" hidden ${dis}></label>
+    </section>
+    <section class="data-card"><h3>2 · Captures <span class="t-2">${data.files.length} files · ${counts.get("benign") || 0} benign · ${counts.get("attack") || 0} attack</span></h3>
+      ${data.files.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>role</th><th>level</th><th>tap name</th><th>scenario</th><th>file</th><th>kind</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+        <div class="data-row small"><button id="d-all-ignore" ${dis}>Ignore all</button>
+          <button id="d-clear" ${dis}>Clear list</button></div>`
+        : `<p class="t-2">No captures yet: load the manifest, scan a folder, or drop files above.</p>`}
+    </section>
+    <section class="data-card"><h3>3 · Cluster profile</h3>
+      <div class="data-row"><label>Preset<select id="d-preset" ${dis}>${presets.map(n => `<option ${n === data.preset ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label></div>
+      <div class="data-grid">${PROFILE_FIELDS.map(field).join("")}</div>
+    </section>
+    <section class="data-card"><h3>4 · Parameters and build</h3>
+      <div class="data-row">
+        <label>Anomaly clock (s)<input id="d-forget" type="number" min="1" step="1" value="${esc(data.forget)}" ${dis}></label>
+        <label>Open on tap<select id="d-selected" ${dis}><option value="">default</option>${benignTaps.map(t => `<option ${t === data.selected ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
+        <label class="check"><input type="checkbox" id="d-bulk" ${data.allowBulk ? "checked" : ""} ${dis}> draw bulk-transfer taps (inspection only)</label>
+        <span class="spacer"></span>
+        <button class="primary" id="d-build" ${dis || (counts.get("benign") ? "" : "disabled")}>Build page</button>
+        <a class="button ${B ? "" : "disabled"}" href="/api/export" ${B ? "" : 'aria-disabled="true"'}>Export static page</a></div>
+      ${B && B.source ? `<details><summary>Current page: built from</summary>${provenanceHtml(B.source, true)}</details>` : ""}
+    </section>
+    <section class="data-card"><h3>5 · Live input <span class="badge">preview</span></h3>
+      <p class="t-2">A capture replayed as if it were arriving now, windowed per second. This is the shape a live
+      collector will feed; detection is not wired to the stream yet, so nothing here is scored.</p>
+      <div class="data-row">
+        <label class="grow">Replay<select id="l-path">${liveFiles.map(f => `<option value="${esc(f.path)}" ${f.path === data.live.path ? "selected" : ""}>${esc(f.name || f.path)}</option>`).join("") || "<option value=''>no capture listed</option>"}</select></label>
+        <label>Speed<select id="l-speed">${["1", "10", "50", "200"].map(s => `<option value="${s}" ${s === data.live.speed ? "selected" : ""}>${s}×</option>`).join("")}</select></label>
+        <button class="primary" id="l-start" ${liveFiles.length ? "" : "disabled"}>Start</button>
+        <button id="l-stop">Stop</button>
+        <span class="readout" id="live-status">${esc(data.live.status)}</span></div>
+      <div class="readout" id="live-now"></div>
+      <div id="live-chart" class="live-chart"></div>
+    </section></div>`);
+
+  // table edits keep their state; a role change re-renders so the scenario cell follows it
+  dataView.selectAll("[data-i]").on("change", function () {
+    const f = data.files[+this.dataset.i];
+    f[this.dataset.k] = this.value;
+    if (this.dataset.k === "role" || this.dataset.k === "level") renderData();
+  });
+  dataView.selectAll("[data-p]").on("change", function () {
+    const key = this.dataset.p, spec = PROFILE_FIELDS.find(f => f[0] === key);
+    const value = spec[2] === "bool" ? this.checked : spec[2] === "int" ? Number(this.value)
+      : spec[2] === "list" ? this.value.split(/[\s,]+/).filter(Boolean)
+      : this.value;
+    data.profile = { ...data.profile, [key]: spec[2] === "list" && /port/.test(key) ? value.map(Number) : value };
+    data.preset = "custom";
+    renderData();
+  });
+  d3.select("#d-preset").on("change", function () {
+    data.preset = this.value;
+    if (data.state.profiles[this.value]) data.profile = { ...data.state.profiles[this.value] };
+    renderData();
+  });
+  d3.select("#d-root").on("change", function () { data.root = this.value; });
+  dataView.selectAll("[data-method]").on("click", function () { data.method = this.dataset.method; renderData(); });
+  d3.select("#d-manifest").on("click", dataManifest);
+  d3.select("#d-scan").on("change", function () { data.scanPath = this.value; });
+  d3.select("#d-scan-go").on("click", () => { data.scanPath = d3.select("#d-scan").property("value"); dataScan(); });
+  d3.select("#d-file").on("change", function () { dataUpload(this.files); });
+  d3.select("#d-drop")
+    .on("dragover", e => { e.preventDefault(); d3.select("#d-drop").classed("over", true); })
+    .on("dragleave", () => d3.select("#d-drop").classed("over", false))
+    .on("drop", e => { e.preventDefault(); d3.select("#d-drop").classed("over", false); dataUpload(e.dataTransfer.files); });
+  d3.select("#d-all-ignore").on("click", () => { data.files.forEach(f => { f.role = "ignore"; }); renderData(); });
+  d3.select("#d-clear").on("click", () => { data.files = []; data.note = null; renderData(); });
+  d3.select("#d-forget").on("change", function () { data.forget = this.value; });
+  d3.select("#d-selected").on("change", function () { data.selected = this.value; });
+  d3.select("#d-bulk").on("change", function () { data.allowBulk = this.checked; });
+  d3.select("#d-build").on("click", dataBuild);
+  d3.select("#l-path").on("change", function () { data.live.path = this.value; });
+  d3.select("#l-speed").on("change", function () { data.live.speed = this.value; });
+  d3.select("#l-start").on("click", startLive);
+  d3.select("#l-stop").on("click", () => { stopLive(); drawLive(); });
+  drawLive();
+}
+
+// The other acts with nothing built yet: say so, and where to start.
+function actEmpty() {
+  panel.html(`<h2>Nothing loaded</h2><p>Every act draws a built page. Choose captures on the <b>Data</b> tab and build one.</p>`);
+  dataView.html(`<div class="data-wrap"><section class="data-card"><h3>No page built yet</h3>
+    <p>${SERVER ? "Pick captures on the Data tab, then Build." : "This file carries no bundle."}</p>
+    ${SERVER ? `<button class="primary" id="d-go">Go to Data</button>` : ""}</section></div>`);
+  d3.select("#d-go").on("click", () => show("data"));
+}
+
 // ---------------------------------------------------------------- app shell
 
-const ACTS = { cluster: actCluster, learning: actLearning, detection: actDetection };
+const ACTS = { data: actData, cluster: actCluster, learning: actLearning, detection: actDetection };
 let currentAct = "cluster";
 
 function show(act) {
@@ -1829,16 +2177,23 @@ function show(act) {
   demoStop();
   if (window.__stopPlayer) window.__stopPlayer();
   window.onkeydown = null;
+  if (act !== "data") stopLive();
   currentAct = act;
   d3.selectAll(".acts button").attr("aria-selected", function () { return this.dataset.act === act; });
   svg.selectAll("*").remove();
   controls.html("");
   demoLayer.html("");
+  dataView.html("");
   hideTip();
   defs();
-  if (mode === "demo") return drawSlide();
-  ACTS[act]();
   try { localStorage.setItem("viz-act", act); } catch (e) { /* storage may be blocked */ }
+  // the demo walkthrough hides the tabs and needs a bundle; the data tab is a detail-mode form
+  const form = act === "data" || !B;
+  d3.select(".app").classed("form-act", form);
+  if (B && mode === "demo") return drawSlide();
+  if (act === "data") return actData();
+  if (!B) return actEmpty();
+  ACTS[act]();
 }
 
 // Point every act at one vantage. The replay keeps its scenario and, through the taps'
@@ -1864,10 +2219,31 @@ function selectVantage(label) {
 }
 
 // the remembered tap is keyed to the build, so a page rebuilt with --vantage opens there
-const TAP_KEY = `viz-vantage:${B.vantages[B.selected].meta.generated}:${B.selected}`;
+let TAP_KEY = null;
+
+// Make `bundle` the page's data: the tap picker, the remembered-tap key, the selected tap.
+// The Data tab calls it after a build; start-up calls it with the baked bundle (or none).
+function load(bundle, tap = null) {
+  stopLearn();
+  player.pause();
+  B = bundle;
+  S = null;
+  VANTAGES = B ? Object.keys(B.vantages) : [];
+  d3.select(".pick").style("display", B ? null : "none");
+  if (!B) {
+    TAP_KEY = null;
+    d3.select("#vantage").html("");
+    d3.select("#subtitle").text(SERVER ? "nothing built yet · start on the Data tab" : "no bundle");
+    return;
+  }
+  TAP_KEY = `viz-vantage:${B.vantages[B.selected].meta.generated}:${B.selected}`;
+  d3.select("#vantage").html(VANTAGES.map(label =>
+    `<option value="${label}">${label}${B.vantages[label].meta.calibration_warning ? " (inspection only)" : ""}</option>`).join(""));
+  selectVantage(tap && B.vantages[tap] ? tap : B.selected);
+}
 
 function switchTo(label) {
-  if (!B.vantages[label] || label === S.meta.vantage) return;
+  if (!B || !B.vantages[label] || label === S.meta.vantage) return;
   stopLearn();
   player.pause();
   selectVantage(label);
@@ -1875,9 +2251,7 @@ function switchTo(label) {
 }
 window.VIZ_SWITCH = switchTo;
 
-d3.select("#vantage").html(VANTAGES.map(label =>
-  `<option value="${label}">${label}${B.vantages[label].meta.calibration_warning ? " (inspection only)" : ""}</option>`).join(""))
-  .on("change", e => switchTo(e.target.value));
+d3.select("#vantage").on("change", e => switchTo(e.target.value));
 d3.selectAll(".acts button").on("click", function () { show(this.dataset.act); });
 d3.select("#theme").on("click", () => {
   const root = document.documentElement;
@@ -1891,15 +2265,16 @@ window.addEventListener("resize", () => {
   resizeTimer = setTimeout(() => show(currentAct), 150);
 });
 d3.selectAll(".mode button").on("click", function () { setMode(this.dataset.mode); });
-let start = "cluster", tap = B.selected, startMode = "detail";
+let start = B ? "cluster" : "data", tap = null, startMode = "detail";
+load(B);
 try {
   const query = new URLSearchParams(location.search);
   start = query.get("act") || localStorage.getItem("viz-act") || start;
   startMode = query.get("mode") || localStorage.getItem("viz-mode") || startMode;
   // a remembered tap belongs to this build: a rebuilt page opens where --vantage says
-  tap = query.get("vantage") || localStorage.getItem(TAP_KEY) || tap;
+  tap = query.get("vantage") || (TAP_KEY && localStorage.getItem(TAP_KEY));
 } catch (e) { /* ignore */ }
-selectVantage(B.vantages[tap] ? tap : B.selected);
-currentAct = ACTS[start] ? start : "cluster";
-setMode(startMode === "demo" ? "demo" : "detail");
+if (B && tap && B.vantages[tap]) selectVantage(tap);
+currentAct = !B ? "data" : ACTS[start] ? start : "cluster";
+setMode(B && startMode === "demo" ? "demo" : "detail");
 })();

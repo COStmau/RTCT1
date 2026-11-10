@@ -8,6 +8,10 @@ template/ into one self-contained page in outputs/. The page draws only what the
 says: the cluster is inferred from traffic (cluster.py), positions are computed (layout.py),
 and every score is the scorer's own number.
 
+The same page also runs live from viz/serve.py, the harness: there write_html's static page
+becomes a server page (page_html(..., server=True)) whose Data tab loads other captures and
+rebuilds the bundle through viz/sources.py.
+
 Run it with:  .venv/bin/python viz/page.py                       (every steady tap, every attack)
               .venv/bin/python viz/page.py --vantage pod-nginx   (open on pod-nginx)
               .venv/bin/python viz/page.py --vantages pod-lidar pod-nginx
@@ -29,6 +33,7 @@ import pandas as pd
 
 from viz import cluster as topology
 from viz import layout
+from viz import sources
 from core.data_io import (MANIFEST_NAME, level_from_label, load_manifest, resolve_output,
                      timebase_issues)
 from core.detectors import BENIGN_QUANTILE, PERSISTENCE_WINDOW, persistent_mask
@@ -42,6 +47,8 @@ from methods.scores import (FORGET_SECONDS, TRAIN_COUNTS, FrequencyScorer, Windo
                             pdfa_states_in_order, score_cutoff, score_flows, trace_score,
                             trace_states)
 
+# how methods.pdfa refuses a benign capture too thin to learn from
+THIN_CAPTURE = ("Too few training flows", "Insufficient benign flows")
 DEFAULT_VANTAGE = "pod-lidar"   # its 5 s replay loop is what FORGET_SECONDS was sized for
 HELD_OUT = "benign (held out)"
 # strongest first; "warmup" and "nodata" are insufficient evidence, never "normal"
@@ -58,13 +65,14 @@ D3_FILE = "vendor/d3.v7.9.0.min.js"
 
 
 def build_page(benign, targets, cluster_captures, vantage, forget_seconds=FORGET_SECONDS,
-                found=None):
+                found=None, profile=topology.K3S):
     """The bundle for one vantage.
 
     `benign` and each `targets[scenario]` are packet frames for `vantage` (flow columns, as
     methods.pdfa.load_flow_packets reads them). `cluster_captures` maps every capture label
     to a benign packet frame and drives the cluster drawing; it may be empty. `found` is that
-    cluster already inferred, so several vantages can share one inference.
+    cluster already inferred, so several vantages can share one inference; `profile` is the
+    cluster's address plan, used only when `found` is not given.
 
     Calibration is held to the replay's own conditions. The windowed cutoff comes from the
     held-out windows scored on a warm clock (the training flows run first, as they did in the
@@ -78,7 +86,7 @@ def build_page(benign, targets, cluster_captures, vantage, forget_seconds=FORGET
     events = []
     model = fit_model(train, trace=events)
     if found is None:
-        found = topology.infer_cluster(cluster_captures)
+        found = topology.infer_cluster(cluster_captures, profile)
 
     n_windows = n_windows_for(benign)
     first_held = int((float(holdout["start_ts"].iloc[0]) - t0) // WINDOW_SIZE)
@@ -135,31 +143,49 @@ def build_page(benign, targets, cluster_captures, vantage, forget_seconds=FORGET
     }
 
 
-def build_pages(inputs, cluster_captures, forget_seconds=FORGET_SECONDS, selected=None):
+def build_pages(inputs, cluster_captures, forget_seconds=FORGET_SECONDS, selected=None,
+                profile=topology.K3S):
     """One page's bundle for several vantages: the cluster once, then each vantage's block.
 
     `inputs` maps a vantage label to its (benign packets, {scenario: attack packets}), as
     page_inputs returns them. Each vantage block is build_page for that vantage alone;
     the cluster is inferred once from `cluster_captures` and shared. `selected` is the
-    vantage the page opens on (default: the first).
+    vantage the page opens on (default: the first). `profile` is the cluster's address plan
+    (viz/cluster.ClusterProfile; default k3s).
+
+    A tap whose benign capture is too thin to learn from (a few long-lived connections give
+    too few flows for one trace) is left off with the reason, rather than failing the page;
+    it still feeds the map. Only when no tap can be learned does the build fail.
     """
-    found = topology.infer_cluster(cluster_captures)
-    pages = {vantage: build_page(benign, targets, cluster_captures, vantage, forget_seconds,
-                                 found=found)
-             for vantage, (benign, targets) in inputs.items()}
-    return compose(pages, found, selected)
+    found = topology.infer_cluster(cluster_captures, profile)
+    pages, unlearnable = {}, {}
+    for vantage, (benign, targets) in inputs.items():
+        try:
+            pages[vantage] = build_page(benign, targets, cluster_captures, vantage,
+                                        forget_seconds, found=found)
+        except ValueError as error:     # only the learner's "not enough data" refusals
+            if not str(error).startswith(THIN_CAPTURE):
+                raise
+            unlearnable[vantage] = str(error)
+    if not pages and unlearnable:
+        raise ValueError("No tap could be learned: " + "; ".join(
+            f"{vantage}: {why}" for vantage, why in unlearnable.items()))
+    return compose(pages, found, selected, unlearnable)
 
 
-def compose(pages, cluster, selected=None):
+def compose(pages, cluster, selected=None, unlearnable=None):
     """{vantage: build_page bundle} as the page bundle: a shared cluster, one block each.
 
     `absent` names every tap on the map that has no block and why: a bulk-transfer tap is
-    left out by policy, any other was simply not chosen for this page.
+    left out by policy, a tap in `unlearnable` had too little benign traffic to learn from,
+    any other was simply not chosen for this page.
     """
     if not pages:
         raise ValueError("No vantage to draw.")
+    unlearnable = unlearnable or {}
     selected = selected if selected in pages else next(iter(pages))
-    absent = {v["label"]: "bulk transfer" if v["label"] in BULK_LABELS else "not chosen"
+    absent = {v["label"]: "too few flows" if v["label"] in unlearnable
+              else "bulk transfer" if v["label"] in BULK_LABELS else "not chosen"
               for v in cluster["vantages"] if v["label"] not in pages}
     return {"selected": selected, "cluster": cluster, "trimmed": [], "absent": absent,
             "vantages": {vantage: {part: block[part] for part in VANTAGE_PARTS}
@@ -217,7 +243,7 @@ def _learning(model, events, train, t0):
              for step in events[1:1 + MAX_STEP_DETAIL]]
     settled = layout.settled_steps(nodes, [
         {"kind": step["kind"], "red": by_path[step["red_path"]], "blue": by_path[step["path"]]}
-        for step in events[1:]])
+        for step in events[1:]], root=events[0][1])
     symbols = list(encode(train, model["enc"]))
     counts = Counter(symbols)
     enc = model["enc"]
@@ -403,11 +429,17 @@ def to_json(bundle):
     return json.dumps(_clean(bundle), allow_nan=False, separators=(",", ":"))
 
 
-def page_html(bundle):
-    """The page as text: template, styles, D3, renderer and bundle all inlined."""
+def page_html(bundle, server=False):
+    """The page as text: template, styles, D3, renderer and bundle all inlined.
+
+    `server` marks the page the harness serves: its Data tab talks to viz/serve.py and may
+    start with no bundle (None). A static page (the default) always carries one.
+    """
     page = (TEMPLATE_DIR / "index.html").read_text(encoding="utf-8")
     # "</" inside an inline script would close it early; "<\/" is the same string to JSON
-    script = "window.VIZ = " + to_json(bundle).replace("</", "<\\/") + ";\n"
+    data = "null" if bundle is None else to_json(bundle).replace("</", "<\\/")
+    script = (f"window.VIZ = {data};\n"
+              f"window.VIZ_SERVER = {'true' if server else 'false'};\n")
     for marker, text in (("/*__CSS__*/", (TEMPLATE_DIR / "page.css").read_text(encoding="utf-8")),
                          ("/*__D3__*/", (TEMPLATE_DIR / D3_FILE).read_text(encoding="utf-8")),
                          ("/*__JS__*/", (TEMPLATE_DIR / "page.js").read_text(encoding="utf-8")),
@@ -444,10 +476,7 @@ def write_html(bundle, path=None, limit=PAGE_LIMIT):
 
 
 def _usable_rows(manifest, method):
-    rows = manifest[manifest["method"].eq(method)]
-    if "usable" in rows.columns:
-        rows = rows[rows["usable"].astype(str).str.lower().eq("true")]
-    return rows
+    return sources.usable_rows(manifest[manifest["method"].eq(method)])
 
 
 def _load(path):
@@ -465,7 +494,7 @@ def benign_captures(manifest, method="tcp"):
 
 def steady_vantages(cluster_captures, allow_bulk=False):
     """The labels a page draws by default: every usable benign capture, bulk ones only on consent."""
-    return sorted(label for label in cluster_captures if allow_bulk or label not in BULK_LABELS)
+    return sources.drawn_vantages(cluster_captures, allow_bulk)
 
 
 def page_inputs(manifest, vantage, method="tcp", scenarios=None, allow_bulk=False,
@@ -523,8 +552,16 @@ def main(argv=None, manifest=None):
     args = parser.parse_args(argv)
 
     if manifest is None:
-        import local_paths
-        manifest = load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest)
+        try:
+            import local_paths
+            root = getattr(local_paths, "KUBEDATA_ROOT", "")
+        except ImportError:
+            root = ""
+        if not root:
+            raise ValueError("Building the page needs the KUBEDATA captures (KUBEDATA_ROOT in "
+                             "local_paths.py). Without them, baked/state_machine.html is this "
+                             "page already built.")
+        manifest = load_manifest(root, name=args.manifest)
     cluster_captures = benign_captures(manifest, args.method)
     vantages = list(args.vantages or steady_vantages(cluster_captures, args.allow_bulk))
     if args.vantage and args.vantage not in vantages:
@@ -536,6 +573,12 @@ def main(argv=None, manifest=None):
         inputs[vantage] = (benign, targets)
     built = build_pages(inputs, cluster_captures, args.forget,
                           selected=args.vantage or DEFAULT_VANTAGE)
+    used = [row for row in sources.manifest_assignments(manifest, args.method)
+            if row["vantage"] in cluster_captures and (
+                row["role"] == "benign"
+                or row["scenario"] in inputs.get(row["vantage"], (None, {}))[1])]
+    built["source"] = sources.provenance(used, topology.K3S, args.forget, args.allow_bulk,
+                                         vantages, [], origin="KUBEDATA manifest")
     out = write_html(built, args.out)
     for vantage, size in vantage_sizes(built).items():
         replays = ("" if vantage == "cluster" else " | held-out benign, " + ", ".join(
