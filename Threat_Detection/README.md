@@ -29,6 +29,8 @@ No Python 3.11? Get it from [python.org](https://www.python.org/downloads/); on 
 
 **3. Docker (nothing but Docker).**
 
+I haven't been able to test this yet.
+
 ```bash
 cd RTCT1/Threat_Detection
 docker build -t rtct-detect .
