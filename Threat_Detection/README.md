@@ -6,9 +6,9 @@ the project virtualenv: `.venv/bin/python`.
 ## Try it on your machine
 
 The sponsor's captures are not in this repository. What is here is the page built from
-them (`baked/`), and the harness that opens on it and loads your own captures. Pick one:
+them (`baked_demo/`), and the harness that opens on it and loads your own captures. Pick one:
 
-**1. Just look (nothing to install).** Open `baked/state_machine.html` in a browser. It is
+**1. Just look (nothing to install).** Open `baked_demo/state_machine.html` in a browser. It is
 self-contained and works offline: the cluster map, the state machine learning, and every
 attack replayed through the detector.
 
@@ -47,7 +47,7 @@ The repository is private: ask Charles to add your GitHub account as a collabora
 the clone asks for a login and then says it is not found. `demo.py` items 1-8 need the
 dataset itself (`local_paths.py`); without it they say so and skip.
 
-The page is rebuilt into `baked/` with `.venv/bin/python viz/bake.py` on a machine that has
+The page is rebuilt into `baked_demo/` with `.venv/bin/python viz/bake.py` on a machine that has
 the captures; it refuses to write if a local path is left in it.
 
 ## How it fits together
@@ -103,7 +103,7 @@ outside itself.
 |---|---|
 | `viz/page.py` | The state machine as one interactive page, `outputs/state_machine.html`: the inferred cluster, ALERGIA learning step by step, and a replay of held-out benign and every attack through the windowed SEQUENT scorer (the 8 s anomaly clock, forgetting, release). One page carries every steady capture tap (`--vantages` to choose; `--vantage` picks the one it opens on): click a tap on the map or use the header picker to switch the learning and detection acts, and the Detection tab's *Across taps* view lines one scenario up at every tap on a shared capture-time axis. Self-contained (about 3 MB for the 8 steady taps; past 15 MB the other taps' per-trace breakdown is dropped); opens offline. `demo.py` item 10. The renderer is `viz/template/`. Bulk-transfer vantages (`core/evaluation.BULK_LABELS`) never set a cutoff, so they are left out unless `--allow-bulk`, and the page then marks their verdicts as inspection only. Each cutoff shows how many held-out windows it rests on and how often it actually flags them; capture text is HTML-escaped in the bundle. |
 | `viz/cluster.py` | The k3s cluster's shape inferred from benign traffic: nodes, pods (including host-network ones), services, conversations and where each capture listened. |
-| `viz/bake.py` | Builds the harness's default bundle from KUBEDATA and writes it, with every local path rewritten to `KUBEDATA/...`, into `baked/`. |
+| `viz/bake.py` | Builds the harness's default bundle from KUBEDATA and writes it, with every local path rewritten to `KUBEDATA/...`, into `baked_demo/`. |
 | `viz/layout.py` | Computed positions for the page: the prefix tree as an icicle, the learned machine in columns. |
 | `viz/serve.py` | The harness: the same page served from a local, standard-library server, so its **Data** tab can load other captures and rebuild. Binds 127.0.0.1 only. Opens already built on today's page when `local_paths.KUBEDATA_ROOT` is set. `demo.py` item 12. See "The harness" below. |
 | `viz/sources.py` | What the harness reads: scans folders (CSV, pcap, pcapng, told by magic number), loads a file as flow packets (converting captures through `convert/`), turns role/tap assignments into a bundle with its provenance, and replays a capture as a stream of 1-second windows (`ReplaySource`; `TapSource` is the stub for a live collector). |
@@ -128,7 +128,7 @@ independent of it; see "Capture to packet rows" below.
 | `local_paths.py` | Your local dataset paths. Not committed; copy `local_paths.example.py` and fill it in. Only the entry points and experiments read it, never `core/`. |
 | `dev/` | Development material, not shipped: experiments, verdicts, tests and design notes. Mapped in `dev/README.md`. |
 | `run.py` | The one-command start for any machine: makes `.venv`, installs `requirements.txt` once, opens the harness. Standard library only. See "Try it on your machine". |
-| `baked/` | The KUBEDATA page, prebuilt and with no capture data: `state_machine.html` (opens offline) and `bundle.json.gz` (what the harness opens on when there is no `KUBEDATA_ROOT`). Written by `viz/bake.py`. |
+| `baked_demo/` | The KUBEDATA page, prebuilt and with no capture data: `state_machine.html` (opens offline) and `bundle.json.gz` (what the harness opens on when there is no `KUBEDATA_ROOT`). Written by `viz/bake.py`. |
 | `Dockerfile` | The harness in a container, for a machine with only Docker. |
 | `requirements.txt` | The pinned runtime: Python 3.11 with numpy, pandas, matplotlib and scikit-learn at the versions the numbers were measured under. |
 | `EVENT_LOG.md` | The detection → response event contract (`LogV1`, carries the capture-relative second). |

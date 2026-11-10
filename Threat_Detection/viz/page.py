@@ -559,7 +559,7 @@ def main(argv=None, manifest=None):
             root = ""
         if not root:
             raise ValueError("Building the page needs the KUBEDATA captures (KUBEDATA_ROOT in "
-                             "local_paths.py). Without them, baked/state_machine.html is this "
+                             "local_paths.py). Without them, baked_demo/state_machine.html is this "
                              "page already built.")
         manifest = load_manifest(root, name=args.manifest)
     cluster_captures = benign_captures(manifest, args.method)

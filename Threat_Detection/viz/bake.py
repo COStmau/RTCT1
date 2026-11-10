@@ -1,9 +1,9 @@
-"""Bake today's page into baked/, so a clone with no dataset still has something to open.
+"""Bake today's page into baked_demo/, so a clone with no dataset still has something to open.
 
     .venv/bin/python viz/bake.py
 
 Builds the same bundle the harness preloads from KUBEDATA (viz/serve.Harness.preload), then
-writes two files into Threat_Detection/baked/, which is tracked in git:
+writes two files into Threat_Detection/baked_demo/, which is tracked in git:
 
   bundle.json.gz      the bundle; viz/serve.py opens on it when there is no KUBEDATA_ROOT
   state_machine.html  the static page; opens offline in any browser, no Python needed
@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from viz import page
 
-BAKED_DIR = Path(__file__).resolve().parents[1] / "baked"
+BAKED_DIR = Path(__file__).resolve().parents[1] / "baked_demo"
 BUNDLE_FILE = "bundle.json.gz"
 PAGE_FILE = "state_machine.html"
 ORIGIN = "KUBEDATA manifest (baked)"

@@ -9,9 +9,9 @@ Run it with:  .venv/bin/python viz/serve.py                 (opens on today's pa
                                                             local_paths.KUBEDATA_ROOT is set)
               .venv/bin/python viz/serve.py --open --data ~/captures
               .venv/bin/python viz/serve.py --no-preload --port 9000
-              .venv/bin/python viz/serve.py --bundle baked/bundle.json.gz
+              .venv/bin/python viz/serve.py --bundle baked_demo/bundle.json.gz
 
-With no KUBEDATA_ROOT (a fresh clone), it opens on the baked page in baked/bundle.json.gz.
+With no KUBEDATA_ROOT (a fresh clone), it opens on the baked page in baked_demo/bundle.json.gz.
 
 Python standard library only. It binds 127.0.0.1: it reads any path you type into it, so it
 is a tool for the machine it runs on, never a service to expose.
@@ -46,7 +46,7 @@ from viz import page
 from viz import sources
 
 HOST = "127.0.0.1"
-BAKED_BUNDLE = Path(__file__).resolve().parents[1] / "baked" / "bundle.json.gz"
+BAKED_BUNDLE = Path(__file__).resolve().parents[1] / "baked_demo" / "bundle.json.gz"
 BAKED_NOTE = ("Opened on the baked KUBEDATA page; the raw captures are not included. "
               "Load your own captures on this tab and Build to replace it.")
 EXPORT_HTML = "harness_export.html"   # never state_machine.html: that is viz/page.py's page
@@ -306,7 +306,7 @@ def main(argv=None):
     parser.add_argument("--manifest", default=MANIFEST_NAME)
     parser.add_argument("--bundle", default=None,
                         help="open on a saved bundle (.json or .json.gz) instead of building one; "
-                             "defaults to baked/bundle.json.gz when there is no KUBEDATA_ROOT")
+                             "defaults to baked_demo/bundle.json.gz when there is no KUBEDATA_ROOT")
     parser.add_argument("--host", default=HOST,
                         help="address to bind (default 127.0.0.1; the Docker image uses 0.0.0.0)")
     args = parser.parse_args(argv)
