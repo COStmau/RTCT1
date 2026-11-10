@@ -47,6 +47,8 @@ from methods.scores import (FORGET_SECONDS, TRAIN_COUNTS, FrequencyScorer, Windo
                             pdfa_states_in_order, score_cutoff, score_flows, trace_score,
                             trace_states)
 
+# how methods.pdfa refuses a benign capture too thin to learn from
+THIN_CAPTURE = ("Too few training flows", "Insufficient benign flows")
 DEFAULT_VANTAGE = "pod-lidar"   # its 5 s replay loop is what FORGET_SECONDS was sized for
 HELD_OUT = "benign (held out)"
 # strongest first; "warmup" and "nodata" are insufficient evidence, never "normal"
@@ -150,24 +152,40 @@ def build_pages(inputs, cluster_captures, forget_seconds=FORGET_SECONDS, selecte
     the cluster is inferred once from `cluster_captures` and shared. `selected` is the
     vantage the page opens on (default: the first). `profile` is the cluster's address plan
     (viz/cluster.ClusterProfile; default k3s).
+
+    A tap whose benign capture is too thin to learn from (a few long-lived connections give
+    too few flows for one trace) is left off with the reason, rather than failing the page;
+    it still feeds the map. Only when no tap can be learned does the build fail.
     """
     found = topology.infer_cluster(cluster_captures, profile)
-    pages = {vantage: build_page(benign, targets, cluster_captures, vantage, forget_seconds,
-                                 found=found)
-             for vantage, (benign, targets) in inputs.items()}
-    return compose(pages, found, selected)
+    pages, unlearnable = {}, {}
+    for vantage, (benign, targets) in inputs.items():
+        try:
+            pages[vantage] = build_page(benign, targets, cluster_captures, vantage,
+                                        forget_seconds, found=found)
+        except ValueError as error:     # only the learner's "not enough data" refusals
+            if not str(error).startswith(THIN_CAPTURE):
+                raise
+            unlearnable[vantage] = str(error)
+    if not pages and unlearnable:
+        raise ValueError("No tap could be learned: " + "; ".join(
+            f"{vantage}: {why}" for vantage, why in unlearnable.items()))
+    return compose(pages, found, selected, unlearnable)
 
 
-def compose(pages, cluster, selected=None):
+def compose(pages, cluster, selected=None, unlearnable=None):
     """{vantage: build_page bundle} as the page bundle: a shared cluster, one block each.
 
     `absent` names every tap on the map that has no block and why: a bulk-transfer tap is
-    left out by policy, any other was simply not chosen for this page.
+    left out by policy, a tap in `unlearnable` had too little benign traffic to learn from,
+    any other was simply not chosen for this page.
     """
     if not pages:
         raise ValueError("No vantage to draw.")
+    unlearnable = unlearnable or {}
     selected = selected if selected in pages else next(iter(pages))
-    absent = {v["label"]: "bulk transfer" if v["label"] in BULK_LABELS else "not chosen"
+    absent = {v["label"]: "too few flows" if v["label"] in unlearnable
+              else "bulk transfer" if v["label"] in BULK_LABELS else "not chosen"
               for v in cluster["vantages"] if v["label"] not in pages}
     return {"selected": selected, "cluster": cluster, "trimmed": [], "absent": absent,
             "vantages": {vantage: {part: block[part] for part in VANTAGE_PARTS}
@@ -225,7 +243,7 @@ def _learning(model, events, train, t0):
              for step in events[1:1 + MAX_STEP_DETAIL]]
     settled = layout.settled_steps(nodes, [
         {"kind": step["kind"], "red": by_path[step["red_path"]], "blue": by_path[step["path"]]}
-        for step in events[1:]])
+        for step in events[1:]], root=events[0][1])
     symbols = list(encode(train, model["enc"]))
     counts = Counter(symbols)
     enc = model["enc"]

@@ -288,6 +288,11 @@ def build(assignments, profile=None, forget=FORGET_SECONDS, selected=None, allow
               for v in drawn}
     bundle = page.build_pages(inputs, benign, forget, selected=selected or page.DEFAULT_VANTAGE,
                               profile=profile)
+    thin = sorted(v for v, why in bundle["absent"].items() if why == "too few flows")
+    if thin:
+        notes.append(f"left off {', '.join(thin)}: too few benign flows to learn from "
+                     "(it still feeds the map)")
+    drawn = [v for v in drawn if v in bundle["vantages"]]
     bundle["source"] = provenance(assignments, profile, forget, allow_bulk, drawn, notes, origin)
     return bundle
 

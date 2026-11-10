@@ -49,6 +49,21 @@ MAX_UPLOAD = 2 * 1024 ** 3        # bytes; captures are large, but not unbounded
 MAX_JSON = 16 * 1024 ** 2
 
 
+def recorded_preset(root):
+    """The address-plan preset a recording folder names in its profile.json, or None.
+
+    localcluster/collect.py writes one next to its scenario folders, so a general-profile
+    run opens on kubeadm instead of being mapped with the k3s plan it was not recorded on.
+    """
+    if not root:
+        return None
+    try:
+        name = json.loads((Path(root).expanduser() / "profile.json").read_text()).get("harness_profile")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return name if name in topology.PROFILES else None
+
+
 class Harness:
     """The server's state: one current bundle, one upload folder per run."""
 
@@ -139,7 +154,7 @@ def make_handler(harness):
         def guarded(self, action):
             try:
                 action()
-            except (ValueError, KeyError, FileNotFoundError, NotImplementedError) as error:
+            except (ValueError, FileNotFoundError, NotImplementedError) as error:
                 self.send_error_json(error, 400)
             except Exception as error:   # report, keep serving
                 traceback.print_exc()
@@ -188,8 +203,9 @@ def make_handler(harness):
 
         def manifest(self):
             request = self.read_json()
-            rows = harness.manifest_rows(request.get("root") or None, request.get("method") or "tcp")
-            self.send_json({"files": rows})
+            root = request.get("root") or None
+            rows = harness.manifest_rows(root, request.get("method") or "tcp")
+            self.send_json({"files": rows, "preset": recorded_preset(root)})
 
         def build(self):
             self.send_json(harness.build(self.read_json()), bundle=True)

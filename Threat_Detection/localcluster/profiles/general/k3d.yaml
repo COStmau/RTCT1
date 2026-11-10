@@ -1,0 +1,35 @@
+# The general profile: deliberately not the lab. A kubeadm-style address plan (pods 10.244/16,
+# services 10.96/12) so the harness's non-k3s cluster profile is exercised, and generic names.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: rtct-general
+servers: 1
+agents: 2
+image: rancher/k3s:v1.35.5-k3s1
+options:
+  k3d:
+    wait: true
+    disableLoadbalancer: true
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters: [server:*]
+      - arg: --disable=servicelb
+        nodeFilters: [server:*]
+      - arg: --cluster-cidr=10.244.0.0/16
+        nodeFilters: [server:*]
+      - arg: --service-cidr=10.96.0.0/12
+        nodeFilters: [server:*]
+      - arg: --cluster-dns=10.96.0.10
+        nodeFilters: [server:*]
+    nodeLabels:
+      - label: rtct/name=server
+        nodeFilters: [server:0]
+      - label: rtct/name=agent1
+        nodeFilters: [agent:0]
+      - label: rtct/name=agent2
+        nodeFilters: [agent:1]
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: false

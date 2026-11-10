@@ -405,6 +405,7 @@ class EntryPointChecks(unittest.TestCase):
 
     ENTRY_POINTS = {
         "viz/page.py": "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))",
+        "viz/serve.py": "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))",
         **{f"dev/experiments/{name}.py":
            "sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).resolve().parents[1])]"
            for name in ("compare", "cv_calibration", "feature_set", "feature_value", "flag_scores",
@@ -2465,6 +2466,19 @@ class VizBundleChecks(unittest.TestCase):
         bundle = viz.build_pages(inputs, captures)
         self.assertEqual(bundle["absent"], {"pod-nginx": "not chosen", bulk: "bulk transfer"})
 
+    def test_thin_tap_is_left_off_not_fatal(self):
+        """A benign capture with a handful of long-lived connections (a redis pool) has too few
+        flows to learn from; the page drops that tap with the reason instead of failing, and
+        only fails when no tap at all can be learned."""
+        thin = self.benign[self.benign["ts"] < self.benign["ts"].min() + 0.5].head(3)
+        captures = {"pod-lidar": self.benign, "pod-redis": thin}
+        inputs = {"pod-lidar": (self.benign, {"flood": self.attack}), "pod-redis": (thin, {})}
+        bundle = viz.build_pages(inputs, captures)
+        self.assertEqual(list(bundle["vantages"]), ["pod-lidar"])
+        self.assertEqual(bundle["absent"].get("pod-redis"), "too few flows")
+        with self.assertRaisesRegex(ValueError, "No tap could be learned"):
+            viz.build_pages({"pod-redis": (thin, {})}, captures)
+
     def test_captures_carry_their_first_packet_time(self):
         """Taps record side by side; the page lines one scenario up across them on t0."""
         bundle, inputs, _ = self.two_vantages()
@@ -3789,6 +3803,192 @@ class StaticPageModeChecks(unittest.TestCase):
         page = viz.write_html(built, Path(tempfile.mkdtemp()) / "p.html").read_text()
         self.assertIn("window.VIZ_SERVER = false;", page)
         self.assertNotIn("window.VIZ = null;", page)
+
+
+# --- The local cluster that records new captures ------------------------------------------
+
+def _collect():
+    spec = importlib.util.spec_from_file_location("collect", "localcluster/collect.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class LocalClusterChecks(unittest.TestCase):
+    """localcluster/collect.py without a cluster: profiles, rendering, layout, commands."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.collect = _collect()
+        cls.profiles = {name: cls.collect.load_profile(name) for name in cls.collect.profile_names()}
+
+    def test_both_profiles_exist(self):
+        self.assertEqual(sorted(self.profiles), ["general", "lab"])
+
+    def test_recording_names_its_harness_preset(self):
+        """The harness opens a recording on the address plan its profile.json names, so a
+        general run is not mapped with the k3s plan; an unknown or missing one is ignored."""
+        import tempfile
+        from viz import serve
+        for name, profile in self.profiles.items():
+            self.assertIn(profile["harness_profile"], cluster.PROFILES, name)
+        with tempfile.TemporaryDirectory() as root:
+            self.assertIsNone(serve.recorded_preset(root))
+            (Path(root) / "profile.json").write_text(json.dumps({"harness_profile": "kubeadm"}))
+            self.assertEqual(serve.recorded_preset(root), "kubeadm")
+            (Path(root) / "profile.json").write_text(json.dumps({"harness_profile": "nope"}))
+            self.assertIsNone(serve.recorded_preset(root))
+            (Path(root) / "profile.json").write_text("not json")
+            self.assertIsNone(serve.recorded_preset(root))
+
+    def test_lab_taps_are_kubedata_labels(self):
+        labels = {t["label"] for t in self.collect.taps(self.profiles["lab"])}
+        self.assertEqual(labels, {"pod-nginx", "pod-lidar", "pod-camera", "pod-robot-controller",
+                                  "pod-robot-hardware", "node-child1", "node-child2", "node-child4",
+                                  "node-gchild9", "router-any", "router-flannel"})
+
+    def test_every_tap_is_a_level_name_label(self):
+        for name, profile in self.profiles.items():
+            for tap in self.collect.taps(profile):
+                with self.subTest(profile=name, tap=tap["label"]):
+                    self.assertEqual(data_io.level_from_label(tap["label"]), tap["level"])
+                    sources.assignment_label({"vantage": tap["label"], "level": tap["level"]})
+
+    def test_profile_address_plans_match_the_harness_presets(self):
+        for name, profile in self.profiles.items():
+            preset = cluster.PROFILES[profile["harness_profile"]]
+            with self.subTest(profile=name):
+                self.assertEqual(profile["cidrs"]["pod"], preset.pod_cidrs[0])
+                self.assertEqual(profile["cidrs"]["service"], preset.service_cidrs[0])
+        k3d = Path("localcluster/profiles/general/k3d.yaml").read_text()
+        self.assertIn("--cluster-cidr=10.244.0.0/16", k3d)
+        self.assertIn("--service-cidr=10.96.0.0/12", k3d)
+
+    def test_workloads_render_with_sidecars_on_tapped_pods_only(self):
+        for name, profile in self.profiles.items():
+            objects = self.collect.render_workloads(profile)
+            deployments = {o["metadata"]["name"]: o for o in objects if o["kind"] == "Deployment"}
+            for w in profile["workloads"]:
+                with self.subTest(profile=name, workload=w["name"]):
+                    pod = deployments[w["name"]]["spec"]["template"]["spec"]
+                    names = [c["name"] for c in pod["containers"]]
+                    self.assertEqual(names, ["app", "capture"] if w.get("tap") else ["app"])
+                    self.assertEqual(pod["nodeSelector"]["rtct/name"], w["node"])
+                    self.assertIn(w["node"], profile["nodes"].values())
+        controller = next(o for o in self.collect.render_workloads(self.profiles["lab"])
+                          if o["metadata"]["name"] == "robot-controller" and o["kind"] == "Deployment")
+        spec = controller["spec"]["template"]["spec"]
+        self.assertTrue(spec["hostNetwork"])
+        self.assertEqual(spec["dnsPolicy"], "ClusterFirstWithHostNet")
+
+    def test_every_mode_a_profile_names_exists_in_traffic(self):
+        spec = importlib.util.spec_from_file_location("traffic", "localcluster/traffic.py")
+        traffic = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(traffic)
+        for name, profile in self.profiles.items():
+            modes = [w["mode"] for w in profile["workloads"] if "mode" in w]
+            modes += [a["mode"] for a in profile["attacks"].values() if "mode" in a]
+            for mode in modes:
+                with self.subTest(profile=name, mode=mode):
+                    self.assertIn(mode, traffic.MODES)
+
+    def test_scans_stay_inside_the_cluster(self):
+        import ipaddress
+        for name, profile in self.profiles.items():
+            ranges = [ipaddress.ip_network(c) for c in profile["cidrs"].values()]
+            for target in profile["attacks"]["scan"]["targets"]:
+                with self.subTest(profile=name, target=target):
+                    net = ipaddress.ip_network(target)
+                    self.assertTrue(any(net.subnet_of(r) for r in ranges))
+
+    def test_attacks_render(self):
+        for name, profile in self.profiles.items():
+            for scenario, spec in profile["attacks"].items():
+                with self.subTest(profile=name, scenario=scenario):
+                    if spec["kind"] == "exec":
+                        workload, argv = self.collect.attack_exec_args(profile, scenario, 49)
+                        self.assertIn(workload, [w["name"] for w in profile["workloads"]])
+                        self.assertIn("seconds=49", argv)
+                    else:
+                        job = self.collect.render_attack_job(profile, scenario, 49)
+                        pod = job["spec"]["template"]["spec"]
+                        self.assertEqual(pod["nodeSelector"]["rtct/name"], profile["attack_node"])
+                        self.assertIn("49", " ".join(pod["containers"][0]["command"]))
+        with self.assertRaises(ValueError):
+            self.collect.attack_seconds(60, 60)
+        self.assertEqual(self.collect.attack_seconds(60, 10), 50)
+
+    def test_every_tap_gets_a_bounded_tcpdump(self):
+        profile = self.profiles["lab"]
+        for tap in self.collect.taps(profile):
+            with self.subTest(tap=tap["label"]):
+                argv = self.collect.capture_argv(profile, tap, 60, "/stage", "pod-x", "br-abc")
+                self.assertEqual(argv[argv.index("timeout"):argv.index("timeout") + 4],
+                                 ["timeout", "-s", "INT", "60"])
+                self.assertIn(f"{tap['label']}-tcp.pcap", argv[argv.index("-w") + 1])
+                if tap["label"] == "router-flannel":
+                    self.assertEqual(argv[-1], "udp port 8472")
+                if tap["level"] == "node":
+                    self.assertIn(f"container:{tap['container']}", argv)
+
+    def test_a_run_is_laid_out_like_kubedata(self):
+        """A fake run's CSVs read as a manifest, and its pcaps scan with the right roles."""
+        import tempfile
+        out = Path(tempfile.mkdtemp())
+        profile = self.profiles["lab"]
+        frame = flow_capture(seconds=5)
+        for scenario in ("benign", "http-flood"):
+            for label in ("pod-nginx", "node-child4"):
+                csv_file = self.collect.csv_path(out, scenario, label)
+                csv_file.parent.mkdir(parents=True, exist_ok=True)
+                frame.to_csv(csv_file, index=False)
+                pcap = self.collect.pcap_path(out, scenario, label)
+                pcap.parent.mkdir(parents=True, exist_ok=True)
+                pcap.write_bytes(_pcap_bytes([(1, 0, b"x" * 20, 20)]))
+        manifest = data_io.build_manifest(out)
+        self.assertEqual(set(manifest["scenario"]), {"benign", "http-flood attack"})
+        self.assertEqual(set(manifest["label"]), {"pod-nginx", "node-child4"})
+        rows = sources.manifest_assignments(manifest.assign(usable=True))
+        self.assertEqual(sorted(r["role"] for r in rows), ["attack", "attack", "benign", "benign"])
+        scanned = [r for r in sources.scan(out) if r["kind"] == "pcap"]
+        by = {(r["scenario"], r["vantage"], r["level"]): r["role"] for r in scanned}
+        self.assertEqual(by, {("benign", "nginx", "pod"): "benign", ("benign", "child4", "node"): "benign",
+                              ("http-flood attack", "nginx", "pod"): "attack",
+                              ("http-flood attack", "child4", "node"): "attack"})
+
+
+class SettledStepsChecks(unittest.TestCase):
+    """viz/layout.settled_steps replays ALERGIA's folds on prefix-tree ids. It must follow the
+    learner exactly, child insertion order and self-folds included, or it loses a state."""
+
+    @staticmethod
+    def replay(traces):
+        events = []
+        statemachine.learn_pdfa(traces, trace=events)
+        nodes = layout.icicle(events[0][1])
+        by_path = {n["path"]: n["id"] for n in nodes}
+        steps = [{"kind": e["kind"], "red": by_path[e["red_path"]], "blue": by_path[e["path"]]}
+                 for e in events[1:]]
+        return nodes, layout.settled_steps(nodes, steps, root=events[0][1])
+
+    def test_a_fold_that_adds_a_symbol_twice_follows_insertion_order(self):
+        # found by node-child4 of a local recording: sorted child order loses state 'b'
+        traces = [("b", "c", "b", "b", "b"), ("b", "b", "c", "a", "c"), ("a", "b", "a", "a", "c"),
+                  ("b", "c", "c", "c", "a"), ("b", "a", "c", "a", "c"), ("b", "b", "c", "a", "b"),
+                  ("b", "b", "c", "c", "a")]
+        nodes, settled = self.replay(traces)
+        self.assertEqual(set(settled), {n["id"] for n in nodes})
+
+    def test_random_traces_always_replay(self):
+        import random
+        rng = random.Random(0)
+        for trial in range(400):
+            alphabet = rng.choice(["ab", "abc", "abcd", "a"])
+            traces = [tuple(rng.choice(alphabet) for _ in range(5))
+                      for _ in range(rng.randint(5, 80))]
+            with self.subTest(trial=trial):
+                nodes, settled = self.replay(traces)
+                self.assertEqual(set(settled), {n["id"] for n in nodes})
 
 
 if __name__ == "__main__":

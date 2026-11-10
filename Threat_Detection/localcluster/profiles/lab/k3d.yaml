@@ -1,0 +1,31 @@
+# The lab look-alike: k3s with its default address plan (pods 10.42/16, services 10.43/16),
+# flannel VXLAN, one server and three agents named after the lab's nodes by label.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: rtct-lab
+servers: 1
+agents: 3
+image: rancher/k3s:v1.35.5-k3s1
+options:
+  k3d:
+    wait: true
+    disableLoadbalancer: true     # no extra proxy container on the network
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik    # the lab ran no ingress controller in these captures
+        nodeFilters: [server:*]
+      - arg: --disable=servicelb
+        nodeFilters: [server:*]
+    nodeLabels:
+      - label: rtct/name=child4
+        nodeFilters: [server:0]
+      - label: rtct/name=child1
+        nodeFilters: [agent:0]
+      - label: rtct/name=child2
+        nodeFilters: [agent:1]
+      - label: rtct/name=gchild9
+        nodeFilters: [agent:2]
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: false

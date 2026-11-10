@@ -59,6 +59,8 @@ outside itself.
 | `viz/layout.py` | Computed positions for the page: the prefix tree as an icicle, the learned machine in columns. |
 | `viz/serve.py` | The harness: the same page served from a local, standard-library server, so its **Data** tab can load other captures and rebuild. Binds 127.0.0.1 only. Opens already built on today's page when `local_paths.KUBEDATA_ROOT` is set. `demo.py` item 12. See "The harness" below. |
 | `viz/sources.py` | What the harness reads: scans folders (CSV, pcap, pcapng, told by magic number), loads a file as flow packets (converting captures through `convert/`), turns role/tap assignments into a bundle with its provenance, and replays a capture as a stream of 1-second windows (`ReplaySource`; `TapSource` is the stub for a live collector). |
+| `localcluster/collect.py` | A local k3s cluster (k3d on Docker) that records new captures in the KUBEDATA layout: `up`, `run <scenario>`, `all`, `status`, `down`. Two profiles in `localcluster/profiles/`: `lab` (the lab look-alike) and `general` (a generic app on the kubeadm address plan). See "Collecting new captures" below. |
+| `localcluster/traffic.py` | Every workload and attack in those clusters as one stdlib script with modes, mounted into the pods from a ConfigMap. |
 
 ### Capture conversion
 
@@ -168,6 +170,60 @@ A capture is a packet CSV with `ts, frame_len, src_ip, dst_ip, src_port, dst_por
 sponsor's 34-column rows by `convert/` and cached in `outputs/converted/`. With the manifest
 loaded and the default settings, the harness builds exactly the bundle `viz/page.py` writes.
 `HarnessParityChecks` holds it to that.
+
+## Collecting new captures
+
+`localcluster/` runs a k3s cluster on this machine with k3d (k3s inside Docker containers) and
+records captures from it. The files are named and arranged like KUBEDATA, so the harness loads
+them like the sponsor's data.
+
+```bash
+brew install k3d                                       # once; Docker Desktop must be running
+.venv/bin/python localcluster/collect.py up            # the lab look-alike cluster
+.venv/bin/python localcluster/collect.py all --csv     # benign + every attack, 60 s each
+.venv/bin/python viz/serve.py --no-preload --open      # Data tab: Load manifest, root ~/rtct-data/lab
+.venv/bin/python localcluster/collect.py down
+```
+
+**Profiles.** Choose one with `--profile`. Each is a folder holding `k3d.yaml` (the cluster)
+and `profile.json` (workloads, taps and attacks, as data). Adding a workload is one line.
+- `lab` (the default) copies the lab's names:
+  - nodes child1, child2, child4 (control plane) and gchild9;
+  - pods nginx, lidar, camera, a host-network robot-controller and robot-hardware;
+  - the k3s address plan.
+- `general` is deliberately unlike the lab:
+  - a small shop app: frontend, api, redis, store, worker and a load generator;
+  - nodes named server, agent1 and agent2;
+  - the kubeadm plan (pods 10.244/16, services 10.96/12). Choose the **kubeadm** preset on
+    the harness's Data tab for this one; `<out>/profile.json` says which preset to use.
+
+**Scenarios.** `benign`, plus four attacks that start at `--attack-at` (default second 10)
+and run to the end:
+- `http-flood`: concurrent requests to the web service.
+- `scan`: a TCP connect scan of the cluster's own service and pod ranges.
+- `lateral`: a compromised workload connecting to peers and ports it never uses.
+- `sensor-flood`: the lidar stream at about 20x its rate, or a TCP flood on redis in `general`.
+
+Attack traffic only targets the local cluster's addresses.
+
+**Taps.** Each recording runs tcpdump at the same three levels as KUBEDATA:
+- **pod:** inside the pod, from a `capture` sidecar;
+- **node:** inside the k3d node container's network namespace;
+- **router:** `router-any` is the Docker bridge between the nodes, and `router-flannel` is that
+  bridge filtered to VXLAN, the pod overlay.
+
+Output goes to `<out>/<scenario>/pcapng files/<label>-tcp.pcap`. With `--csv` the sponsor's
+packet CSVs are also written to `csv files/`. `<out>` defaults to `~/rtct-data/<profile>`,
+outside the repo.
+
+**How it differs from the lab.**
+- The nodes are containers on one Docker VM, so "router" is a Linux bridge and node NICs are
+  veths.
+- There is no NFS server, so no NFS traffic.
+- The router captures are Ethernet frames, not Linux cooked frames.
+- `core/evaluation.BULK_LABELS` drops router-any, node-child4 and pod-robot-controller because
+  the *lab* recordings carry bulk transfers. Local recordings don't, so tick "draw bulk-transfer
+  taps" in the harness to see those taps.
 
 ## Capture to packet rows
 

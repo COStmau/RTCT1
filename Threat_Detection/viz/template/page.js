@@ -312,9 +312,12 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
 // why a tap on the map has no block on this page: bulk transfer is policy, anything else
 // was just not chosen when the page was built
 function absentWhy(label) {
-  return (B.absent || {})[label] === "bulk transfer"
+  const reason = (B.absent || {})[label];
+  return reason === "bulk transfer"
     ? "not on this page: a bulk-transfer tap never sets a cutoff (rebuild with --allow-bulk)"
-    : "not on this page: not chosen when it was built (add it with --vantages)";
+    : reason === "too few flows"
+      ? "not on this page: its benign capture has too few flows to learn a machine from"
+      : "not on this page: not chosen when it was built (add it with --vantages)";
 }
 
 // shorten text to fit a pixel width at the small label size
@@ -361,6 +364,7 @@ function actCluster() {
     <p>This page carries <b>${VANTAGES.length} taps</b>. Click any other tap on the map, or pick one
       at the top, and the learning and detection acts replay from there.${absent.length
         ? ` Not on this page (drawn faint): ${[["bulk transfer", "a bulk-transfer tap never sets a cutoff, so it is left out unless the page is built with <span class=\"mono\">--allow-bulk</span>"],
+                                               ["too few flows", "its benign capture has too few flows to learn a machine from (long-lived connections, such as a connection pool, make few flows)"],
                                                ["not chosen", "not chosen when the page was built; add with <span class=\"mono\">--vantages</span>"]]
             .map(([reason, why]) => {
               const these = absent.filter(l => ((B.absent || {})[l] || "not chosen") === reason);
@@ -1900,8 +1904,13 @@ const dataScan = () => dataRun("Scanning", async () => {
 const dataManifest = () => dataRun("Reading the manifest", async () => {
   const out = await api("/api/manifest", { root: data.root, method: data.method });
   data.files = out.files.map(f => ({ ...f, name: f.path.split(/[\\/]/).pop(), problem: null }));
-  data.preset = "k3s"; data.profile = { ...data.state.profiles.k3s };
-  data.note = `${out.files.length} ${esc(data.method)} captures from the manifest: the same inputs the static page uses.`;
+  // a recording from localcluster/collect.py names its address plan; anything else is k3s
+  const recorded = out.preset && data.state.profiles[out.preset] ? out.preset : null;
+  data.preset = recorded || "k3s"; data.profile = { ...data.state.profiles[data.preset] };
+  const kubedata = data.root === (data.state.defaults.kubedata_root || null);
+  data.note = `${out.files.length} ${esc(data.method)} captures from the manifest at <span class="mono">${esc(data.root)}</span>`
+    + (kubedata ? ": the same inputs the static page uses." : ".")
+    + (recorded ? ` Its profile.json names the <b>${esc(recorded)}</b> address plan, so that preset is selected.` : "");
 });
 
 async function dataUpload(fileList) {
