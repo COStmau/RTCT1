@@ -36,7 +36,7 @@ from viz import layout
 from viz import sources
 from core.data_io import (MANIFEST_NAME, level_from_label, load_manifest, resolve_output,
                      timebase_issues)
-from core.detectors import BENIGN_QUANTILE, PERSISTENCE_WINDOW, persistent_mask
+from core.detectors import BENIGN_QUANTILE, PERSISTENCE_WINDOW
 from core.evaluation import BULK_LABELS
 from core.reporting import CLEAR_WINDOWS
 from core.features import WINDOW_SIZE
@@ -64,30 +64,26 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "template"
 D3_FILE = "vendor/d3.v7.9.0.min.js"
 
 
-def build_page(benign, targets, cluster_captures, vantage, forget_seconds=FORGET_SECONDS,
-                found=None, profile=topology.K3S):
-    """The bundle for one vantage.
+def calibrate(benign, forget_seconds=FORGET_SECONDS, flows=None):
+    """The learned machine and its cutoffs from one benign packet frame.
 
-    `benign` and each `targets[scenario]` are packet frames for `vantage` (flow columns, as
-    methods.pdfa.load_flow_packets reads them). `cluster_captures` maps every capture label
-    to a benign packet frame and drives the cluster drawing; it may be empty. `found` is that
-    cluster already inferred, so several vantages can share one inference; `profile` is the
-    cluster's address plan, used only when `found` is not given.
+    The one calibration both the page and the live monitor (viz/live.py) use, so they can
+    never disagree about what a tap's normal is. The windowed cutoff comes from the held-out
+    windows scored on a warm clock (the training flows run first, as they did in the
+    recording); the cumulative score gets a by-age reference instead of a single cutoff.
 
-    Calibration is held to the replay's own conditions. The windowed cutoff comes from the
-    held-out windows scored on a warm clock (the training flows run first, as they did in the
-    recording), so a half-empty clock does not drag it down. The cumulative score grows with
-    capture length alone, so it gets no single cutoff: each window is compared with the most
-    the whole benign recording reached by the same age.
+    `flows` replaces the offline flow rule (segment_flows) with flows already cut another
+    way: the live monitor passes the flows its own causal rule makes (viz/live.py), so a
+    tap is trained on exactly the kind of flows it will be scored on.
     """
     t0 = float(benign["ts"].min())
-    flows, dropped = segment_flows(make_flows(benign), t0)
+    if flows is None:
+        flows, dropped = segment_flows(make_flows(benign), t0)
+    else:
+        dropped = 0
     train, holdout = split_flows(flows)
     events = []
     model = fit_model(train, trace=events)
-    if found is None:
-        found = topology.infer_cluster(cluster_captures, profile)
-
     n_windows = n_windows_for(benign)
     first_held = int((float(holdout["start_ts"].iloc[0]) - t0) // WINDOW_SIZE)
     warm = frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds)
@@ -109,6 +105,33 @@ def build_page(benign, targets, cluster_captures, vantage, forget_seconds=FORGET
         "likelihood_traces": len(held_traces),
         "likelihood_benign_rate": float(np.mean([v < cutoffs["likelihood"] for _, v in held_traces])),
     }
+    return {"t0": t0, "flows": flows, "dropped": dropped, "train": train, "holdout": holdout,
+            "model": model, "events": events, "cutoffs": cutoffs, "n_windows": n_windows}
+
+
+def build_page(benign, targets, cluster_captures, vantage, forget_seconds=FORGET_SECONDS,
+                found=None, profile=topology.K3S):
+    """The bundle for one vantage.
+
+    `benign` and each `targets[scenario]` are packet frames for `vantage` (flow columns, as
+    methods.pdfa.load_flow_packets reads them). `cluster_captures` maps every capture label
+    to a benign packet frame and drives the cluster drawing; it may be empty. `found` is that
+    cluster already inferred, so several vantages can share one inference; `profile` is the
+    cluster's address plan, used only when `found` is not given.
+
+    Calibration is held to the replay's own conditions. The windowed cutoff comes from the
+    held-out windows scored on a warm clock (the training flows run first, as they did in the
+    recording), so a half-empty clock does not drag it down. The cumulative score grows with
+    capture length alone, so it gets no single cutoff: each window is compared with the most
+    the whole benign recording reached by the same age.
+    """
+    cal = calibrate(benign, forget_seconds)
+    t0, flows, dropped, train, holdout = (cal["t0"], cal["flows"], cal["dropped"], cal["train"],
+                                          cal["holdout"])
+    model, events, cutoffs, n_windows = cal["model"], cal["events"], cal["cutoffs"], cal["n_windows"]
+    if found is None:
+        found = topology.infer_cluster(cluster_captures, profile)
+
     # the held-out replay runs on the whole recording so its clock is warm; only the traces
     # ending in the held-out part are kept
     captures = [_capture(HELD_OUT, flows, t0, n_windows, float(benign["ts"].max()) - t0,
@@ -349,6 +372,44 @@ def _flow_elements(flows, found):
             [{"src": a, "dst": b, "flows": n} for (a, b), n in sorted(new_pairs.items())])
 
 
+class LiveStatus:
+    """The window rules one window at a time, so a live stream and a replay share them.
+
+    `step` takes one window's evidence in order and returns its alert, release, status and
+    forgetting flag. An alert is the PERSISTENCE_WINDOW-th flag in a row (the running count
+    core.detectors.persistent_mask uses); it is released after CLEAR_WINDOWS scored,
+    unflagged windows; a window with no trace neither counts toward that run nor resets it.
+    """
+
+    def __init__(self, warmup_s=0.0):
+        self.warmup_s = float(warmup_s)
+        self.run = 0                  # consecutive flagged windows
+        self.pending = False          # an alert is open
+        self.clean = 0                # scored, unflagged windows since the last flag
+        self.since_release = None
+        self.alerted = False
+
+    def step(self, w, scored, flagged, unlikely=False, held=False):
+        self.run = self.run + 1 if flagged else 0
+        alert = flagged and self.run >= PERSISTENCE_WINDOW
+        self.pending = self.pending or alert
+        self.clean = 0 if flagged else self.clean + 1 if scored else self.clean
+        released = self.pending and scored and self.clean >= CLEAR_WINDOWS
+        if released:
+            self.pending, self.since_release = False, 0
+        elif self.since_release is not None:
+            self.since_release = self.since_release + 1 if self.clean else None
+        status = ("alert" if alert else "flagged" if flagged else "unseen" if unlikely
+                  else "nodata" if not scored else "warmup" if w * WINDOW_SIZE < self.warmup_s
+                  else "released" if self.since_release is not None
+                  and self.since_release <= RELEASE_SHOWN
+                  else "normal")
+        verdict = {"alert": bool(alert), "released": bool(released), "status": status,
+                   "forgetting_shown": bool(self.alerted and scored and not flagged and held)}
+        self.alerted = self.alerted or bool(alert)
+        return verdict
+
+
 def _windows(traces, n_windows, cutoffs, warmup_s):
     """Per window: both detectors' flags, sustained alerts, releases, and one status.
 
@@ -379,26 +440,13 @@ def _windows(traces, n_windows, cutoffs, warmup_s):
     known = np.array(cutoffs["cumulative_reference"][:n_windows], dtype=float)
     reference[:len(known)] = known
     held = np.nan_to_num(cumulative, nan=-np.inf) > np.nan_to_num(reference, nan=np.inf)
-    alert = persistent_mask(flagged).to_numpy()
-    windows, pending, clean, since_release, alerted = [], False, 0, None, False
+    rules = LiveStatus(warmup_s)
+    windows = []
     for w in range(n_windows):
-        pending = pending or bool(alert[w])
-        clean = 0 if flagged[w] else clean + 1 if scored[w] else clean
-        released = pending and scored[w] and clean >= CLEAR_WINDOWS
-        if released:
-            pending, since_release = False, 0
-        elif since_release is not None:
-            since_release = since_release + 1 if clean else None
-        status = ("alert" if alert[w] else "flagged" if flagged[w] else "unseen" if unlikely[w]
-                  else "nodata" if not scored[w] else "warmup" if w * WINDOW_SIZE < warmup_s
-                  else "released" if since_release is not None and since_release <= RELEASE_SHOWN
-                  else "normal")
+        verdict = rules.step(w, bool(scored[w]), bool(flagged[w]), bool(unlikely[w]),
+                             bool(held[w]))
         windows.append({"index": w, "peak": peak[w], "flagged": bool(flagged[w]),
-                        "likelihood_flag": bool(unlikely[w]), "alert": bool(alert[w]),
-                        "released": released, "status": status,
-                        "forgetting_shown": bool(alerted and scored[w] and not flagged[w]
-                                                 and held[w])})
-        alerted = alerted or bool(alert[w])
+                        "likelihood_flag": bool(unlikely[w]), **verdict})
     return windows
 
 

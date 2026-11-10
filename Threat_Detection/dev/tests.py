@@ -4055,5 +4055,160 @@ class SettledStepsChecks(unittest.TestCase):
                 self.assertEqual(set(settled), {n["id"] for n in nodes})
 
 
+class LiveChecks(unittest.TestCase):
+    """viz/live.py: the stream path agrees with the recording path wherever a stream can."""
+
+    @staticmethod
+    def rows(frame):
+        return [{k: (None if isinstance(v, float) and np.isnan(v) else v) for k, v in r.items()}
+                for r in frame.to_dict("records")]
+
+    def test_pcap_stream_reads_what_the_file_reader_reads(self):
+        import io
+        from convert.read import CaptureReader
+        from viz import live
+        datas = [_sll2(_ipv4(_tcp(40000 + i, 80, payload=bytes(i * 10)), 6,
+                             src="10.244.0.5", dst="10.96.0.7"), 0x0800) for i in range(12)]
+        frames = [(1771545908 + i // 3, (i * 125000) % 1000000, data, len(data) + 4)
+                  for i, data in enumerate(datas)]
+        blob = _pcap_bytes(frames)
+        tee = bytearray()
+        streamed = list(live.PcapStream(io.BytesIO(blob), tee=tee.extend).frames())
+        read = list(CaptureReader(str(_capture_file(blob, "s.pcap"))).frames())
+        self.assertEqual(streamed, read)
+        self.assertEqual(bytes(tee), blob)       # Record writes the same pcap that arrived
+        row = live.packet_row(streamed[3])
+        self.assertEqual((row["src_ip"], row["dst_ip"], row["dst_port"], row["proto"]),
+                         ("10.244.0.5", "10.96.0.7", 80, "tcp"))
+        # a stream cut mid-record ends cleanly with the frames that were whole
+        self.assertEqual(len(list(live.PcapStream(io.BytesIO(blob[:-5])).frames())), 11)
+
+    def test_windower_keeps_the_flows_segment_flows_keeps(self):
+        """With no 5-tuple reused, the causal rule and the offline rule keep the same flows."""
+        from viz import live
+        packets = flow_capture(vary=True)
+        offline, _ = statemachine.segment_flows(statemachine.make_flows(packets), packets["ts"].min())
+        online = live.live_flows(self.rows(packets))
+        columns = ["start_ts", "bytes", "duration"]
+        self.assertEqual(offline[columns].astype(float).values.tolist(),
+                         online[columns].astype(float).values.tolist())
+
+    def test_windower_drops_a_flow_that_spans_seconds(self):
+        from viz import live
+        base = {"frame_len": 60, "src_ip": "a", "dst_ip": "b", "dst_port": 53, "proto": "udp"}
+        rows = [dict(base, ts=t, src_port=port) for t, port in
+                ((0.25, 1), (1.25, 1),            # one 5-tuple across two seconds: dropped
+                 (0.5, 2), (0.6, 2),              # wholly inside second 0: kept
+                 (2.5, 3), (12.5, 3))]            # reused ten seconds later: first kept, reuse not
+        windower = live.Windower(lateness=2)
+        closed = [c for r in rows for c in windower.add(r)] + windower.flush()
+        kept = {c["t"]: list(c["flow_rows"]["start_ts"]) for c in closed if len(c["flow_rows"])}
+        self.assertEqual(kept, {0: [0.5], 2: [2.5]})
+        # each closed second also says who talked to whom, for the live map
+        self.assertEqual(closed[0]["pairs"], [["a", "b", 3]])
+        self.assertEqual(closed[5]["pairs"], [])
+        self.assertEqual([c["t"] for c in closed], list(range(13)))   # quiet seconds still close
+
+    def test_live_detector_reproduces_the_page(self):
+        """The same capture, streamed, gets the page's per-window peaks and statuses."""
+        from viz import live
+        benign, attack = flow_capture(vary=True), flow_capture(burst=(20, 30), vary=True)
+        calibration = viz.calibrate(benign)
+        page = viz.build_page(benign, {"flood": attack}, {}, "pod-web")
+        windows = page["playback"]["captures"][1]["windows"]
+        detector, windower = live.LiveDetector(calibration), live.Windower()
+        verdicts = []
+        for row in self.rows(attack):
+            verdicts += [detector.window(c, windower.t0) for c in windower.add(row)]
+        verdicts += [detector.window(c, windower.t0) for c in windower.flush()]
+        self.assertEqual([w["status"] for w in windows], [v["status"] for v in verdicts])
+        for w, v in zip(windows, verdicts):
+            if v["peak"] is None:
+                self.assertTrue(np.isnan(w["peak"]))
+            else:
+                self.assertAlmostEqual(w["peak"], v["peak"])
+        self.assertTrue(any(v["alert"] for v in verdicts))
+
+    def test_live_calibration_learns_from_live_cut_flows(self):
+        from viz import live
+        benign = flow_capture(vary=True)
+        calibration = live.calibrate_live(benign)
+        self.assertEqual(len(calibration["flows"]), len(live.live_flows(self.rows(benign))))
+        self.assertIn("windowed", calibration["cutoffs"])
+
+    def test_wrong_address_plan_is_named(self):
+        """k3s traffic built under kubeadm draws every pod as a LAN device; the build says so."""
+        from viz import sources
+        k3s = flow_capture()      # its pods are 10.42.x
+        self.assertIsNone(sources.better_preset({"pod-a": k3s}, cluster.K3S))
+        self.assertEqual(sources.better_preset({"pod-a": k3s}, cluster.KUBEADM)[0], "k3s")
+
+    def test_cross_site_posts_are_refused(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        from viz import serve
+        server = serve.serve(serve.Harness(quiet=True), port=0)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            def post(path, origin):
+                headers = {"Content-Type": "application/json"}
+                if origin:
+                    headers["Origin"] = origin
+                request = urllib.request.Request(base + path, data=b"{}", headers=headers)
+                try:
+                    with urllib.request.urlopen(request, timeout=10) as response:
+                        return response.status
+                except urllib.error.HTTPError as error:
+                    return error.code
+            for path in ("/api/attack", "/api/monitor/start", "/api/scan", "/api/baseline"):
+                self.assertEqual(post(path, "http://evil.example"), 403, path)
+            self.assertEqual(post("/api/scan", base), 200)
+            self.assertEqual(post("/api/scan", None), 200)   # curl and tests send no Origin
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_stream_commands_write_pcap_to_stdout(self):
+        collect = _collect()
+        profile = collect.load_profile("general")
+        for tap in collect.taps(profile):
+            argv = collect.stream_argv(profile, tap, pod="api-x", bridge="br-123")
+            self.assertEqual(argv[argv.index("-w") + 1], "-", tap["label"])
+            self.assertIn("-U", argv)
+            self.assertNotIn("timeout", argv)
+            if tap["level"] == "pod":
+                self.assertEqual(argv[:3], ["kubectl", "--context", "k3d-rtct-general"])
+            else:   # a named container, so stopping the monitor can remove it
+                self.assertEqual(argv[argv.index("--name") + 1], collect.live_container(tap))
+
+    def test_cluster_summary_from_kubectl_json(self):
+        collect = _collect()
+        profile = collect.load_profile("general")
+        listed = [{"name": "rtct-general", "serversRunning": 1, "serversCount": 1,
+                   "agentsRunning": 2, "agentsCount": 2}]
+        node = lambda name, label, ready: {"metadata": {"name": name, "labels": {"rtct/name": label}},
+                                           "status": {"conditions": [{"type": "Ready", "status": ready}]}}
+        nodes = {"items": [node("k3d-a", "agent1", "True"), node("k3d-s", "server", "True")]}
+        pods = {"items": [{"metadata": {"name": "api-1", "labels": {"app": "api", "rtct/role": "workload"}},
+                           "status": {"phase": "Running", "podIP": "10.244.1.5",
+                                      "containerStatuses": [{"ready": True}, {"ready": True}]},
+                           "spec": {"nodeName": "k3d-a"}}]}
+        services = {"items": [{"metadata": {"name": "api", "namespace": "rtct"},
+                               "spec": {"clusterIP": "10.96.4.4", "ports": [{"name": "http", "port": 8080}]}},
+                              {"metadata": {"name": "headless", "namespace": "rtct"}, "spec": {"clusterIP": "None"}}]}
+        found = collect.summarize_cluster(profile, listed, nodes, pods, services)
+        self.assertEqual([(x["name"], x["ip"]) for x in found["services"]], [("api", "10.96.4.4")])
+        self.assertEqual(found["pods"][0]["namespace"], None)
+        self.assertFalse(found["pods"][0]["host_network"])
+        self.assertTrue(found["running"])
+        self.assertEqual([n["name"] for n in found["nodes"]], ["agent1", "server"])
+        self.assertEqual(found["pods"][0]["ip"], "10.244.1.5")
+        nodes["items"][1]["status"]["conditions"][0]["status"] = "False"
+        self.assertFalse(collect.summarize_cluster(profile, listed, nodes, pods)["running"])
+        self.assertFalse(collect.summarize_cluster(profile, [], nodes, pods)["running"])
+
+
 if __name__ == "__main__":
     unittest.main()

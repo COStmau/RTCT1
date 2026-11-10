@@ -288,6 +288,11 @@ def build(assignments, profile=None, forget=FORGET_SECONDS, selected=None, allow
               for v in drawn}
     bundle = page.build_pages(inputs, benign, forget, selected=selected or page.DEFAULT_VANTAGE,
                               profile=profile)
+    better = better_preset(benign, profile)
+    if better:
+        name, count = better
+        notes.append(f"the {profile.name} address plan found no pod addresses, but {count} addresses "
+                     f"fall in the {name} plan's pod range: rebuild with the {name} preset")
     thin = sorted(v for v, why in bundle["absent"].items() if why == "too few flows")
     if thin:
         notes.append(f"left off {', '.join(thin)}: too few benign flows to learn from "
@@ -295,6 +300,36 @@ def build(assignments, profile=None, forget=FORGET_SECONDS, selected=None, allow
     drawn = [v for v in drawn if v in bundle["vantages"]]
     bundle["source"] = provenance(assignments, profile, forget, allow_bulk, drawn, notes, origin)
     return bundle
+
+
+def better_preset(captures, profile):
+    """(preset, addresses) when `profile` puts no address in its pod range but a preset would.
+
+    Choosing kubeadm for k3s traffic (or the reverse) does not fail: every pod lands outside
+    the cluster as a LAN device, and the map fills with unlabelled-looking addresses. This
+    names the preset that fits, so the Data tab can say so.
+    """
+    import ipaddress
+    addresses = set()
+    for packets in captures.values():
+        for column in ("src_ip", "dst_ip"):
+            addresses.update(str(a) for a in packets[column].dropna().unique())
+    parsed = []
+    for address in addresses:
+        try:
+            parsed.append(ipaddress.ip_address(address))
+        except ValueError:
+            continue
+
+    def in_pods(plan):
+        nets = [ipaddress.ip_network(c) for c in plan.pod_cidrs]
+        return sum(any(a in n for n in nets if a.version == n.version) for a in parsed)
+
+    if in_pods(profile):
+        return None
+    counts = {name: in_pods(plan) for name, plan in topology.PROFILES.items() if name != profile.name}
+    name = max(counts, key=counts.get, default=None)
+    return (name, counts[name]) if name and counts[name] else None
 
 
 def provenance(assignments, profile, forget, allow_bulk, drawn, notes, origin):

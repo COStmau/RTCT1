@@ -209,6 +209,92 @@ def capture_argv(profile, tap, seconds, staging, pod=None, bridge=None):
             *tcpdump, "-i", bridge, "-w", f"/out/{name}", *([tap["filter"]] if tap["filter"] else [])]
 
 
+def live_container(tap):
+    """The netshoot container a live node or router tap runs in, named so it can be removed."""
+    return f"rtct-live-{tap['label']}"
+
+
+def stream_argv(profile, tap, pod=None, bridge=None):
+    """capture_argv for the live monitor: pcap to stdout, headers only, until stopped.
+
+    -s 128 keeps every header the dissector reads (convert/read.HEAD_BYTES is 256, but no
+    header it parses runs past 128) and keeps a flood's pipe small; -U flushes each packet.
+    """
+    tcpdump = ["tcpdump", "-U", "-n", "-s", "128", "-w", "-"]
+    if tap["level"] == "pod":
+        return ["kubectl", "--context", context(profile), "-n", profile["namespace"], "exec", pod,
+                "-c", "capture", "--", *tcpdump, "-i", "any"]
+    docker = ["docker", "run", "--rm", "--name", live_container(tap),
+              "--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW"]
+    if tap["level"] == "node":
+        return [*docker, "--net", f"container:{tap['container']}", IMAGES["netshoot"],
+                *tcpdump, "-i", "any"]
+    return [*docker, "--net", "host", "--privileged", IMAGES["netshoot"],
+            *tcpdump, "-i", bridge, *([tap["filter"]] if tap["filter"] else [])]
+
+
+def newest_benign(profile, out=None):
+    """{tap label: file} of the profile's benign recording (CSV when written, else pcap)."""
+    out = Path(out or DEFAULT_OUT / profile["name"]).expanduser()
+    found = {}
+    for tap in taps(profile):
+        for path in (csv_path(out, "benign", tap["label"]), pcap_path(out, "benign", tap["label"])):
+            if path.exists() and path.stat().st_size > 24:
+                found[tap["label"]] = path
+                break
+    return found
+
+
+def summarize_cluster(profile, listed, nodes_json, pods_json, services_json=None):
+    """What detect() reports, from `k3d cluster list -o json` and kubectl's JSON (pure).
+
+    Pods and services come from every namespace (kube-system's DNS talks to everything), so
+    the live map can name each address it sees; `role` is the rtct label, None elsewhere.
+    """
+    entry = next((c for c in listed if c.get("name") == profile["cluster"]), None)
+    if entry is None:
+        return {"profile": profile["name"], "cluster": profile["cluster"], "running": False}
+    nodes = []
+    for item in (nodes_json or {}).get("items", []):
+        ready = any(c.get("type") == "Ready" and c.get("status") == "True"
+                    for c in item.get("status", {}).get("conditions", []))
+        labels = item["metadata"].get("labels", {})
+        addresses = {a.get("type"): a.get("address") for a in item.get("status", {}).get("addresses", [])}
+        nodes.append({"name": labels.get("rtct/name", item["metadata"]["name"]),
+                      "k3d": item["metadata"]["name"], "ready": ready,
+                      "ip": addresses.get("InternalIP"), "pod_cidr": item.get("spec", {}).get("podCIDR"),
+                      "control_plane": "node-role.kubernetes.io/control-plane" in labels})
+    pods = []
+    for item in (pods_json or {}).get("items", []):
+        statuses = item.get("status", {}).get("containerStatuses", [])
+        labels = item["metadata"].get("labels", {})
+        pods.append({"name": item["metadata"]["name"],
+                     "namespace": item["metadata"].get("namespace"),
+                     "app": labels.get("app") or labels.get("k8s-app") or item["metadata"]["name"].rsplit("-", 2)[0],
+                     "host_network": bool(item.get("spec", {}).get("hostNetwork")),
+                     "role": labels.get(NAMESPACE_LABEL),
+                     "phase": item.get("status", {}).get("phase"),
+                     "ready": bool(statuses) and all(c.get("ready") for c in statuses),
+                     "ip": item.get("status", {}).get("podIP"),
+                     "node": item.get("spec", {}).get("nodeName")})
+    services = []
+    for item in (services_json or {}).get("items", []):
+        ip = item.get("spec", {}).get("clusterIP")
+        if not ip or ip == "None":
+            continue
+        services.append({"name": item["metadata"]["name"], "namespace": item["metadata"].get("namespace"),
+                         "ip": ip, "ports": [{"name": p.get("name"), "port": p.get("port"),
+                                              "protocol": p.get("protocol", "TCP")}
+                                             for p in item.get("spec", {}).get("ports", [])]})
+    running = bool(nodes) and all(n["ready"] for n in nodes)
+    return {"profile": profile["name"], "cluster": profile["cluster"], "running": running,
+            "harness_profile": profile["harness_profile"],
+            "servers": [entry.get("serversRunning"), entry.get("serversCount")],
+            "agents": [entry.get("agentsRunning"), entry.get("agentsCount")],
+            "nodes": sorted(nodes, key=lambda n: n["name"]), "pods": sorted(pods, key=lambda p: p["name"]),
+            "services": sorted(services, key=lambda x: (x["namespace"] or "", x["name"]))}
+
+
 # ---------------------------------------------------------------- the cluster (side effects)
 
 def sh(*argv, check=True, capture=False, quiet=False, input_text=None):
@@ -239,6 +325,69 @@ def cluster_exists(profile):
 def apply(profile, objects):
     kubectl(profile, "apply", "-f", "-",
             input_text=json.dumps({"apiVersion": "v1", "kind": "List", "items": objects}))
+
+
+def detect():
+    """Every local profile whose k3d cluster exists, with node and pod health."""
+    if not shutil.which("k3d") or not shutil.which("kubectl"):
+        return []
+    try:
+        listed = json.loads(sh("k3d", "cluster", "list", "-o", "json", capture=True, quiet=True) or "[]")
+    except subprocess.CalledProcessError:
+        return []
+    found = []
+    for name in profile_names():
+        profile = load_profile(name)
+        if not any(c.get("name") == profile["cluster"] for c in listed):
+            continue
+        get = lambda *what: json.loads(kubectl(profile, "get", *what, "-o", "json", check=False,
+                                               capture=True, quiet=True) or "{}")
+        found.append(summarize_cluster(profile, listed, get("nodes"), get("pods", "-A"),
+                                       get("services", "-A")))
+    return found
+
+
+def start_attack(profile, scenario, seconds, log=None):
+    """Launch one attack now for `seconds`; returns the handle stop_attack and run() take."""
+    spec = profile["attacks"].get(scenario)
+    if spec is None:
+        raise ValueError(f"{scenario!r} is not an attack of the {profile['name']} profile")
+    ns = profile["namespace"]
+    kubectl(profile, "-n", ns, "delete", "job", "-l", f"{NAMESPACE_LABEL}=attack",
+            "--ignore-not-found", "--wait=true", capture=True, quiet=True)
+    handle = {"scenario": scenario, "kind": spec["kind"], "seconds": int(seconds),
+              "started": time.time(), "proc": None, "pod": None}
+    if spec["kind"] == "exec":
+        workload, argv = attack_exec_args(profile, scenario, seconds)
+        handle["pod"] = pod_for(profile, workload)
+        handle["proc"] = subprocess.Popen(
+            ["kubectl", "--context", context(profile), "-n", ns, "exec", handle["pod"], "-c", "app",
+             "--", *argv], stdout=log or subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    else:
+        apply(profile, [render_attack_job(profile, scenario, seconds)])
+    return handle
+
+
+def attack_logs(profile, handle):
+    if handle["kind"] == "exec":
+        return ""
+    return kubectl(profile, "-n", profile["namespace"], "logs", f"job/attack-{handle['scenario']}",
+                   check=False, capture=True, quiet=True) or ""
+
+
+def stop_attack(profile, handle):
+    """End an attack early (or clean up after one): delete its Job, or end the exec."""
+    ns = profile["namespace"]
+    if handle["kind"] == "exec":
+        if handle["proc"] is not None and handle["proc"].poll() is None:
+            handle["proc"].terminate()
+        # killing kubectl exec does not end the process it started inside the pod
+        kubectl(profile, "-n", ns, "exec", handle["pod"], "-c", "app", "--", "pkill", "-f",
+                f"traffic.py {profile['attacks'][handle['scenario']]['mode']}",
+                check=False, capture=True, quiet=True)
+    else:
+        kubectl(profile, "-n", ns, "delete", "job", f"attack-{handle['scenario']}", "--wait=false",
+                "--ignore-not-found", capture=True, quiet=True)
 
 
 def up(profile):
@@ -327,26 +476,17 @@ def run(profile, scenario, seconds=60, attack_at=10, out=None, csv=False):
     if scenario != "benign":
         time.sleep(max(0.0, attack_at - (time.time() - started)))
         length = attack_seconds(seconds, attack_at) - 1
-        spec = profile["attacks"][scenario]
         print(f"  attack {scenario} at {time.time() - started:.1f} s for {length} s")
-        if spec["kind"] == "exec":
-            workload, argv = attack_exec_args(profile, scenario, length)
-            attack = subprocess.Popen(["kubectl", "--context", context(profile), "-n", ns, "exec",
-                                       pod_for(profile, workload), "-c", "app", "--", *argv],
-                                      stdout=open(staging / "attack.log", "w"), stderr=subprocess.STDOUT)
-        else:
-            apply(profile, [render_attack_job(profile, scenario, length)])
+        attack = start_attack(profile, scenario, length, log=open(staging / "attack.log", "w"))
 
     for label, proc in procs.items():
         proc.wait(timeout=seconds + 60)
     if attack is not None:
-        attack.wait(timeout=30)
-    if scenario != "benign" and profile["attacks"][scenario]["kind"] != "exec":
-        logs = kubectl(profile, "-n", ns, "logs", f"job/attack-{scenario}", check=False,
-                       capture=True, quiet=True)
-        (staging / "attack.log").write_text(logs or "")
-        kubectl(profile, "-n", ns, "delete", "job", f"attack-{scenario}", "--wait=false",
-                "--ignore-not-found", capture=True, quiet=True)
+        if attack["proc"] is not None:
+            attack["proc"].wait(timeout=30)
+        else:
+            (staging / "attack.log").write_text(attack_logs(profile, attack))
+            stop_attack(profile, attack)
 
     print("Collecting ...")
     rows = []

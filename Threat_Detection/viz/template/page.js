@@ -121,7 +121,8 @@ function defs() {
 
 // Lay the cluster out inside `box` and draw it into `g`. Returns element positions by id
 // so callers can draw on top (flows, taps). Everything is placed by rules over the bundle.
-function renderCluster(g, cluster, box, { focus = null, compact = false, onTap = null } = {}) {
+function renderCluster(g, cluster, box, { focus = null, compact = false, onTap = null, onPage = null, tapNote = null } = {}) {
+  const tapOnPage = onPage || (v => Boolean(B && B.vantages[v.label]));
   const pos = new Map();
   const pad = compact ? 6 : 16;
   const rows = compact
@@ -156,20 +157,21 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     const cp = column.kind === "host" && column.host.roles.includes("control-plane");
     const ghost = column.kind === "lane" || !column.host.name;
     hostG.append("rect").attr("class", `host-box ${cp ? "cp" : ""} ${ghost ? "ghost" : ""}`)
+      .attr("data-el", column.kind === "host" ? column.host.id : null)
       .attr("x", r.x).attr("y", r.y).attr("width", r.w).attr("height", r.h).attr("rx", compact ? 6 : 12);
     const head = compact ? 14 : (ghost ? 30 : 58);
     if (column.kind === "host") {
       const h = column.host;
       pos.set(h.id, { x: r.x + r.w / 2, y: r.y + head / 2 + 4, box: r, kind: "host" });
       if (!compact || h.name) {
-        hostG.append("text").attr("class", compact ? "t-small" : "t-title")
+        hostG.append("text").attr("class", compact ? "t-small" : "t-title").attr("data-for", h.id)
           .attr("x", r.x + (compact ? 6 : 12)).attr("y", r.y + (compact ? 12 : 20))
           .text(h.name || h.ip);
       }
       if (!compact) {
         const lines = h.name ? [`${h.ip} · ${h.roles.join(" · ")}`, h.pod_cidr ? `pods ${h.pod_cidr}` : "no pod subnet"]
                              : ["seen in traffic only"];
-        lines.forEach((line, i) => hostG.append("text").attr("class", "t-small t-muted detail")
+        lines.forEach((line, i) => hostG.append("text").attr("class", "t-small t-muted detail").attr("data-for", h.id)
           .attr("x", r.x + 12).attr("y", r.y + 35 + i * 13).text(fit(line, r.w - 24)));
       }
     } else if (!compact) {
@@ -177,6 +179,7 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
         .text("pods with no claimed node");
     }
     hover(hostG.append("rect").attr("x", r.x).attr("y", r.y).attr("width", r.w).attr("height", head)
+      .attr("data-hit", column.kind === "host" ? column.host.id : null)
       .attr("fill", "transparent").datum(column), c => c.kind === "host"
         ? `<div class="tt-title">${c.host.name ? "node " + c.host.name : "host " + c.host.ip}</div>
            <div class="tt-row">${c.host.ip} · ${c.host.roles.join(", ")}</div>
@@ -196,17 +199,17 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
         pos.set(p.id, { x: cx, y: cy, r: rr, kind: "pod" });
         const circle = hostG.append("circle")
           .attr("class", `pod ${p.host_network ? "hostnet" : p.name ? "named" : ""} ${p.new ? "new" : ""}`)
-          .attr("data-id", p.id).attr("cx", cx).attr("cy", cy).attr("r", rr).datum(p);
+          .attr("data-id", p.id).attr("data-el", p.id).attr("cx", cx).attr("cy", cy).attr("r", rr).datum(p);
         hover(circle, d => `<div class="tt-title">${d.name || "pod " + d.ip}</div>
           <div class="tt-row">${d.host_network ? "host network: shares the node's address " + d.ip + ", so its traffic is drawn on the node" : "pod address " + d.ip}</div>
           ${d.new ? `<div class="tt-row">never seen in benign traffic</div>` : ""}`);
         if (p.name && !compact && rr > 16) {
           const label = p.name.replace(/^pod-/, "");
-          hostG.append("text").attr("class", "t-small").attr("text-anchor", "middle")
+          hostG.append("text").attr("class", "t-small").attr("text-anchor", "middle").attr("data-for", p.id)
             .attr("x", cx).attr("y", cy + 4).text(label.length * 6 > rr * 2 ? label.slice(0, Math.floor(rr / 3.2)) + "…" : label)
             .style("pointer-events", "none");
           if (p.host_network) {
-            hostG.append("text").attr("class", "t-small t-muted").attr("text-anchor", "middle")
+            hostG.append("text").attr("class", "t-small t-muted").attr("text-anchor", "middle").attr("data-for", p.id)
               .attr("x", cx).attr("y", cy + 16).text("host net").style("pointer-events", "none");
           }
         }
@@ -223,18 +226,24 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
   pos.set("uplink", { x: box.x + box.w * 0.92, y: upY, kind: "network" });
   if (!compact) {
     g.append("text").attr("class", "t-section detail").attr("x", box.x).attr("y", upY - 8).text("LAN uplink");
-    g.append("text").attr("class", "t-section detail").attr("x", box.x).attr("y", top.y + top.h * 0.24 + 4).text("outside");
+    g.append("text").attr("class", "t-section detail").attr("x", box.x).attr("y", top.y + top.h * 0.24 + 4)
+      .text(box.w * 0.8 / Math.max(outside.length, 1) < 70 ? `outside · ${outside.length}` : "outside")
+      .append("title").text("hover an address to name it");
   }
+  // an IP label needs about 70 px; closer than that the labels overprint each other, so they
+  // wait for focus (hover or click) instead, and the row's heading says how many there are
+  const crowded = box.w * 0.8 / Math.max(outside.length, 1) < 70;
   outside.forEach((e, i) => {
     const ex = box.x + box.w * (0.16 + 0.8 * (i + 0.5) / outside.length), ey = top.y + top.h * 0.24;
     pos.set(e.id, { x: ex, y: ey, r: compact ? 5 : 9, kind: "external" });
-    hover(g.append("circle").attr("class", `ext ${e.kind} ${e.new ? "new" : ""}`).attr("cx", ex).attr("cy", ey).attr("r", compact ? 5 : 9).datum(e),
+    hover(g.append("circle").attr("class", `ext ${e.kind} ${e.new ? "new" : ""}`).attr("data-el", e.id).attr("cx", ex).attr("cy", ey).attr("r", compact ? 5 : 9).datum(e),
       d => (d.kind === "host"
         ? `<div class="tt-title">host ${d.ip}</div><div class="tt-row">${d.roles.join(", ")} · serves a cluster port; no capture of its own</div>`
         : `<div class="tt-title">${d.kind === "internet" ? "the internet" : "LAN device " + d.ip}</div>
            ${d.note ? `<div class="tt-row">${d.note}; not proven to be a node</div>` : ""}`)
         + (d.new ? `<div class="tt-row">never seen in benign traffic</div>` : ""));
-    if (!compact) g.append("text").attr("class", "t-small t-2 detail").attr("text-anchor", "middle")
+    if (!compact) g.append("text").attr("class", `t-small t-2 detail ext-label ${crowded && e.kind !== "internet" ? "crowded" : ""}`)
+      .attr("data-for", e.id).attr("text-anchor", "middle")
       .attr("x", ex).attr("y", ey + 23).text(e.kind === "internet" ? "internet" : e.ip);
   });
 
@@ -249,13 +258,15 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
   // services (the cluster's virtual IPs) along the bottom
   cluster.services.forEach((s, i) => {
     const sx = box.x + box.w * (i + 0.5) / Math.max(cluster.services.length, 1), sy = services.y + services.h * 0.5;
-    const w = compact ? 46 : 150, h = compact ? 14 : 30;
+    // a pill per service, as wide as the row allows: seven services must not overprint
+    const room = box.w / Math.max(cluster.services.length, 1) - 8;
+    const w = compact ? Math.min(46, room) : Math.min(150, Math.max(room, 40)), h = compact ? 14 : 30;
     pos.set(s.id, { x: sx, y: sy - h / 2, kind: "service" });
-    hover(g.append("rect").attr("class", `svc ${s.new ? "new" : ""}`).attr("x", sx - w / 2).attr("y", sy - h / 2)
+    hover(g.append("rect").attr("class", `svc ${s.new ? "new" : ""}`).attr("data-el", s.id).attr("x", sx - w / 2).attr("y", sy - h / 2)
       .attr("width", w).attr("height", h).attr("rx", h / 2).datum(s),
       d => `<div class="tt-title">service ${d.ip}</div><div class="tt-row">${d.port_names.join(", ") || "no well-known port"}</div>`);
-    if (!compact) g.append("text").attr("class", "detail").attr("text-anchor", "middle").attr("x", sx).attr("y", sy + 4)
-      .text(`${s.ip}${s.port_names.length ? " · " + s.port_names.join(", ") : ""}`).style("pointer-events", "none");
+    if (!compact) g.append("text").attr("class", "detail").attr("data-for", s.id).attr("text-anchor", "middle").attr("x", sx).attr("y", sy + 4)
+      .text(fit(s.name ? `${s.name} · ${s.ip}` : `${s.ip}${s.port_names.length ? " · " + s.port_names.join(", ") : ""}`, w - 12)).style("pointer-events", "none");
   });
   if (!compact && cluster.services.length) g.append("text").attr("class", "t-section detail")
     .attr("x", box.x).attr("y", services.y + 12).text("services");
@@ -282,9 +293,9 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     if (p.kind === "host") { tx = p.box.x + p.box.w - 14; ty = p.box.y + 14; }
     else if (p.kind === "pod") { tx = p.x + p.r * 0.72; ty = p.y - p.r * 0.72; }
     else if (p.kind === "network") { tx = box.x + box.w * (0.78 + 0.14 * networkTaps.indexOf(v) / Math.max(networkTaps.length, 1)); }
-    const isFocus = v.label === focus, onPage = Boolean(B.vantages[v.label]);
+    const isFocus = v.label === focus, here = tapOnPage(v);
     const tg = taps.append("g")
-      .attr("class", `tap ${isFocus ? "focus" : ""} ${onPage ? "on-page" : "off-page"}`)
+      .attr("class", `tap ${isFocus ? "focus" : ""} ${here ? "on-page" : "off-page"}`)
       .attr("data-label", v.label).attr("transform", `translate(${tx},${ty})`).datum(v);
     if (isFocus) tg.append("circle").attr("class", "tap-halo").attr("r", compact ? 8 : 12);
     tg.append("circle").attr("class", "tap-dot").attr("r", compact ? 3.5 : 5);
@@ -292,12 +303,13 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     tg.append("circle").attr("class", "tap-hit").attr("r", compact ? 8 : 12);
     if (isFocus && !compact) tg.append("text").attr("class", "t-small halo").attr("x", 10).attr("y", -8).text(`listening: ${v.label}`);
     hover(tg, d => `<div class="tt-title">capture tap: ${d.label}</div><div class="tt-row">${d.level}-level recording</div>
-      <div class="tt-row">${d.label === focus ? "the tap this page replays"
+      <div class="tt-row">${tapNote ? tapNote(d) : d.label === focus ? "the tap this page replays"
         : B.vantages[d.label] ? "click to replay from this tap"
         : absentWhy(d.label)}</div>`);
-    if (onTap && onPage && !isFocus) tg.on("click", (event, d) => { hideTip(); onTap(d.label); });
+    if (onTap && here && !isFocus) tg.on("click", (event, d) => { hideTip(); onTap(d.label); });
     if (isFocus) pos.set("__focus__", { x: tx, y: ty });
   }
+  if (!compact) clusterFocus(g, cluster, pos, edges, box, label);
   return { pos, edges, taps };
 
   function label(id) {
@@ -307,6 +319,110 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     if (pod) return pod.name || pod.ip;
     return id.replace(/^\w+:/, "");
   }
+}
+
+// Focus on the full-size map: hovering an element brings it forward (it grows, its
+// conversation partners and links stay lit, everything else fades) and a card names it in a
+// larger type; clicking pins that focus until the background or the element is clicked again.
+// The compact maps leave this off: their highlighting belongs to the replay.
+function clusterFocus(g, cluster, pos, edges, box, nameOf) {
+  const near = new Map();
+  for (const e of cluster.edges) {
+    if (!near.has(e.src)) near.set(e.src, new Set());
+    if (!near.has(e.dst)) near.set(e.dst, new Set());
+    near.get(e.src).add(e.dst);
+    near.get(e.dst).add(e.src);
+  }
+  const hostOf = new Map(cluster.pods.map(p => [p.id, p.host]));
+  const card = g.append("g").attr("class", "focus-card");
+  let pinned = null;
+
+  // the background takes the click that clears a pin
+  g.insert("rect", ":first-child").attr("class", "focus-bg")
+    .attr("x", box.x).attr("y", box.y).attr("width", box.w).attr("height", box.h)
+    .on("click.focus", () => { pinned = null; set(null); });
+
+  // [title, detail lines]: what the hover tooltip said, in the card instead
+  function describe(id) {
+    const host = cluster.hosts.find(h => h.id === id);
+    if (host) {
+      const count = cluster.pods.filter(p => p.host === id).length;
+      return [host.name ? `node ${host.name}` : `host ${host.ip}`,
+              [`${host.ip} · ${host.roles.join(", ") || "no role seen"}`,
+               host.name ? `${host.pod_cidr ? "pod subnet " + host.pod_cidr : "no pod subnet claimed"} · ${count} pod${count === 1 ? "" : "s"}`
+                         : "serves a cluster port; no capture of its own"]];
+    }
+    const pod = cluster.pods.find(p => p.id === id);
+    if (pod) {
+      const on = cluster.hosts.find(h => h.id === pod.host);
+      const where = on ? ` on ${on.name || on.ip}` : "";
+      return [pod.name ? pod.name.replace(/^pod-/, "") : `pod ${pod.ip}`,
+              [pod.host_network ? `host network${where}: shares the node's address ${pod.ip}` : `pod ${pod.ip}${where}`,
+               pod.new ? "never seen in benign traffic" : null]];
+    }
+    const svc = cluster.services.find(x => x.id === id);
+    if (svc) return [`service ${svc.ip}`, [svc.port_names.join(", ") || "no well-known port", svc.new ? "never seen in benign traffic" : null]];
+    const ext = cluster.external.find(x => x.id === id);
+    if (ext) return [ext.kind === "internet" ? "the internet" : ext.ip,
+                     [ext.kind === "internet" ? "addresses outside every private range"
+                       : ext.note ? `LAN device: ${ext.note}; not proven to be a node` : "LAN device",
+                      ext.new ? "never seen in benign traffic" : null]];
+    return [nameOf(id), []];
+  }
+
+  function drawCard(id) {
+    const at = pos.get(id);
+    if (!at) return;
+    const [title, details] = describe(id);
+    const partners = (near.get(id) || new Set()).size;
+    const lines = [...details, `${partners} conversation partner${partners === 1 ? "" : "s"}`].filter(Boolean);
+    const bg = card.append("rect").attr("class", "focus-card-bg").attr("rx", 8);
+    const t = card.append("text").attr("class", "focus-card-title").attr("x", 12).attr("y", 22).text(title);
+    lines.forEach((line, i) => card.append("text").attr("class", "focus-card-sub").attr("x", 12).attr("y", 40 + i * 15).text(line));
+    const width = Math.max(t.node().getComputedTextLength(), ...card.selectAll(".focus-card-sub").nodes().map(n => n.getComputedTextLength())) + 24;
+    const height = 30 + lines.length * 15;
+    bg.attr("width", width).attr("height", height);
+    const anchorY = at.kind === "host" ? at.box.y : at.y - (at.r || 12);
+    let x = Math.min(Math.max((at.kind === "host" ? at.box.x + at.box.w / 2 : at.x) - width / 2, box.x), box.x + box.w - width);
+    let y = anchorY - height - 10;
+    if (y < box.y) y = (at.kind === "host" ? at.box.y + 60 : at.y + (at.r || 12) + 10);
+    card.attr("transform", `translate(${x},${y})`).raise();
+  }
+
+  function set(id, edge = null) {
+    g.classed("focusing", Boolean(id || edge));
+    g.selectAll(".lit").classed("lit", false);
+    g.selectAll(".grow").classed("grow", false);
+    edges.classed("lit", false);
+    card.selectAll("*").remove();
+    if (!id && !edge) return;
+    const lit = new Set(edge ? [edge.src, edge.dst] : [id, ...(near.get(id) || [])]);
+    for (const x of [...lit]) if (hostOf.get(x)) lit.add(hostOf.get(x));
+    g.selectAll("[data-el], [data-for]").classed("lit", function () { return lit.has(this.dataset.el || this.dataset.for); });
+    edges.classed("lit", e => edge ? e === edge : e.src === id || e.dst === id);
+    if (id) {
+      // grow the element itself; a pod or address comes to the front with its own labels
+      g.selectAll("[data-el]").filter(function () { return this.dataset.el === id; }).classed("grow", true)
+        .each(function () { if (!this.classList.contains("host-box")) d3.select(this).raise(); });
+      g.selectAll("[data-for]").filter(function () { return this.dataset.for === id; }).raise();
+      g.selectAll(".tap").raise();
+      drawCard(id);
+    }
+  }
+
+  const keyOf = node => node.dataset.el || node.dataset.hit;
+  g.selectAll("[data-el], [data-hit]")
+    .on("pointerenter", null).on("pointermove", null)   // the card replaces their tooltips
+    .on("pointerenter.focus", function () { if (!pinned) set(keyOf(this)); })
+    .on("pointerleave.focus", () => set(pinned))
+    .on("click.focus", function (event) {
+      event.stopPropagation();
+      const id = keyOf(this);
+      pinned = pinned === id ? null : id;
+      set(pinned || id);
+    });
+  edges.on("pointerenter.focus", (event, e) => { if (!pinned) set(null, e); })
+    .on("pointerleave.focus", () => set(pinned));
 }
 
 // why a tap on the map has no block on this page: bulk transfer is policy, anything else
@@ -351,7 +467,10 @@ function actCluster() {
         : `a pod with its own address (${focusPod.ip}) on <b>${focusHost ? focusHost.name || focusHost.ip : "an unattributed subnet"}</b>: it hears only that pod's traffic.`)
     : focus && focus.level === "node" ? "a whole node's interface."
     : "a router-level tap on the shared network.";
+  // a build under the wrong address plan still draws: say so where the mess shows
+  const planNote = ((B.source && B.source.notes) || []).find(n => n.includes("address plan found no pod addresses"));
   panel.html(`
+    ${planNote ? `<p class="data-warn plan-warn">${planNote} (Data tab, Cluster profile).</p>` : ""}
     <h2>The testbed</h2>
     <p class="big">${named.length} nodes, ${c.pods.filter(p => !p.host_network).length} pod addresses,
       ${c.services.length} services, ${c.vantages.length} capture taps.</p>
@@ -379,7 +498,8 @@ function actCluster() {
       <span><i class="disc" style="background:var(--accent)"></i>the tap this page replays · hollow taps switch to theirs</span>
       <span><i style="background:var(--muted);height:4px"></i>conversation, width by packets (log)</span>
     </div>
-    <p style="margin-top:12px">Hover anything for its addresses, ports and packet counts.</p>`);
+    <p style="margin-top:12px">Hover anything to bring it forward with its conversation partners and
+    its addresses, ports and packet counts; click to keep it in focus, click the background to let go.</p>`);
 }
 
 // ---------------------------------------------------------------- act 2: learning
@@ -1831,6 +1951,41 @@ function setMode(next) {
 // other act reads. As a static file it says what the baked bundle came from.
 
 const dataView = d3.select("#dataview");
+
+// Every .data-card (Data and Live tabs) gets a collapse toggle in its heading. The panels re-render
+// often, so the toggle is added by a mutation observer and the collapsed cards are remembered by title.
+const collapsedCards = new Set();
+const cardKey = section => [...(section.querySelector("h3")?.childNodes || [])]
+  .filter(n => n.nodeType === Node.TEXT_NODE).map(n => n.textContent).join("").trim();
+function decorateCards(root) {
+  root.querySelectorAll("section.data-card > h3").forEach(h3 => {
+    const section = h3.parentElement;
+    if (!h3.querySelector(":scope > .card-toggle")) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "card-toggle";
+      btn.title = "Collapse or expand this section";
+      btn.textContent = "▾";
+      h3.prepend(btn);
+    }
+    const shut = collapsedCards.has(cardKey(section));
+    section.classList.toggle("collapsed", shut);
+    h3.querySelector(":scope > .card-toggle").setAttribute("aria-expanded", String(!shut));
+  });
+}
+dataView.on("click.cards", function (event) {
+  const toggle = event.target.closest(".card-toggle");
+  const head = event.target.closest("section.data-card > h3");
+  if (!toggle && !head) return;
+  // clicks on the heading's own controls (Refresh, inputs, selects) keep their normal behaviour
+  const control = event.target.closest("button,input,select,textarea,label,a");
+  if (!toggle && control && head.contains(control)) return;
+  const section = (toggle || head).parentElement;
+  const key = cardKey(section);
+  if (collapsedCards.has(key)) collapsedCards.delete(key); else collapsedCards.add(key);
+  decorateCards(this);
+});
+new MutationObserver(() => decorateCards(dataView.node())).observe(dataView.node(), { childList: true, subtree: true });
 // API rows are plain JSON (paths as typed), so they are escaped here; bundle strings arrive
 // escaped from Python and are inserted as they are.
 const esc = value => String(value ?? "").replace(/[&<>"']/g,
@@ -2102,9 +2257,9 @@ function renderData() {
         <a class="button ${B ? "" : "disabled"}" href="/api/export" ${B ? "" : 'aria-disabled="true"'}>Export static page</a></div>
       ${B && B.source ? `<details><summary>Current page: built from</summary>${provenanceHtml(B.source, true)}</details>` : ""}
     </section>
-    <section class="data-card"><h3>5 · Live input <span class="badge">preview</span></h3>
-      <p class="t-2">A capture replayed as if it were arriving now, windowed per second. This is the shape a live
-      collector will feed; detection is not wired to the stream yet, so nothing here is scored.</p>
+    <section class="data-card"><h3>5 · Replay as a stream <span class="badge">counts only</span></h3>
+      <p class="t-2">A capture replayed as if it were arriving now, windowed per second: packets, bytes, flows and
+      new endpoints, not scored. To score traffic as it happens, switch to <b>Live</b> above.</p>
       <div class="data-row">
         <label class="grow">Replay<select id="l-path">${liveFiles.map(f => `<option value="${esc(f.path)}" ${f.path === data.live.path ? "selected" : ""}>${esc(f.name || f.path)}</option>`).join("") || "<option value=''>no capture listed</option>"}</select></label>
         <label>Speed<select id="l-speed">${["1", "10", "50", "200"].map(s => `<option value="${s}" ${s === data.live.speed ? "selected" : ""}>${s}×</option>`).join("")}</select></label>
@@ -2167,9 +2322,683 @@ function actEmpty() {
   d3.select("#d-go").on("click", () => show("data"));
 }
 
+// ---------------------------------------------------------------- live test mode (server only)
+// viz/monitor.py captures the running local cluster's taps, scores each second with the
+// same machine and rules the replay uses, and launches the profile's own attacks. This act is
+// its control panel: what is running, which taps to watch, attacks, and the verdicts as they
+// arrive. The monitor runs on the server, so leaving the tab (or reloading) does not stop it;
+// coming back replays what it has kept.
+
+const LIVE_SPAN = 180;   // seconds of history the strips show
+const LIVE_CODE = { alert: "var(--critical)", flagged: "var(--warning)", unseen: "var(--serious)",
+  released: "var(--good)", normal: "var(--good)", warmup: "var(--grid)", nodata: "none" };
+const mon = { info: null, picked: null, record: false, seconds: 30, baseSeconds: 120, es: null, windows: new Map(),
+  ready: new Map(), ended: new Map(), attacks: [], events: [], busy: null, error: null, timer: null,
+  frame: null, lastStateFetch: 0 };
+
+function monReset() {
+  mon.windows = new Map(); mon.ready = new Map(); mon.ended = new Map();
+  mon.attacks = []; mon.events = [];
+}
+
+async function monRefresh() {
+  try {
+    mon.info = await api("/api/cluster");
+    mon.skew = mon.info.now ? mon.info.now - Date.now() / 1000 : 0;   // server clock minus ours
+    mon.error = null;
+  } catch (e) {
+    mon.error = e.message === "not found"
+      ? "This harness server was started before the Live tab existed, so it has no live routes. Stop it (Ctrl-C) and start viz/serve.py again; the page itself is already current."
+      : e.message;
+  }
+  if (mon.info && !mon.picked) {
+    const watching = mon.info.taps.filter(t => t.watching).map(t => t.label);
+    mon.picked = new Set(watching.length ? watching : mon.info.taps.filter(t => t.default && t.baseline).map(t => t.label));
+  }
+  if (currentAct === "live") renderLive();
+  else if (liveContext(currentAct)) LIVE_ACTS[currentAct]();
+}
+
+async function monDo(label, path, body) {
+  mon.busy = label; mon.error = null; renderLive();
+  try {
+    mon.info = await api(path, body || {});
+    mon.skew = mon.info.now ? mon.info.now - Date.now() / 1000 : 0;
+  } catch (e) { mon.error = e.message; }
+  mon.busy = null;
+  if (currentAct === "live") renderLive();
+}
+
+function monTick() {
+  if (!liveContext(currentAct)) return;
+  if (currentAct === "live") { drawLiveStrips(); drawLiveAttack(); drawLiveProgress(); liveHeader(); }
+  else if (currentAct === "cluster") liveClusterTick();
+  else if (currentAct === "detection") drawLiveDetection();
+}
+
+function monConnect() {
+  if (!mon.timer) mon.timer = setInterval(monTick, 1000);
+  if (mon.es) return;
+  monReset();
+  const es = new EventSource("/api/monitor/stream");
+  mon.es = es;
+  es.onmessage = e => monEvent(JSON.parse(e.data));
+  es.onerror = () => { /* EventSource reconnects by itself; the server replays its history */ };
+  es.onopen = () => monReset();
+}
+
+function monDisconnect() {
+  if (mon.es) { mon.es.close(); mon.es = null; }
+  clearInterval(mon.timer); mon.timer = null;
+}
+
+function monEvent(ev) {
+  const label = ev.label;
+  if (ev.kind === "window") {
+    const rows = mon.windows.get(label) || [];
+    rows.push(ev);
+    while (rows.length && rows[0].wall < ev.wall - LIVE_SPAN - 10) rows.shift();
+    mon.windows.set(label, rows);
+  } else if (ev.kind === "ready") {
+    mon.ready.set(label, ev); mon.ended.delete(label);
+  } else if (ev.kind === "end") {
+    mon.ended.set(label, ev);
+    if (ev.error) monLog(ev, `<b>${esc(label)}</b> stopped: ${esc(ev.error)}`, "bad");
+  } else if (ev.kind === "started") {
+    mon.windows = new Map(); mon.ready = new Map(); mon.ended = new Map(); mon.attacks = [];
+    monLog(ev, `Monitoring ${ev.taps.length} taps${ev.recording ? `, recording to <span class="mono">${esc(ev.recording)}</span>` : ""}.`);
+  } else if (ev.kind === "stopped") {
+    monLog(ev, `Stopped.${ev.recording ? ` Recording in <span class="mono">${esc(ev.recording)}</span>.` : ""}`);
+  } else if (ev.kind === "attack") {
+    if (ev.phase === "start") mon.attacks.push({ scenario: ev.scenario, start: ev.wall, planned: ev.wall + ev.seconds, end: null });
+    else { const a = [...mon.attacks].reverse().find(x => x.scenario === ev.scenario && x.end === null); if (a) a.end = ev.wall; }
+    monLog(ev, ev.phase === "start" ? `<b>${esc(ev.scenario)}</b> launched for ${ev.seconds} s.`
+      : `<b>${esc(ev.scenario)}</b> ${ev.early ? "stopped early" : "ended"}.`, "attack");
+  } else if (ev.kind === "alert") {
+    monLog(ev, `<b>${esc(label)}</b> alert` + (ev.attack ? ` · ${f1(ev.since_start)} s after ${esc(ev.attack)} began` : " · no attack running"), "bad");
+  } else if (ev.kind === "release") {
+    monLog(ev, `<b>${esc(label)}</b> released after ${f1(ev.lasted)} s`
+      + (ev.attack && ev.since_end != null ? ` · ${f1(ev.since_end)} s after ${esc(ev.attack)} ended` : ""), "good");
+  } else if (ev.kind === "baseline") {
+    monLog(ev, ev.phase === "start" ? `Recording a ${ev.seconds} s baseline …`
+      : ev.error ? `Baseline failed: ${esc(ev.error)}` : `Baseline recorded${ev.relearned ? "; watched taps re-learned from it" : ""}.`,
+      ev.error ? "bad" : "");
+  } else if (ev.kind === "note") {
+    monLog(ev, esc(ev.text));
+  }
+  if (["started", "stopped", "attack", "baseline", "end"].includes(ev.kind)
+      && Date.now() - mon.lastStateFetch > 500 && Date.now() / 1000 - ev.at < 5) {
+    mon.lastStateFetch = Date.now();
+    monRefresh();
+  }
+  if (!mon.frame && currentAct === "live") mon.frame = requestAnimationFrame(() => { mon.frame = null; drawLiveStrips(); drawLiveLog(); paintLiveDots(); });
+}
+
+function monLog(ev, html, cls = "") {
+  mon.events.push({ at: ev.at || Date.now() / 1000, html, cls, label: ev.label || null });
+  if (mon.events.length > 300) mon.events.shift();
+}
+
+function latestStatus(label) {
+  if (!mon.info || !mon.info.monitoring) return null;
+  const rows = mon.windows.get(label);
+  if (mon.ended.has(label) && mon.ended.get(label).error) return "failed";
+  return rows && rows.length ? rows[rows.length - 1].status : null;
+}
+
+function actLive() {
+  panel.html(`<h2>Live</h2>
+    <p>The local cluster from <span class="mono">localcluster/collect.py</span>, watched as it runs. Each
+    chosen tap streams its packets (tcpdump to a pipe) into its own scoring process, which closes one
+    window a second and scores it with the machine learned from that tap's <b>benign recording</b>.</p>
+    <h2>Same detector as the replay</h2>
+    <p>The cutoffs, the ${PERSISTENCE_TEXT} rules and the anomaly clock are the ones the Detection tab uses.
+    One thing differs: a stream cannot see the future, so a flow is kept in its second only if its
+    5-tuple appeared in no earlier second and in none of the next two. The tap is trained on flows cut the
+    same way, and each window is scored about three seconds after it ends.</p>
+    <h2>Reading a strip</h2>
+    <p>The line is the windowed score, the dashed line the tap's cutoff; the band under it is the status
+    (red alert, amber flagged, orange unseen, green normal, grey warming up). Shaded spans are attacks
+    launched from this page, so the gap between a span's start and the first red is the detection latency.</p>
+    <h2>Attacks</h2>
+    <p>Only the profile's own scenarios, against the local k3d cluster: the same traffic
+    <span class="mono">collect.py run</span> records.</p>`);
+  monConnect();
+
+  renderLive();
+  monRefresh();
+}
+const PERSISTENCE_TEXT = "three-flag alert and three-clean release";
+
+function renderLive() {
+  if (currentAct !== "live") return;
+  const info = mon.info;
+  const busy = mon.busy, dis = busy ? "disabled" : "";
+  const head = !info ? `<p class="t-2">Looking for a local cluster …</p>`
+    : !info.profile ? `<p>No local cluster is running. Start one from <span class="mono">Threat_Detection</span>:</p>
+        <pre class="mono">.venv/bin/python localcluster/collect.py up --profile general</pre>
+        ${info.clusters.length ? `<p class="data-warn">${info.clusters.map(c => `${esc(c.cluster)} exists but is not ready`).join("; ")}</p>` : ""}`
+    : liveClusterHtml(info);
+  const taps = info && info.profile ? info.taps : [];
+  const monitoring = info && info.monitoring;
+  const chips = taps.map(t => {
+    const on = mon.picked && mon.picked.has(t.label);
+    const st = latestStatus(t.label);
+    return `<label class="tapchip ${on ? "" : "off"} ${t.baseline ? "" : "nobase"}" title="${esc(t.baseline ? `baseline ${t.baseline} (${t.baseline_time})` : "no benign recording for this tap")}">
+      <input type="checkbox" data-tap="${esc(t.label)}" ${on ? "checked" : ""} ${monitoring || !t.baseline ? "disabled" : ""}>
+      <i class="dot" data-dot="${esc(t.label)}"></i>${esc(t.label)}</label>`;
+  }).join("");
+  const attack = info && info.attack;
+  const scen = info && info.profile ? info.scenarios.map(s => `<button class="attack-btn" data-scenario="${esc(s.name)}" ${attack || !monitoring || busy ? "disabled" : ""}
+      title="${esc(s.target)}"><b>${esc(s.name)}</b><span>${esc(s.kind === "exec" ? s.target : s.target ? "→ " + s.target : "")}</span></button>`).join("") : "";
+  dataView.html(`<div class="data-wrap live-wrap">
+    ${mon.error ? `<div class="data-error">${esc(mon.error)}</div>` : ""}
+    ${busy ? `<div class="data-busy">${esc(busy)} …</div>` : ""}
+    <section class="data-card"><h3>Local cluster <span class="t-2">${info && info.profile ? `profile <b>${esc(info.profile)}</b> · ${esc(info.harness_profile)} address plan` : ""}</span>
+      <span class="spacer"></span><button id="m-refresh" ${dis}>Refresh</button></h3>${head}</section>
+    ${info && info.profile ? `
+    <section class="data-card"><h3>Monitor <span class="t-2">${monitoring ? "running" : "stopped"}${info.recording ? ` · recording to <span class="mono">${esc(info.recording)}</span>` : ""}</span></h3>
+      <div id="m-progress" class="live-progress"></div>
+      <div class="chips tapchips">${chips}</div>
+      <div class="data-row small">
+        ${monitoring ? `<button id="m-stop" ${dis}>Stop monitoring</button>`
+          : `<button class="primary" id="m-start" ${dis || (mon.picked && mon.picked.size ? "" : "disabled")}>Start monitoring</button>
+             <label class="check"><input type="checkbox" id="m-record" ${mon.record ? "checked" : ""}> Record the session to disk</label>`}
+        <span class="spacer"></span>
+        <label>Baseline<select id="m-base-seconds" ${dis}>${[60, 120, 300].map(n => `<option value="${n}" ${n === mon.baseSeconds ? "selected" : ""}>${n} s</option>`).join("")}</select></label>
+        <button id="m-baseline" ${dis || (info.baseline_job || attack ? "disabled" : "")} title="Record benign traffic at every tap, then re-learn the watched taps from it. Longer gives each cutoff more held-out windows.">${info.baseline_job ? `Recording baseline (${info.baseline_job.seconds} s) …` : "Record new baseline"}</button>
+      </div>
+      <p class="t-2 small-note">Router taps see every packet between nodes; leave them off unless you need them during a flood.
+        Grey chips have no benign recording yet. Each cutoff is the 95th percentile of the baseline's last 30%,
+        so a 60 s baseline sets it from about 17 windows; record a longer one if benign keeps tripping alerts.</p></section>
+    <section class="data-card"><h3>Attacks <span class="t-2">${monitoring ? "launch one; its span is shaded on every strip" : "start monitoring first"}</span></h3>
+      <div class="data-row"><label>Length (s)<input id="m-seconds" type="number" min="${info.attack_seconds[0]}" max="${info.attack_seconds[1]}" value="${mon.seconds}" style="width:80px"></label>
+        <div class="attack-row">${scen}</div></div>
+      <div class="data-row small" id="m-attack"></div></section>
+    <section class="data-card"><h3>Taps <span class="t-2">last ${LIVE_SPAN / 60} minutes · score against cutoff</span></h3>
+      <div id="m-strips"></div></section>
+    <section class="data-card"><h3>Events</h3><div id="m-log" class="live-log"></div></section>` : ""}
+  </div>`);
+  d3.select("#m-refresh").on("click", () => monRefresh());
+  d3.selectAll(".tapchips input").on("change", function () {
+    if (this.checked) mon.picked.add(this.dataset.tap); else mon.picked.delete(this.dataset.tap);
+    renderLive();
+  });
+  d3.select("#m-record").on("change", function () { mon.record = this.checked; });
+  d3.select("#m-seconds").on("change", function () { mon.seconds = +this.value || 30; });
+  d3.select("#m-start").on("click", () => monDo("Learning each tap and starting its capture", "/api/monitor/start",
+    { taps: [...mon.picked], record: mon.record }));
+  d3.select("#m-stop").on("click", () => monDo("Stopping", "/api/monitor/stop"));
+  d3.select("#m-base-seconds").on("change", function () { mon.baseSeconds = +this.value; });
+  d3.select("#m-baseline").on("click", () => monDo("Starting the baseline recording", "/api/baseline", { seconds: mon.baseSeconds }));
+  d3.selectAll(".attack-btn").on("click", function () {
+    monDo(`Launching ${this.dataset.scenario}`, "/api/attack", { scenario: this.dataset.scenario, seconds: mon.seconds });
+  });
+  drawLiveAttack();
+  drawLiveStrips();
+  drawLiveLog();
+  paintLiveDots();
+  drawLiveProgress();
+}
+
+const clock = seconds => {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+// how far along the monitor and a baseline recording are, ticking every second
+function drawLiveProgress() {
+  const box = d3.select("#m-progress");
+  if (box.empty() || !mon.info) return;
+  const info = mon.info, now = Date.now() / 1000 + (mon.skew || 0), rows = [];
+  if (info.monitoring && info.monitor_started) {
+    const watched = info.taps.filter(t => t.watching).map(t => t.label);
+    const failed = watched.filter(l => mon.ended.has(l) && mon.ended.get(l).error).length;
+    const scoring = watched.filter(l => (mon.windows.get(l) || []).length && !mon.ended.has(l)).length;
+    const learning = watched.length - scoring - failed;
+    const scored = d3.sum(watched, l => (mon.windows.get(l) || []).length);
+    rows.push(`<div class="prog-row"><b class="prog-clock">${clock(now - info.monitor_started)}</b>
+      <span>monitoring · ${scoring} of ${watched.length} taps scoring${learning > 0 ? ` · ${learning} learning or warming up` : ""}${failed ? ` · ${failed} not running` : ""}
+      · ${d3.format(",")(scored)} windows scored</span></div>`);
+  }
+  const job = info.baseline_job;
+  if (job) {
+    const total = clock(now - job.started);
+    if (job.phase === "recording" && job.recording_since) {
+      const done = Math.min(now - job.recording_since, job.seconds);
+      rows.push(`<div class="prog-row"><b class="prog-clock">${clock(done)} / ${clock(job.seconds)}</b>
+        <span>recording the baseline at every tap · ${clock(job.seconds - done)} left</span></div>
+        <div class="prog-bar"><i style="width:${(100 * done / job.seconds).toFixed(1)}%"></i></div>`);
+    } else {
+      const what = { starting: "starting a capture at every tap", collecting: "copying the captures out and converting them to packet rows",
+                     relearning: "re-learning the watched taps from the new baseline" }[job.phase] || job.phase;
+      rows.push(`<div class="prog-row"><b class="prog-clock">${clock(now - (job.phase_since || job.started))}</b>
+        <span>baseline: ${what} …</span><span class="t-2">total ${total}</span></div>
+        <div class="prog-bar busy"><i></i></div>`);
+    }
+  }
+  box.html(rows.join(""));
+}
+
+function liveClusterHtml(info) {
+  const cluster = info.clusters.find(c => c.profile === info.profile);
+  const tapOf = new Map(info.taps.map(t => [t.label, t]));
+  const disc = label => {
+    return tapOf.has(label) ? `<i class="dot" data-dot="${esc(label)}"></i>` : "";
+  };
+  const pods = d3.group(cluster.pods.filter(p => p.role !== "attack"), p => p.node);
+  const attackers = cluster.pods.filter(p => p.role === "attack");
+  const routers = info.taps.filter(t => t.level === "router").map(t => `<span class="pill">${disc(t.label)}${esc(t.label)}</span>`).join("");
+  const nodes = cluster.nodes.map(n => `<div class="live-node ${n.ready ? "" : "down"}">
+      <div class="live-node-head">${disc("node-" + n.name)}<b>${esc(n.name)}</b><span class="t-2">${n.ready ? "Ready" : "not ready"}</span></div>
+      <div class="live-pods">${(pods.get(n.k3d) || []).map(p => `<span class="pill ${p.ready ? "" : "down"}" title="${esc(p.name)} · ${esc(p.ip || "")} · ${esc(p.phase)}">${disc("pod-" + p.app)}${esc(p.app)}</span>`).join("")
+        || `<span class="t-2">no workload pods</span>`}</div></div>`).join("");
+  return `<div class="live-routers"><span class="t-2">network</span>${routers}</div>
+    <div class="live-nodes">${nodes}</div>
+    ${attackers.length ? `<p class="data-warn">attack pods: ${attackers.map(p => esc(p.app || p.name)).join(", ")}</p>` : ""}`;
+}
+
+function drawLiveAttack() {
+  const box = d3.select("#m-attack");
+  if (box.empty()) return;
+  const a = mon.info && mon.info.attack;
+  if (!a) { box.html(""); return; }
+  const left = Math.max(0, Math.round(a.ends - Date.now() / 1000));
+  box.html(`<span class="attack-live"><b>${esc(a.scenario)}</b> running · ${left} s left</span>
+    <button id="m-attack-stop">Stop attack</button>`);
+  d3.select("#m-attack-stop").on("click", () => monDo("Stopping the attack", "/api/attack/stop"));
+  if (left <= 0 && Date.now() - mon.lastStateFetch > 3000) { mon.lastStateFetch = Date.now(); monRefresh(); }
+}
+
+function drawLiveStrips() {
+  const host = d3.select("#m-strips");
+  if (host.empty()) return;
+  const labels = [...new Set([...(mon.info ? mon.info.taps.filter(t => t.watching).map(t => t.label) : []), ...mon.windows.keys()])];
+  if (!labels.length) { host.html(`<p class="t-2">Nothing watched yet.</p>`); return; }
+  const now = Date.now() / 1000;
+  const width = Math.max(320, host.node().clientWidth), h = 64, band = 8, left = 132, right = 70;
+  const x = d3.scaleLinear().domain([now - LIVE_SPAN, now]).range([left, width - right]);
+  const rows = host.selectAll("div.strip").data(labels, d => d);
+  rows.exit().remove();
+  const entered = rows.enter().append("div").attr("class", "strip");
+  entered.append("svg");
+  rows.merge(entered).each(function (label) {
+    const s = d3.select(this).select("svg").attr("width", width).attr("height", h + band + 6);
+    s.selectAll("*").remove();
+    const data = (mon.windows.get(label) || []).filter(w => w.wall + 1 >= now - LIVE_SPAN);
+    const ready = mon.ready.get(label), ended = mon.ended.get(label);
+    const cutoff = ready ? ready.cutoff : data.length ? data[data.length - 1].cutoff : null;
+    const peaks = data.filter(w => w.peak != null).map(w => w.peak);
+    const hi = Math.max(cutoff || 1, d3.max(peaks) || 1) * 1.08;
+    const lo = Math.min(cutoff || 0, d3.min(peaks) ?? 0) * 0.9;
+    const y = d3.scaleLinear().domain([lo, hi]).range([h - 4, 6]);
+    for (const a of mon.attacks) {
+      const x0 = x(Math.max(a.start, now - LIVE_SPAN)), x1 = x(Math.min(a.end ?? Math.min(now, a.planned), now));
+      if (x1 > left) s.append("rect").attr("class", "attack-span").attr("x", x0).attr("y", 2).attr("width", Math.max(x1 - x0, 1)).attr("height", h + band);
+    }
+    if (cutoff != null) s.append("line").attr("class", "cut").attr("x1", left).attr("x2", width - right).attr("y1", y(cutoff)).attr("y2", y(cutoff));
+    s.append("path").attr("class", "score").attr("d", d3.line().defined(w => w.peak != null)
+      .x(w => x(w.wall + 0.5)).y(w => y(w.peak))(data));
+    s.selectAll("rect.st").data(data).enter().append("rect").attr("class", "st")
+      .attr("x", w => x(w.wall)).attr("width", w => Math.max(x(w.wall + 1) - x(w.wall) - 0.5, 0.5))
+      .attr("y", h + 2).attr("height", band).attr("fill", w => LIVE_CODE[w.status] || "none");
+    const last = data[data.length - 1];
+    const st = ended && ended.error ? "failed" : last ? last.status : ready ? "waiting" : "learning";
+    s.append("text").attr("class", "strip-label").attr("x", 0).attr("y", 18).text(label);
+    s.append("text").attr("class", `strip-status st-${st}`).attr("x", 0).attr("y", 36)
+      .text(st === "failed" ? "not running" : st);
+    if (last) s.append("text").attr("class", "strip-meta").attr("x", 0).attr("y", 52)
+      .text(`${d3.format(",")(last.packets)} pkt/s · lag ${f1(Math.max(last.lag, 0))} s`);
+    // the score and the cutoff read out at the right edge, pushed apart when they would collide
+    const yPeak = last && last.peak != null ? y(last.peak) + 4 : null;
+    let yCut = cutoff != null ? y(cutoff) + 4 : null;
+    if (yPeak != null && yCut != null && Math.abs(yPeak - yCut) < 12) yCut = yPeak + (yCut >= yPeak ? 12 : -12);
+    if (yPeak != null) s.append("text").attr("class", "strip-meta peak-label").attr("x", width - right + 6).attr("y", yPeak).text(f1(last.peak));
+    if (yCut != null) s.append("text").attr("class", "strip-meta cut-label").attr("x", width - right + 6).attr("y", Math.min(Math.max(yCut, 10), h + 8)).text(`cut ${f1(cutoff)}`);
+    if (ended && ended.error) s.append("text").attr("class", "strip-meta bad").attr("x", left + 6).attr("y", 30).text(ended.error);
+  });
+}
+
+function paintLiveDots() {
+  d3.selectAll("[data-dot]").each(function () {
+    const st = latestStatus(this.dataset.dot);
+    this.style.background = st === "failed" ? "var(--critical)" : LIVE_CODE[st] || "var(--axis)";
+    this.title = `${this.dataset.dot}: ${st || "not watched"}`;
+  });
+}
+
+function drawLiveLog() {
+  const box = d3.select("#m-log");
+  if (box.empty()) return;
+  const time = d3.timeFormat("%H:%M:%S");
+  box.html(mon.events.length ? [...mon.events].reverse().slice(0, 80).map(e =>
+    `<div class="${e.cls}"><span class="mono t-2">${time(new Date(e.at * 1000))}</span> ${e.html}</div>`).join("")
+    : `<p class="t-2">Alerts, releases and attacks show up here, with latencies.</p>`);
+}
+
+// ---------------------------------------------------------------- tabs 2-4 in Live mode
+// With tab 1 switched to Live, the other tabs follow it: Cluster draws the running cluster
+// from Kubernetes itself plus who is talking right now, Learning says what the live machines
+// were learned from, and Detection follows one watched tap as its verdicts arrive.
+
+const LIVE_TABS = ["cluster", "learning", "detection"];
+const liveContext = act => act === "live" || (SERVER && inputMode() === "live" && LIVE_TABS.includes(act));
+const liveNow = () => Date.now() / 1000 + (mon.skew || 0);
+const isPrivate = ip => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.|f[cd]|fe80)/i.test(ip);
+
+function liveHeader() {
+  d3.select(".pick").style("display", "none");
+  const info = mon.info;
+  d3.select("#subtitle").text(!info ? "live · looking for the local cluster"
+    : !info.profile ? "live · no local cluster running"
+    : `live · ${info.profile} cluster · ${info.monitoring ? `monitoring ${clock(liveNow() - info.monitor_started)}` : "not monitoring"}`);
+}
+
+// the running cluster in renderCluster's shape: members from kubectl, conversations from the
+// address pairs the watched taps saw in the last `span` seconds (one tap only, if given)
+function liveClusterModel(span = 30, onlyTap = null) {
+  const info = mon.info;
+  const c = info.clusters.find(x => x.profile === info.profile);
+  const hostId = n => `host:${n.ip}`;
+  const nodeOf = new Map(c.nodes.map(n => [n.k3d, n]));
+  const elementOf = new Map();
+  const hosts = c.nodes.map(n => {
+    elementOf.set(n.ip, hostId(n));
+    // flannel gives each node's pod subnet a .0 (VTEP) and a .1 (cni bridge): both are the node
+    const base = (n.pod_cidr || "").match(/^(\d+\.\d+\.\d+)\.0\/24$/);
+    if (base) for (const last of [0, 1]) elementOf.set(`${base[1]}.${last}`, hostId(n));
+    return { id: hostId(n), name: n.name, ip: n.ip, roles: [n.control_plane ? "control-plane" : "worker"], pod_cidr: n.pod_cidr };
+  });
+  const pods = c.pods.map(p => {
+    const n = nodeOf.get(p.node);
+    const id = p.host_network || !p.ip ? `pod:${p.name}` : `pod:${p.ip}`;
+    if (!p.host_network && p.ip) elementOf.set(p.ip, id);
+    return { id, ip: p.host_network ? (n && n.ip) : p.ip, name: p.role ? `pod-${p.app}` : p.app,
+             host: n ? hostId(n) : null, host_network: p.host_network, new: p.role === "attack",
+             namespace: p.namespace, pod: p.name };
+  });
+  const services = (c.services || []).map(x => {
+    elementOf.set(x.ip, `svc:${x.ip}`);
+    return { id: `svc:${x.ip}`, ip: x.ip, name: x.name,
+             port_names: [`${x.name}${x.ports.length ? " :" + x.ports.map(p => p.port).join("/") : ""}`] };
+  });
+  // the same packet crosses several taps, so a pair counts what its busiest tap saw
+  const now = liveNow(), byPair = new Map();
+  for (const [label, rows] of mon.windows) {
+    if (onlyTap && label !== onlyTap) continue;
+    for (const w of rows) {
+      if (w.wall < now - span) continue;
+      for (const [a, b, n] of w.pairs || []) {
+        const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+        const entry = byPair.get(key) || { a, b, taps: new Map() };
+        entry.taps.set(label, (entry.taps.get(label) || 0) + n);
+        byPair.set(key, entry);
+      }
+    }
+  }
+  const externalTotals = new Map();
+  const place = ip => elementOf.get(ip) || (isPrivate(ip) ? `lan:${ip}` : "internet");
+  const merged = new Map();
+  for (const { a, b, taps } of byPair.values()) {
+    const src = place(a), dst = place(b);
+    if (src === dst) continue;
+    const packets = d3.max([...taps.values()]);
+    const key = src < dst ? `${src}|${dst}` : `${dst}|${src}`;
+    merged.set(key, { src, dst, packets: (merged.get(key)?.packets || 0) + packets, ports: [] });
+    for (const id of [src, dst]) if (id.startsWith("lan:") || id === "internet") externalTotals.set(id, (externalTotals.get(id) || 0) + packets);
+  }
+  const keptExternal = new Set([...externalTotals.entries()].sort((x, y) => y[1] - x[1]).slice(0, 16).map(e => e[0]));
+  const external = [...keptExternal].map(id => id === "internet"
+    ? { id, kind: "internet", ip: "internet" }
+    : { id, kind: "lan", ip: id.slice(4), note: "an address outside the cluster's nodes, pods and services" });
+  const edges = [...merged.values()].filter(e => [e.src, e.dst].every(id => !(id.startsWith("lan:") || id === "internet") || keptExternal.has(id)));
+  const vantages = info.taps.map(t => {
+    const element = t.level === "pod" ? (pods.find(p => p.name === t.label) || {}).id
+      : t.level === "node" ? (hosts.find(h => h.name === t.label.slice(5)) || {}).id
+      : t.label === "router-any" ? "uplink" : "overlay";
+    return { label: t.label, level: t.level, element };
+  }).filter(v => v.element);
+  return { hosts, pods, services, external, edges, vantages, profile: c };
+}
+
+function paintLiveTaps(g) {
+  g.selectAll(".tap").each(function (v) {
+    const st = latestStatus(v.label);
+    d3.select(this).classed("live-alert", st === "alert")
+      .select(".tap-dot").style("fill", st === "failed" ? "var(--critical)" : LIVE_CODE[st] || null);
+  });
+}
+
+function liveNoCluster(where) {
+  const info = mon.info;
+  const msg = mon.error || (!info ? "Looking for the local cluster …" : "No local cluster is running.");
+  svg.append("text").attr("class", "t-title").attr("x", 30).attr("y", 50).text(msg);
+  svg.append("text").attr("class", "t-small t-muted").attr("x", 30).attr("y", 72)
+    .text(`Start one with localcluster/collect.py up, then open tab 1 (Live). This tab shows ${where}.`);
+}
+
+let liveClusterDrawn = 0;
+function actLiveCluster() {
+  liveClusterDrawn = 0;
+  drawLiveCluster();
+  if (!mon.info) monRefresh();
+}
+
+function drawLiveCluster() {
+  liveClusterDrawn = Date.now();
+  svg.selectAll("*").remove();
+  defs();
+  liveHeader();
+  const info = mon.info;
+  if (!info || !info.profile) {
+    liveNoCluster("the running cluster");
+    panel.html(`<h2>Live cluster</h2><p>Switch tab 1 back to <b>Data</b> to see the map built from recordings.</p>`);
+    return;
+  }
+  const { w, h } = size();
+  const box = { x: 28, y: 20, w: w - 56, h: h - 40 };
+  const model = liveClusterModel(30);
+  const watched = new Set(info.taps.filter(t => t.watching).map(t => t.label));
+  const g = svg.append("g");
+  renderCluster(g, model, box, {
+    onPage: v => watched.has(v.label),
+    onTap: label => { mon.focusTap = label; show("detection"); },
+    tapNote: v => watched.has(v.label) ? `${latestStatus(v.label) || "learning"} · click for its live detection`
+      : "not watched: tick it on tab 1 (Live) and start monitoring",
+  });
+  paintLiveTaps(g);
+  const c = model.profile;
+  const system = model.pods.filter(p => !p.name.startsWith("pod-")).length;
+  const attackers = model.pods.filter(p => p.new);
+  panel.html(`<h2>The live cluster</h2>
+    <p class="big">${c.nodes.length} nodes, ${model.pods.length} pods (${system} system), ${model.services.length} services,
+      ${info.taps.length} capture taps.</p>
+    <p>Unlike Data mode, nothing here is inferred: nodes, pods and services come from Kubernetes itself
+      (<span class="mono">kubectl</span>), so this is the cluster as it is right now. Profile <b>${esc(info.profile)}</b>,
+      ${esc(info.harness_profile)} address plan.</p>
+    ${attackers.length ? `<p class="data-warn">Attack pods running: ${attackers.map(p => esc(p.pod)).join(", ")} (red dashed).</p>` : ""}
+    <h2>Conversations</h2>
+    <p>${info.monitoring
+      ? `Lines are who talked to whom in the last 30 s at the ${watched.size} watched taps, width by packets (each pair counted at
+         the tap that saw most of it). Addresses outside the cluster sit on top; the 16 busiest are drawn.`
+      : `Nothing is being watched, so no conversations are drawn. Start monitoring on tab 1 (Live).`}</p>
+    <h2>Taps</h2>
+    <p>Each watched tap's dot is coloured by its latest verdict (green normal, amber flagged, red alert, grey warming up).
+      Click one to follow it on the Detection tab. Hover or click anything else to bring it forward.</p>`);
+}
+
+function liveClusterTick() {
+  // redraw every few seconds for new conversations, but never under the reader's pointer
+  if (svg.select(".focusing").size() || d3.select("#tooltip").classed("on")) {
+    paintLiveTaps(svg);
+    return;
+  }
+  if (Date.now() - liveClusterDrawn > 4000) drawLiveCluster(); else paintLiveTaps(svg);
+}
+
+function actLiveLearning() {
+  liveHeader();
+  const info = mon.info;
+  const rows = info && info.profile ? info.taps.map(t => {
+    const r = mon.ready.get(t.label), end = mon.ended.get(t.label);
+    return `<tr><td class="mono">${esc(t.label)}</td>
+      <td>${t.baseline ? `<span class="mono" title="${esc(t.baseline)}">${esc(t.baseline.split("/").slice(-4).join("/"))}</span><br><span class="t-2">${esc(t.baseline_time || "")}</span>` : `<span class="t-2">none</span>`}</td>
+      <td>${end && end.error ? `<span class="data-warn">${esc(end.error)}</span>` : r ? "learned" : t.watching ? "learning …" : `<span class="t-2">not watched</span>`}</td>
+      <td>${r ? f1(r.cutoff) : ""}</td><td>${r ? d3.format(",")(r.train_flows) : ""}</td>
+      <td>${r ? r.held_windows : ""}</td><td>${r ? d3.format(".0%")(r.benign_rate) : ""}</td></tr>`;
+  }).join("") : "";
+  dataView.html(`<div class="data-wrap">
+    <section class="data-card"><h3>Learning, live <span class="badge">work in progress</span></h3>
+      <p>The step-by-step view of how a machine is learned (prefix tree, red-blue merges, final machine) is not built for
+        live mode yet. Each watched tap's machine is learned once, when monitoring starts, from that tap's newest
+        <b>benign recording</b>, with flows cut the live way. Its cutoff is the 95th percentile of the recording's held-out last 30%.</p>
+      <p>To step through one of these machines now, switch tab 1 to <b>Data</b> and build from the same benign recording.</p></section>
+    <section class="data-card"><h3>What each tap learned from</h3>
+      ${rows ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>tap</th><th>baseline</th><th>state</th>
+        <th>cutoff</th><th>training flows</th><th>held-out windows</th><th>held-out flagged</th></tr></thead><tbody>${rows}</tbody></table></div>`
+        : `<p class="t-2">${mon.error ? esc(mon.error) : "No local cluster is running."}</p>`}
+    </section></div>`);
+  panel.html(`<h2>Learning (live)</h2>
+    <p>A live tap's detector is the Data mode detector: the same learner, the same windowed score and the same cutoff rule,
+      trained on flows cut the way a stream has to cut them.</p>
+    <p><b>Held-out flagged</b> is the share of the baseline's own held-out windows above the cutoff: about 5% by
+      construction. A cutoff set from few windows moves a lot; record a longer baseline on tab 1 if benign traffic keeps alerting.</p>`);
+  if (!info) monRefresh();
+}
+
+function actLiveDetection() {
+  drawLiveDetection();
+  if (!mon.info) monRefresh();
+}
+
+function liveTapChoices() {
+  const info = mon.info;
+  const watched = info ? info.taps.filter(t => t.watching).map(t => t.label) : [];
+  return watched.length ? watched : [...mon.windows.keys()];
+}
+
+function drawLiveDetection() {
+  liveHeader();
+  const info = mon.info;
+  const taps = liveTapChoices();
+  if (!mon.focusTap || !taps.includes(mon.focusTap)) mon.focusTap = taps[0] || null;
+  const label = mon.focusTap;
+  const rows = label ? mon.windows.get(label) || [] : [];
+  const last = rows[rows.length - 1];
+  const st = label && mon.ended.get(label) && mon.ended.get(label).error ? "failed" : last ? last.status : null;
+  // controls: which tap, and its verdict now
+  if (controls.select("#ld-tap").empty() || controls.attr("data-taps") !== taps.join(",")) {
+    controls.attr("data-taps", taps.join(","));
+    controls.html(`<label class="pick">tap <select id="ld-tap">${taps.map(t => `<option ${t === label ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
+      <span class="status" id="ld-status"><span class="dot"></span><span id="ld-status-text"></span></span>
+      <span class="spacer"></span><span class="readout" id="ld-readout"></span>`);
+    controls.select("#ld-tap").on("change", function () { mon.focusTap = this.value; drawLiveDetection(); });
+  }
+  const verdict = st === "failed" ? { cls: "critical", text: "NOT RUNNING" } : st ? STATUS[st] : { cls: "idle", text: info && info.monitoring ? "LEARNING" : "NOT MONITORING" };
+  controls.select("#ld-status").attr("class", `status ${verdict.cls}`);
+  controls.select("#ld-status-text").text(verdict.text);
+  controls.select("#ld-readout").text(last ? `${d3.format(",")(last.packets)} pkt/s · ${last.flows} flows · scored ${f1(Math.max(last.lag, 0) + 1)} s after the second ended` : "");
+
+  svg.selectAll("*").remove();
+  defs();
+  if (!info || !info.profile) { liveNoCluster("one watched tap's verdicts as they arrive"); return; }
+  if (!label) {
+    svg.append("text").attr("class", "t-title").attr("x", 30).attr("y", 50).text("Nothing is being watched.");
+    svg.append("text").attr("class", "t-small t-muted").attr("x", 30).attr("y", 72).text("Pick taps and start monitoring on tab 1 (Live).");
+    panel.html(`<h2>Detection (live)</h2><p>Start monitoring on tab 1 (Live); each watched tap's verdicts then arrive here every second.</p>`);
+    return;
+  }
+  const { w, h } = size();
+  const mapBox = { x: 28, y: 14, w: w - 56, h: Math.max(150, h * 0.36) };
+  const chart = { x: 70, y: mapBox.y + mapBox.h + 26, w: w - 140, h: h - mapBox.y - mapBox.h - 70 };
+
+  // the map: what this tap saw in the last five seconds
+  const model = liveClusterModel(5, label);
+  const mg = svg.append("g");
+  renderCluster(mg, model, mapBox, { focus: label, compact: true, onPage: v => liveTapChoices().includes(v.label),
+    onTap: l => { mon.focusTap = l; drawLiveDetection(); }, tapNote: v => v.label === label ? "the tap this view follows" : "click to follow this tap" });
+  mg.selectAll(".link").classed("hot", true);   // every line here is the last five seconds
+  paintLiveTaps(mg);
+  svg.append("text").attr("class", "t-section").attr("x", mapBox.x).attr("y", mapBox.y + mapBox.h + 14)
+    .text(`what ${label} saw in the last 5 s · score over the last ${LIVE_SPAN / 60} minutes`);
+
+  // the chart: windowed score against the cutoff, the status band, attacks shaded
+  const now = liveNow();
+  const x = d3.scaleLinear().domain([now - LIVE_SPAN, now]).range([chart.x, chart.x + chart.w]);
+  const shown = rows.filter(r => r.wall + 1 >= now - LIVE_SPAN);
+  const ready = mon.ready.get(label);
+  const cutoff = ready ? ready.cutoff : last ? last.cutoff : null;
+  const peaks = shown.filter(r => r.peak != null).map(r => r.peak);
+  const top = Math.max(cutoff || 1, d3.max(peaks) || 1) * 1.1, bottom = Math.min(cutoff || 0, d3.min(peaks) ?? 0) * 0.85;
+  const band = 14, plotH = chart.h - band - 26;
+  const y = d3.scaleLinear().domain([bottom, top]).nice().range([chart.y + plotH, chart.y]);
+  const cg = svg.append("g").attr("class", "live-big");
+  for (const a of mon.attacks) {
+    const x0 = x(Math.max(a.start, now - LIVE_SPAN)), x1 = x(Math.min(a.end ?? Math.min(now, a.planned), now));
+    if (x1 <= chart.x) continue;
+    cg.append("rect").attr("class", "attack-span").attr("x", x0).attr("y", chart.y).attr("width", Math.max(x1 - x0, 1)).attr("height", plotH + band + 4);
+    cg.append("text").attr("class", "t-small attack-label").attr("x", x0 + 4).attr("y", chart.y + 12).text(a.scenario);
+  }
+  cg.append("g").attr("class", "axis").attr("transform", `translate(${chart.x},0)`).call(d3.axisLeft(y).ticks(5));
+  cg.append("g").attr("class", "axis").attr("transform", `translate(0,${chart.y + plotH + band + 6})`)
+    .call(d3.axisBottom(x).ticks(6).tickFormat(t => `-${Math.round(now - t)} s`));
+  if (cutoff != null) {
+    cg.append("line").attr("class", "cut").attr("x1", chart.x).attr("x2", chart.x + chart.w).attr("y1", y(cutoff)).attr("y2", y(cutoff));
+    cg.append("text").attr("class", "t-small cut-label").attr("x", chart.x + chart.w + 6).attr("y", y(cutoff) + 4).text(`cutoff ${f1(cutoff)}`);
+  }
+  cg.append("path").attr("class", "score").attr("d", d3.line().defined(r => r.peak != null).x(r => x(r.wall + 0.5)).y(r => y(r.peak))(shown));
+  cg.selectAll("rect.st").data(shown).enter().append("rect").attr("class", "st")
+    .attr("x", r => x(r.wall)).attr("width", r => Math.max(x(r.wall + 1) - x(r.wall) - 0.5, 0.5))
+    .attr("y", chart.y + plotH + 3).attr("height", band).attr("fill", r => LIVE_CODE[r.status] || "none");
+  if (last && last.peak != null) cg.append("circle").attr("class", "now-dot").attr("cx", x(last.wall + 0.5)).attr("cy", y(last.peak)).attr("r", 4);
+  svg.append("text").attr("class", "t-small t-muted").attr("x", chart.x - 60).attr("y", chart.y - 6).text("windowed score");
+
+  // the side panel: this window in words, the tap's calibration and its incidents
+  const forget = 8;
+  const why = !last ? "No window scored yet: the tap is learning or its first seconds are still inside the lateness wait."
+    : last.status === "alert" ? `Three or more windows in a row above the cutoff: a sustained alert. This window's score ${f1(last.peak)} is over ${f1(last.cutoff)}.`
+    : last.status === "flagged" ? `Score ${f1(last.peak)} is over the cutoff ${f1(last.cutoff)}; it becomes an alert if the next windows stay over it.`
+    : last.status === "unseen" ? `Score ${f1(last.peak)} is under the cutoff, but a trace fell below the likelihood cutoff: something benign never did.`
+    : last.status === "warmup" ? `The clock has run for under ${forget} s, so scores are low by construction: quiet here is not evidence of normal.`
+    : last.status === "nodata" ? "No trace ended in this second: no verdict either way."
+    : last.status === "released" ? "An alert just ended: enough clean windows in a row since the last flag."
+    : `Score ${f1(last.peak)} is under the cutoff ${f1(last.cutoff)}.`;
+  const incidents = mon.events.filter(e => e.label === label).slice(-8).reverse();
+  panel.html(`<h2>${esc(label)}, live</h2>
+    <p class="big">${esc(verdict.text)}</p><p>${why}</p>
+    ${last ? `<p class="t-2">${d3.format(",")(last.packets)} packets, ${last.flows} whole flows (${last.dropped} cut by the second's edges),
+      ${last.new_endpoints} new endpoints this second · ${last.endpoints} seen so far.</p>` : ""}
+    <h2>Its detector</h2>
+    <p>${ready ? `Cutoff ${f1(ready.cutoff)}, learned from ${d3.format(",")(ready.train_flows)} benign flows; ${d3.format(".0%")(ready.benign_rate)}
+      of ${ready.held_windows} held-out benign windows sit above it.` : "Learning from its benign recording …"}</p>
+    <h2>Recent</h2>
+    ${incidents.length ? incidents.map(e => `<p class="t-2 ${e.cls}">${d3.timeFormat("%H:%M:%S")(new Date(e.at * 1000))} · ${e.html}</p>`).join("")
+      : `<p class="t-2">No alerts or releases at this tap yet. Launch an attack on tab 1 (Live) to see one.</p>`}`);
+}
+
+const LIVE_ACTS = { cluster: actLiveCluster, learning: actLiveLearning, detection: actLiveDetection };
+
 // ---------------------------------------------------------------- app shell
 
-const ACTS = { data: actData, cluster: actCluster, learning: actLearning, detection: actDetection };
+// Tab 1 is the input: recorded captures (Data) or the local cluster as it runs (Live). The
+// switch sits in the controls bar; the tab remembers which one was open last.
+function inputMode() {
+  let saved = null;
+  try { saved = localStorage.getItem("viz-input"); } catch (e) { /* storage may be blocked */ }
+  return saved === "live" && SERVER ? "live" : "data";
+}
+
+function inputSwitch(act) {
+  try { localStorage.setItem("viz-input", act); } catch (e) { /* storage may be blocked */ }
+  controls.html(`<div class="seg input-switch" role="group" aria-label="input">
+      <button data-input="data" aria-pressed="${act === "data"}">Data <span class="t-2">recorded captures</span></button>
+      <button data-input="live" aria-pressed="${act === "live"}" ${SERVER ? "" : "disabled title=\"needs the harness server (viz/serve.py)\""}>Live <span class="t-2">local cluster</span></button>
+    </div>`);
+  controls.selectAll("[data-input]").on("click", function () { if (this.dataset.input !== act) show(this.dataset.input); });
+}
+
+
+const ACTS = { data: actData, cluster: actCluster, learning: actLearning, detection: actDetection, live: actLive };
 let currentAct = "cluster";
 
 function show(act) {
@@ -2178,8 +3007,10 @@ function show(act) {
   if (window.__stopPlayer) window.__stopPlayer();
   window.onkeydown = null;
   if (act !== "data") stopLive();
+  const live = liveContext(act);
+  if (!live) monDisconnect();
   currentAct = act;
-  d3.selectAll(".acts button").attr("aria-selected", function () { return this.dataset.act === act; });
+  d3.selectAll(".acts button").attr("aria-selected", function () { return this.dataset.act === (act === "live" ? "data" : act); });
   svg.selectAll("*").remove();
   controls.html("");
   demoLayer.html("");
@@ -2188,10 +3019,13 @@ function show(act) {
   defs();
   try { localStorage.setItem("viz-act", act); } catch (e) { /* storage may be blocked */ }
   // the demo walkthrough hides the tabs and needs a bundle; the data tab is a detail-mode form
-  const form = act === "data" || !B;
+  const form = act === "data" || act === "live" || (live ? act === "learning" : !B);
   d3.select(".app").classed("form-act", form);
+  if (live) monConnect(); else bundleSubtitle();
+  if (act === "live" && SERVER) { inputSwitch("live"); liveHeader(); return actLive(); }
+  if (live) return LIVE_ACTS[act]();
   if (B && mode === "demo") return drawSlide();
-  if (act === "data") return actData();
+  if (act === "data") { inputSwitch("data"); return actData(); }
   if (!B) return actEmpty();
   ACTS[act]();
 }
@@ -2213,9 +3047,16 @@ function selectVantage(label) {
   player.capture = Math.max(same, 0);
   player.t = same >= 0 ? beforeT + before.t0 - S.playback.captures[same].t0 : capture().begin;
   d3.select("#vantage").property("value", label);
+  bundleSubtitle();
+  try { localStorage.setItem(TAP_KEY, label); } catch (e) { /* storage may be blocked */ }
+}
+
+// the header for the built bundle: tap picker and a line about the selected tap
+function bundleSubtitle() {
+  d3.select(".pick").style("display", B ? null : "none");
+  if (!S) return d3.select("#subtitle").text(SERVER ? "nothing built yet · start on the Data tab" : "no bundle");
   d3.select("#subtitle").text(`${S.meta.vantage} · ${S.meta.trace_len}-flow traces · `
     + `${S.meta.forget_seconds} s anomaly clock · built ${S.meta.generated.slice(0, 10)}`);
-  try { localStorage.setItem(TAP_KEY, label); } catch (e) { /* storage may be blocked */ }
 }
 
 // the remembered tap is keyed to the build, so a page rebuilt with --vantage opens there
@@ -2252,7 +3093,7 @@ function switchTo(label) {
 window.VIZ_SWITCH = switchTo;
 
 d3.select("#vantage").on("change", e => switchTo(e.target.value));
-d3.selectAll(".acts button").on("click", function () { show(this.dataset.act); });
+d3.selectAll(".acts button").on("click", function () { show(this.dataset.act === "data" ? inputMode() : this.dataset.act); });
 d3.select("#theme").on("click", () => {
   const root = document.documentElement;
   const dark = root.dataset.theme ? root.dataset.theme === "dark"
@@ -2275,6 +3116,6 @@ try {
   tap = query.get("vantage") || (TAP_KEY && localStorage.getItem(TAP_KEY));
 } catch (e) { /* ignore */ }
 if (B && tap && B.vantages[tap]) selectVantage(tap);
-currentAct = !B ? "data" : ACTS[start] ? start : "cluster";
+currentAct = start === "live" && SERVER ? "live" : !B ? "data" : ACTS[start] && start !== "live" ? start : "cluster";
 setMode(B && startMode === "demo" ? "demo" : "detail");
 })();
