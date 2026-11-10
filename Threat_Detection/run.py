@@ -38,11 +38,11 @@ def ensure_environment():
     """The venv's interpreter, with requirements.txt installed in it."""
     python = venv_python()
     if not python.exists():
-        print(f"Setting up {VENV.name} (once) ...")
+        print(f"Setting up {VENV.name} (once) ...", flush=True)
         venv.EnvBuilder(with_pip=True).create(VENV)
     wanted = hashlib.sha256(REQUIREMENTS.read_bytes()).hexdigest()
     if not STAMP.exists() or STAMP.read_text(encoding="utf-8").strip() != wanted:
-        print("Installing numpy, pandas, matplotlib, scikit-learn (a few minutes, once) ...")
+        print("Installing numpy, pandas, matplotlib, scikit-learn (a few minutes, once) ...", flush=True)
         subprocess.run([str(python), "-m", "pip", "install", "--disable-pip-version-check",
                         "-q", "-r", str(REQUIREMENTS)], check=True)
         STAMP.write_text(wanted, encoding="utf-8")
@@ -65,7 +65,7 @@ def main(argv):
     except subprocess.CalledProcessError:
         sys.exit("Installing the requirements failed (see above). Delete the .venv folder "
                  "and run this again; check your internet connection.")
-    env = dict(os.environ, PYTHONUTF8="1")
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONUNBUFFERED="1")
     try:
         return subprocess.call([str(python), str(HERE / "viz" / "serve.py"), *args],
                                cwd=str(HERE), env=env)
