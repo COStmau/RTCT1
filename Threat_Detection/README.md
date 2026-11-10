@@ -5,9 +5,8 @@ the project virtualenv: `.venv/bin/python`.
 
 ## Try it on your machine
 
-This repository does not contain the sponsor's captures. It contains the page built from
-them (`baked_demo/`), and the harness that opens on that page and loads your own captures.
-Use one of three ways to start:
+The provided dataset is not in this repository. What is here is the page built from
+them (`baked_demo/`), and the harness that opens on it and loads your own captures. Pick one:
 
 **1. Look only (no install).** Open `baked_demo/state_machine.html` in a browser. The file is
 self-contained and works offline. It shows the cluster map, the state machine learning, and
@@ -30,6 +29,8 @@ If you do not have Python 3.11, get it from [python.org](https://www.python.org/
 Windows, tick "Add python.exe to PATH" and use the `py` launcher.
 
 **3. Docker (only Docker needed).**
+
+I haven't been able to test this yet.
 
 ```bash
 cd RTCT1/Threat_Detection
@@ -65,8 +66,7 @@ packet CSVs ──► data_io ──► features ──► detectors ──► r
 
 `core/data_io.py` → `core/features.py` → `core/detectors.py` → `core/reporting.py`. Nothing
 downstream reaches back upstream, and none of the four import `local_paths.py`, so they are
-portable and testable on their own. That one-way arrow is enforced by a test, not by
-convention: `core/` may not import `methods/`, `viz/`, `convert/`, `demo` or `local_paths`,
+portable and testable on their own. `core/` may not import `methods/`, `viz/`, `convert/`, `demo` or `local_paths`,
 nor anything in `dev/` (`experiments`, `verdicts`, `metrics`, `statemachine`).
 
 ```
@@ -77,7 +77,7 @@ convert/       capture files -> the sponsor's packet CSVs.
 dev/           how it was built and judged: experiments, verdicts, tests, design notes.
 ```
 
-This README covers what ships. Everything under `dev/` (the measurements, the keep-or-drop
+Everything under `dev/` (the measurements, the keep-or-drop
 rules, the unit suite, the progress log and the rearchitecting notes) is mapped in
 [`dev/README.md`](dev/README.md). Nothing outside `dev/` imports from it.
 
@@ -91,7 +91,7 @@ outside itself.
 
 | File | What it does |
 |---|---|
-| `core/__init__.py` | The front door, and the whole subsystem in six calls: `load_capture` → `make_windows` → `split_reference` → `build_detector` → `pipeline` → `annotate`. Its docstring is the shortest correct description of this folder. |
+| `core/__init__.py` | The whole subsystem in six calls: `load_capture` → `make_windows` → `split_reference` → `build_detector` → `pipeline` → `annotate`. Its docstring is the shortest correct description of this folder. |
 | `core/data_io.py` | The input format and where output goes. Names every capture, reads the packet columns, checks the timebase and snaplen saturation, builds and caches the manifest, resolves `outputs/`. |
 | `core/features.py` | Packets → one row per second. The 13 features, the 9 the detectors read by default (`DETECTION_FEATURES`), the ablation groups, and the temporal train/held-out split. Stateless: no baseline, no thresholds, no detection. |
 | `core/detectors.py` | Every detection method behind one interface (each reads `DETECTION_FEATURES` unless built with `features=None`): `fit` → `calibrate` → `score` → `flag`, with optional `explain`. The z-score baseline is median + MAD. Add one by writing a class and adding it to `REGISTRY`. |
