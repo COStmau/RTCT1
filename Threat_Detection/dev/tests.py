@@ -703,6 +703,40 @@ class SweepChecks(unittest.TestCase):
         attack = results[results["scenario"].eq("nginx attack")].iloc[0]
         self.assertIn("excluded", attack["note"])
         self.assertEqual(int(attack["windows"]), 0)
+    def test_event_writer_creates_one_file_per_scored_stratum(self):
+        import tempfile
+
+        def scored(start_epoch_s, persistent):
+            frame = pd.DataFrame({
+                "anomaly_score": [7.0], "anomaly": [persistent],
+                "persistent_flag": [persistent], "top_feature": ["rst_count"],
+                "observed_value": [8.0], "expected_mean": [1.0],
+                "feature_z_score": [7.0],
+            })
+            frame.attrs["start_epoch_s"] = start_epoch_s
+            return frame
+
+        captures = [
+            ({"scenario": "nginx attack", "label": "pod-nginx", "method": "tcp"},
+             scored(1771551277.3, True), 2.5),
+            ({"scenario": "benign", "label": "node-child2", "method": "ptcp"},
+             scored(1771551000.0, False), 2.5),
+        ]
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(sweep.write_sweep_events(captures, folder), (2, 1))
+            paths = sorted(Path(folder).glob("*.jsonl"))
+            self.assertEqual([path.name for path in paths], [
+                "benign__node-child2__ptcp.jsonl",
+                "nginx-attack__pod-nginx__tcp.jsonl",
+            ])
+            self.assertEqual(paths[0].read_text(), "")
+            for path in paths[1:]:
+                scenario, label, method = path.stem.split("__")
+                for line in path.read_text().splitlines():
+                    capture = json.loads(line)["capture"]
+                    self.assertEqual(capture["scenario"].replace(" ", "-"), scenario)
+                    self.assertEqual((capture["label"], capture["method"]), (label, method))
+                    self.assertIsNotNone(capture["start_epoch_s"])
 
 
 class FeatureValueChecks(unittest.TestCase):
@@ -1403,26 +1437,96 @@ class StateMachineChecks(unittest.TestCase):
 
 
 class EventLogChecks(unittest.TestCase):
-    def flagged_frame(self):
-        return pd.DataFrame(
-            {"anomaly_score": [4.0, 1.0, 7.0, float("inf")],
-             "anomaly": [True, False, True, True]},
-            index=[3, 4, 5, 6])
+    CAPTURE = {"label": "pod-nginx", "method": "tcp", "scenario": "nginx attack"}
 
-    def test_only_flagged_windows_emit_in_order(self):
-        events = to_events(self.flagged_frame(), detector="z_score", pods=["pod-nginx"])
-        self.assertEqual([e["severity"] for e in events], ["low", "med", "high"])
+    def flagged_frame(self):
+        frame = pd.DataFrame(
+            {"anomaly_score": [4.0, 1.0, 7.0, 12.0],
+             "anomaly": [True, False, True, True],
+             "persistent_flag": [False, False, True, True],
+             "top_feature": ["packet_count", "packet_count", "rst_count", "http_count"],
+             "observed_value": [20.0, 10.0, 8.0, 50.0],
+             "expected_mean": [5.0, 5.0, 1.0, 2.0],
+             "feature_z_score": [4.0, 1.0, 7.0, 12.0]},
+            index=[3, 4, 5, 6])
+        frame.attrs["start_epoch_s"] = 1771551277.3
+        return frame
+
+    def events(self, detector="z_score", cutoff=2.5):
+        return to_events(self.flagged_frame(), detector=detector, cutoff=cutoff,
+                         capture=self.CAPTURE)
+
+    def test_only_persistent_alerts_emit_in_order(self):
+        frame = self.flagged_frame()
+        events = self.events()
+        self.assertEqual(int(frame["anomaly"].sum()), 3)
+        self.assertEqual(len(events), int(frame["persistent_flag"].sum()))
+        self.assertEqual([e["severity"] for e in events], ["medium", "high"])
+        self.assertEqual({event["severity"] for event in events} - {"low", "medium", "high"}, set())
+        self.assertNotIn('"med"', json.dumps(events))
         for event in events:
-            self.assertEqual(set(event), {"version", "detector", "t", "severity", "locations"})
+            self.assertEqual(set(event), {"version", "detector", "t", "score", "cutoff",
+                                          "severity", "persistent", "reason", "capture",
+                                          "locations"})
+            self.assertIs(event["persistent"], True)
         first = events[0]
-        self.assertEqual(first["version"], "LogV1")
+        self.assertEqual(first["version"], "LogV2")
         self.assertEqual(first["detector"], "z_score")
-        self.assertEqual(first["locations"], {"pods": ["pod-nginx"]})
+        self.assertEqual(first["locations"], {"type": "pod", "ids": ["pod-nginx"]})
+
+    def test_locations_use_capture_label_level_for_all_three_types(self):
+        expected = {"pod-nginx": "pod", "node-child2": "node", "router-any": "router"}
+        for label, level in expected.items():
+            with self.subTest(label=label):
+                capture = {**self.CAPTURE, "label": label}
+                event = to_events(self.flagged_frame(), detector="z_score", cutoff=2.5,
+                                  capture=capture)[0]
+                self.assertEqual(event["locations"], {"type": level, "ids": [label]})
+                self.assertNotIn("pods", event["locations"])
+
+    def test_events_copy_scores_and_the_detector_specific_cutoff(self):
+        z_events = self.events(cutoff=2.5)
+        svm_events = self.events(detector="one_class_svm", cutoff=0.595866)
+        for event in z_events + svm_events:
+            self.assertIsInstance(event["score"], float)
+            self.assertIsInstance(event["cutoff"], float)
+            self.assertGreater(event["score"], event["cutoff"])
+        self.assertEqual([event["score"] for event in z_events], [7.0, 12.0])
+        self.assertEqual(z_events[0]["cutoff"], 2.5)
+        self.assertEqual(svm_events[0]["cutoff"], 0.595866)
+        self.assertNotEqual(z_events[0]["cutoff"], svm_events[0]["cutoff"])
+
+    def test_severity_bands_match_each_detector_scale(self):
+        cases = {
+            "z_score": [(4.0, "low"), (7.0, "medium"), (11.0, "high")],
+            "isolation_forest": [(0.08, "low"), (0.15, "medium"), (0.25, "high")],
+            "one_class_svm": [(0.40, "low"), (0.50, "medium"), (0.60, "high")],
+        }
+        for detector, expected in cases.items():
+            with self.subTest(detector=detector):
+                self.assertEqual([reporting._severity(score, detector) for score, _ in expected],
+                                 [severity for _, severity in expected])
+
+    def test_events_carry_reason_and_capture_without_recomputing_values(self):
+        first = self.events()[0]
+        self.assertEqual(first["reason"], {"feature": "rst_count", "group": "flags",
+                                           "observed": 8.0, "expected": 1.0, "z": 7.0})
+        self.assertEqual(first["capture"], {"label": "pod-nginx", "method": "tcp",
+                                            "scenario": "nginx attack",
+                                            "start_epoch_s": 1771551277.3})
+
+    def test_make_windows_keeps_capture_start_when_it_makes_time_relative(self):
+        packets = pd.DataFrame({"ts": [10.0, 12.0], "frame_len": [100, 200],
+                                "iat": [0.0, 2.0], "dst_ip": ["a", "b"],
+                                "dst_port": [80, 443]})
+        windows = make_windows(packets)
+        self.assertEqual(windows.attrs["start_epoch_s"], 10.0)
+        self.assertEqual(windows.index.tolist(), [0, 1, 2])
 
     def test_events_carry_the_window_second_so_they_can_be_ordered(self):
         # LogV0 had no time, so a consumer could not order, dedupe or expire an incident.
-        events = to_events(self.flagged_frame(), detector="z_score", pods=["pod-nginx"])
-        self.assertEqual([e["t"] for e in events], [3, 5, 6])
+        events = self.events()
+        self.assertEqual([e["t"] for e in events], [5, 6])
         for event in events:
             self.assertIsInstance(event["t"], int)
         self.assertEqual([e["t"] for e in events], sorted(e["t"] for e in events))
@@ -1430,20 +1534,21 @@ class EventLogChecks(unittest.TestCase):
     def test_the_pair_demo_actually_writes_the_event_stream(self):
         # to_events/write_events were tested but never called: the contract was documented
         # and consumed downstream while nothing produced it, so outputs/events.jsonl went
-        # stale. Pin the call site, not just the functions.
+        # stale. Pin the call site, including its calibrated cutoff, not just the functions.
         source = Path("demo.py").read_text(encoding="utf-8")
         self.assertIn("write_events(", source)
         self.assertIn("to_events(", source)
+        self.assertIn("cutoff=detector.cutoff", source)
 
     def test_event_lines_are_valid_json(self):
         import json
-        events = to_events(self.flagged_frame(), detector="z_score", pods=["pod-nginx"])
+        events = self.events()
         for event in events:
             json.dumps(event, allow_nan=False)
         import tempfile
         path = Path(tempfile.mkdtemp()) / "events.jsonl"
         write_events(events, path=str(path))
-        self.assertEqual(len(path.read_text().strip().split("\n")), 3)
+        self.assertEqual(len(path.read_text().strip().split("\n")), 2)
 
 
 class MetricsChecks(unittest.TestCase):

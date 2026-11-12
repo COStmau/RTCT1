@@ -73,6 +73,7 @@ def make_windows(packets, window_size=WINDOW_SIZE):
         raise ValueError("window_size must be positive and finite.")
 
     frame = packets.copy()
+    start_epoch_s = float(pd.to_numeric(frame["ts"], errors="raise").min())
     for column in ("ts", "frame_len", "iat", "tcp_syn", "tcp_rst"):
         if column in frame.columns:
             frame[column] = pd.to_numeric(frame[column], errors="raise")
@@ -114,6 +115,7 @@ def make_windows(packets, window_size=WINDOW_SIZE):
     windows = windows.reindex(range(int(frame["time_bin"].max()) + 1))
     counts = windows.columns.difference(["mean_packet_size", "mean_iat"])
     windows[counts] = windows[counts].fillna(0)
+    windows.attrs["start_epoch_s"] = start_epoch_s
     return windows
 
 

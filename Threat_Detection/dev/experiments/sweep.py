@@ -18,10 +18,10 @@ import numpy as np
 import pandas as pd
 
 import local_paths
-from core.data_io import MANIFEST_NAME, load_manifest, resolve_output
+from core.data_io import MANIFEST_NAME, load_capture, load_manifest, resolve_output
 from core.detectors import build, flag_stats
 from core.features import FEATURE_GROUPS, WINDOW_SIZE, load_all_windows, split_reference
-from core.reporting import plot_detection_gap, plot_matrix, print_matrix
+from core.reporting import plot_detection_gap, plot_matrix, print_matrix, to_events, write_events
 
 DETECTOR = "z_score"
 
@@ -50,11 +50,30 @@ def summary_row(scenario, label, method, group, results=None, note=""):
     }
 
 
-def run_sweep(manifest, groups=(None,)):
-    """Score every (label, method) stratum in every scenario; `groups` selects feature subsets."""
+def _event_filename(scenario, label, method):
+    """Stable capture identity as a filesystem-safe JSON Lines name."""
+    return "__".join(str(value).replace(" ", "-") for value in (scenario, label, method)) + ".jsonl"
+
+
+def write_sweep_events(scored, events_dir):
+    """Write one event file for each scored adopted-detector capture."""
+    events_dir = Path(events_dir)
+    events_dir.mkdir(parents=True, exist_ok=True)
+    files = event_count = 0
+    for capture, results, cutoff in scored:
+        events = to_events(results, detector=DETECTOR, cutoff=cutoff, capture=capture)
+        write_events(events, path=events_dir / _event_filename(
+            capture["scenario"], capture["label"], capture["method"]))
+        files += 1
+        event_count += len(events)
+    return files, event_count
+
+
+def run_sweep(manifest, groups=(None,), events_dir=None):
+    """Score every stratum; optionally write events for the adopted `all` group."""
     windows, notes = load_all_windows(manifest)
     attacks = [s for s in sorted(manifest["scenario"].unique()) if s != "benign"]
-    rows = []
+    rows, event_frames = [], []
     for group in groups:
         # "all" is the adopted detector (its own feature list); "full" is every one of the 13
         # measurements, the old baseline; a named group is that group alone.
@@ -81,11 +100,28 @@ def run_sweep(manifest, groups=(None,)):
                                                 note=notes.get((scenario, label, method), "no capture")))
                         continue
                     scored = target if columns is None else target[columns]
-                    rows.append(summary_row(scenario, label, method, group_name,
-                                            detector.annotate(scored)))
-    return (pd.DataFrame(rows)
-            .sort_values(["group", "method", "label", "scenario"])
-            .reset_index(drop=True))
+                    annotated = detector.annotate(scored)
+                    rows.append(summary_row(scenario, label, method, group_name, annotated))
+                    if events_dir is not None and group_name == "all":
+                        start_epoch_s = annotated.attrs.get("start_epoch_s")
+                        if start_epoch_s is None or pd.isna(start_epoch_s):
+                            capture_row = manifest[
+                                manifest["scenario"].eq(scenario)
+                                & manifest["label"].eq(label)
+                                & manifest["method"].eq(method)
+                            ].iloc[0]
+                            annotated.attrs["start_epoch_s"] = float(
+                                pd.to_numeric(load_capture(capture_row["path"])["ts"], errors="raise").iloc[0])
+                        event_frames.append((
+                            {"scenario": scenario, "label": label, "method": method},
+                            annotated,
+                            detector.cutoff))
+    results = (pd.DataFrame(rows)
+               .sort_values(["group", "method", "label", "scenario"])
+               .reset_index(drop=True))
+    if events_dir is not None:
+        results.attrs["event_counts"] = write_sweep_events(event_frames, events_dir)
+    return results
 
 
 def main():
@@ -95,11 +131,13 @@ def main():
                              "comma-separated subset of " + ", ".join(FEATURE_GROUPS))
     parser.add_argument("--out", default="sweep_results.csv")
     parser.add_argument("--manifest", default=MANIFEST_NAME)
+    parser.add_argument("--events-dir",
+                        help="write one JSON Lines event file per scored `all` stratum")
     args = parser.parse_args()
 
     manifest = load_manifest(local_paths.KUBEDATA_ROOT, name=args.manifest)
     groups = [None] if args.groups == "all" else args.groups.split(",")
-    results = run_sweep(manifest, groups=groups)
+    results = run_sweep(manifest, groups=groups, events_dir=args.events_dir)
     out_file = resolve_output(args.out)
     results.to_csv(out_file, index=False)
     # Write the inventory this run actually scored, so the sibling scripts
@@ -112,6 +150,9 @@ def main():
     excluded = results[results["note"].str.startswith("excluded", na=False)]
     print(f"\nWrote {out_file} | rows={len(results)}"
           f" | excluded captures={excluded['label'].nunique()}")
+    if args.events_dir is not None:
+        files, events = results.attrs["event_counts"]
+        print(f"Wrote {files} event files | events={events} | directory={args.events_dir}")
     print(f"Times are per capture; windows are {WINDOW_SIZE:g}s. Flags are deviations, not confirmed attacks.")
     if len(groups) == 1 and groups[0] is None:
         print(f"\nWrote {plot_matrix(results)}")

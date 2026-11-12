@@ -83,11 +83,14 @@ def resolve_reference(benign_windows):
     return reference, held_out, note
 
 
-def _label_of(path):
-    """The capture label a packet CSV belongs to, e.g. pod-nginx from pod-nginx-tcp.csv."""
+def _capture_of(path):
+    """Capture identity from a dataset path; epoch time comes from make_windows."""
     from core.data_io import parse_capture
-    from pathlib import Path
-    return parse_capture(Path(path).name)[0]
+    path = Path(path)
+    label, method = parse_capture(path.name)
+    parts = path.parts
+    scenario = parts[parts.index("csv files") - 1]
+    return {"label": label, "method": method, "scenario": scenario}
 
 
 def pair_demo():
@@ -107,14 +110,18 @@ def pair_demo():
     results.to_csv(resolve_output("results.csv"))
     benign_results.to_csv(resolve_output("benign_results.csv"))
 
-    # The detection -> response handoff (EVENT_LOG.md). Only flagged attack windows are
-    # emitted, each carrying its second inside the capture so the response side can order
-    # and expire them.
-    events = to_events(results, detector=DETECTOR, pods=[_label_of(local_paths.ATTACK_CSV)])
+    # The detection -> response handoff (EVENT_LOG.md). Only persistent attack alerts are
+    # emitted. Flagged windows remain in results.csv and the console summary counts both.
+    capture = _capture_of(local_paths.ATTACK_CSV)
+    events = to_events(results, detector=DETECTOR, cutoff=detector.cutoff, capture=capture)
     write_events(events)
 
     summarize_flags(results, benign_results, len(reference), note)
-    print(f"   {len(events)} events written to outputs/events.jsonl ({events[0]['version'] if events else 'no flags'})")
+    flagged_count = int(results["anomaly"].fillna(False).sum())
+    persistent_count = int(results["persistent_flag"].fillna(False).sum())
+    print(f"   {len(events)} persistent events written to outputs/events.jsonl "
+          f"({flagged_count} flagged / {persistent_count} persistent; "
+          f"{events[0]['version'] if events else 'no alerts'})")
     plot_detection(results, benign_results, detector.mean, detector.std, len(reference))
 
 

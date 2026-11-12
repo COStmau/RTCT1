@@ -32,29 +32,33 @@ class _LazyPyplot:
 
 plt = _LazyPyplot()
 
-from core.data_io import SNAPLEN_CEILINGS, SNAPLEN_REPORT_AT, resolve_output
+from core.data_io import (SNAPLEN_CEILINGS, SNAPLEN_REPORT_AT, level_from_label,
+                          resolve_output)
 from core.evaluation import BULK_LABELS, TRAIN_FRACTION
 from core.detectors import (BENIGN_QUANTILE, PERSISTENCE_WINDOW, SVM_NU, THRESHOLD,
                        flag_stats, persistent_mask)
-from core.features import DETECTION_FEATURES, FEATURE_LABELS, WINDOW_SIZE
+from core.features import DETECTION_FEATURES, FEATURE_GROUPS, FEATURE_LABELS, WINDOW_SIZE
 
 __all__ = ["flag_stats", "persistent_mask", "summarize_flags", "threshold_table",
            "plot_detection", "print_matrix", "plot_matrix", "plot_detection_gap",
            "plot_comparison", "print_comparison", "plot_regime_split", "plot_snaplen",
            "write_report", "to_events", "write_events"]
 
-# LogV1 adds `t`, the capture-relative second, so a consumer can order and expire events.
-# LogV0 carried no time at all: 51 events on one capture were indistinguishable.
-EVENT_VERSION = "LogV1"
+# LogV2 replaces `med` with `medium` and gives each detector score-scale bands.
+# LogV1 readers must reject or translate the changed severity vocabulary.
+EVENT_VERSION = "LogV2"
 
 # Incident lifetime: consecutive clean windows before a flag may clear. Nothing enforces it
 # yet; the rule belongs to the event stream this module writes, not to the detector.
 CLEAR_WINDOWS = 3
 
-# Severity bands on the raw z_score. Only flagged windows reach here, so every
-# score sits above the detector's cutoff: low is borderline, high is far outside normal.
-SEVERITY_LOW_BELOW = 5.0
-SEVERITY_MED_BELOW = 10.0
+# Severity bands match each detector's raw score scale. Values come from the observed
+# flagged-score ranges: z-score is in sigma; learned scores are negated decision functions.
+SEVERITY_BANDS = {
+    "z_score": (5.0, 10.0),
+    "isolation_forest": (0.10, 0.20),
+    "one_class_svm": (0.45, 0.55),
+}
 
 
 # --- one capture, printed and plotted ---------------------------------------------
@@ -200,34 +204,52 @@ def plot_detection(results, benign_results, mean, std, baseline_windows, path=No
 
 # --- event log (starter contract for the response subsystem) --------------------------
 
-def _severity(score):
-    """Bucket a raw score: low below 5, med below 10, high at or above."""
+def _severity(score, detector):
+    """Bucket a detector score as low, medium, or high on that detector's scale."""
+    low_below, high_below = SEVERITY_BANDS[detector]
     if not np.isfinite(score):  # flagged and unbounded beats any band
         return "high"
-    if score < SEVERITY_LOW_BELOW:
+    if score < low_below:
         return "low"
-    if score < SEVERITY_MED_BELOW:
-        return "med"
+    if score < high_below:
+        return "medium"
     return "high"
 
 
-def to_events(results, *, detector, pods):
-    """One dict per flagged window: version, detector, time, severity, locations.
+def _feature_group(feature):
+    return next(group for group, members in FEATURE_GROUPS.items() if feature in members)
 
-    `t` is the window's second inside its capture -- the index of the windowed table, which
-    annotate() builds from the capture's first packet. Without it a consumer can tell which
-    windows flagged but not in what order or how far apart, so it cannot dedupe or expire
-    an incident. It is capture-relative, not wall-clock: the manifest carries the capture's
-    own start time for that.
+
+def to_events(results, *, detector, cutoff, capture):
+    """One dict per persistent alert, with capture identity and detector evidence.
+
+    `t` stays capture-relative. `start_epoch_s` is the first packet's epoch timestamp, kept
+    by make_windows when it creates that relative index. Score and evidence values are copied
+    from the annotate() result; this function does not calculate them again.
     """
+    capture = {"label": capture["label"], "method": capture["method"],
+               "scenario": capture["scenario"],
+               "start_epoch_s": results.attrs["start_epoch_s"]}
+    locations = {"type": level_from_label(capture["label"]), "ids": [capture["label"]]}
     events = []
-    flagged = results[results["anomaly"].fillna(False)].sort_index()
-    for t, row in flagged.iterrows():
+    persistent = results[results["persistent_flag"].fillna(False)].sort_index()
+    for t, row in persistent.iterrows():
+        feature = row["top_feature"]
+        score = float(row["anomaly_score"])
         events.append({"version": EVENT_VERSION,
                        "detector": detector,
                        "t": int(t),
-                       "severity": _severity(row.get("anomaly_score")),
-                       "locations": {"pods": list(pods)}})
+                       "score": score,
+                       "cutoff": None if cutoff is None else float(cutoff),
+                       "severity": _severity(score, detector),
+                       "persistent": True,
+                       "reason": {"feature": feature,
+                                  "group": _feature_group(feature),
+                                  "observed": row["observed_value"],
+                                  "expected": row["expected_mean"],
+                                  "z": row["feature_z_score"]},
+                       "capture": capture.copy(),
+                       "locations": locations.copy()})
     return events
 
 
