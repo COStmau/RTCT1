@@ -3693,6 +3693,87 @@ class ClusterProfileChecks(unittest.TestCase):
         self.assertEqual(cluster.locate(found, "10.42.3.9")["kind"], "lan")
 
 
+class ClusterProviderChecks(unittest.TestCase):
+    """live/deployed.py: the capture points and stream commands of a deployed cluster."""
+
+    PODS = {"items": [
+        {"metadata": {"name": "daemon-x86-5s-jcsgx", "namespace": "default",
+                      "ownerReferences": [{"kind": "DaemonSet", "name": "daemon-x86-5s"}]},
+         "spec": {"nodeName": "child1", "hostNetwork": True,
+                  "containers": [{"name": "zeek"}, {"name": "tcpdump-sidecar"}]},
+         "status": {"phase": "Running"}},
+        {"metadata": {"name": "nginx-live-54b7c9cc4-t6p2g", "namespace": "default",
+                      "labels": {"app": "nginx"},
+                      "ownerReferences": [{"kind": "ReplicaSet", "name": "nginx-live-54b7c9cc4"}]},
+         "spec": {"nodeName": "machild2",
+                  "containers": [{"name": "nginx-main"}, {"name": "tcpdump-sidecar"}]},
+         "status": {"phase": "Running"}},
+        {"metadata": {"name": "camera-5s-55f75b97f6-j225w", "namespace": "default",
+                      "labels": {"app": "camera-5s"},
+                      "ownerReferences": [{"kind": "ReplicaSet", "name": "camera-5s-55f75b97f6"}]},
+         "spec": {"nodeName": "child3", "containers": [{"name": "tcpdump-sidecar"}]},
+         "status": {"phase": "Running"}},
+        {"metadata": {"name": "no-sidecar-1", "namespace": "default"},
+         "spec": {"nodeName": "child1", "containers": [{"name": "app"}]},
+         "status": {"phase": "Running"}},
+    ]}
+
+    def test_taps_name_daemonsets_as_nodes_and_deployments_as_pods(self):
+        from live.deployed import taps_from_pods
+        usable = {("default", "daemon-x86-5s-jcsgx"), ("default", "nginx-live-54b7c9cc4-t6p2g")}
+        found = {t["label"]: t for t in taps_from_pods(self.PODS, usable)}
+        self.assertEqual(sorted(found), ["node-child1", "pod-nginx"])
+        self.assertEqual(found["node-child1"]["level"], "node")
+        self.assertEqual(found["pod-nginx"]["level"], "pod")
+        self.assertEqual(found["pod-nginx"]["pod"], "nginx-live-54b7c9cc4-t6p2g")
+        self.assertTrue(found["node-child1"]["host_network"])
+
+    def test_a_sidecar_without_tcpdump_is_not_a_tap(self):
+        from live.deployed import taps_from_pods
+        usable = {("default", "daemon-x86-5s-jcsgx")}
+        found = [t["label"] for t in taps_from_pods(self.PODS, usable)]
+        self.assertNotIn("pod-camera-5s", found)
+
+    def test_the_stream_command_writes_pcap_to_stdout(self):
+        from live.deployed import ClusterProvider
+        provider = ClusterProvider(kubeconfig=__file__)     # the path is only read at stream time
+        argv = provider.stream_argv({"label": "pod-nginx", "namespace": "default",
+                                     "pod": "nginx-live-54b7c9cc4-t6p2g"})
+        self.assertEqual(argv[:3], ["kubectl", "--kubeconfig", str(provider.kubeconfig)])
+        self.assertEqual(argv[argv.index("-w") + 1], "-")
+        self.assertIn("-U", argv)
+        self.assertIn("tcpdump-sidecar", argv)
+        self.assertNotIn("timeout", argv)
+
+    def test_an_unreachable_cluster_reports_no_inventory(self):
+        from live.deployed import ClusterProvider
+        found = ClusterProvider(kubeconfig="/nonexistent/kubeconfig.yaml").discover()
+        self.assertEqual(found, {"clusters": [], "inventory": None})
+
+    def test_cleanup_kills_the_stream_and_not_the_sidecar_capture(self):
+        from unittest import mock
+        from live.deployed import ClusterProvider
+        provider = ClusterProvider(kubeconfig="kc.yaml")
+        with mock.patch("live.deployed.subprocess.run") as run:
+            provider.cleanup({"label": "pod-nginx", "namespace": "default", "pod": "nginx-x"})
+        argv = run.call_args[0][0]
+        self.assertIn("pkill -f", argv[-1])
+        self.assertIn("tcpdump -U -n -s 128", argv[-1])
+        self.assertNotIn("-w /pcap", argv[-1])      # the sidecar's own chunked capture survives
+
+    def test_cleanup_without_a_pod_does_nothing(self):
+        from live.deployed import ClusterProvider
+        ClusterProvider(kubeconfig="kc.yaml").cleanup({})     # must not raise
+
+    def test_the_missing_cluster_message_names_the_right_thing(self):
+        from live.monitor import Monitor, MonitorError
+        monitor = Monitor(_NoCluster.make())
+        with self.assertRaises(MonitorError) as caught:
+            monitor.start()
+        self.assertIn("No cluster is reachable", str(caught.exception))
+        self.assertNotIn("collect.py up", str(caught.exception))
+
+
 class SourceChecks(_OutputsInTemp, unittest.TestCase):
     """Files in: what scan reports, what load accepts, and how assignments become a page."""
 

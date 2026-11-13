@@ -200,7 +200,9 @@ class Monitor:
         """Watch these taps (the default ones when none are named), on top of any already watched."""
         with self._ctl:
             if self.provider.inventory(fresh=not self.taps) is None:
-                raise MonitorError("No local cluster is running: `localcluster/collect.py up` starts one.")
+                hint = ("`localcluster/collect.py up` starts one." if self.provider.name == "local"
+                        else "check the kubeconfig and that the cluster's API server answers.")
+                raise MonitorError(f"No cluster is reachable to watch: {hint}")
             points = {t["label"]: t for t in self.provider.taps()}
             labels = list(labels or [l for l, t in points.items() if t["level"] in self.provider.default_levels])
             unknown = [l for l in labels if l not in points]

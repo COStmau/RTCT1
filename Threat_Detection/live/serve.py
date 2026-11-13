@@ -41,6 +41,7 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from live.deployed import ClusterProvider
 from live.monitor import Monitor, MonitorError
 from live.taps import LocalClusterProvider, ProviderError, ReplayProvider
 
@@ -281,12 +282,21 @@ def main(argv=None):
                         help="play these pcap files or folders back as taps instead of watching a cluster")
     parser.add_argument("--speed", type=float, default=1.0, help="replay speed (default 1: real time)")
     parser.add_argument("--watch", action="store_true", help="start watching the default taps at once")
+    parser.add_argument("--record", action="store_true",
+                        help="with --watch, also write each tap's stream to a pcap in the session")
+    parser.add_argument("--cluster", metavar="KUBECONFIG",
+                        help="watch a deployed cluster through this kubeconfig"
+                             " instead of a local k3d one")
     parser.add_argument("--out", default=None, help="where sessions and machines are kept (default ~/rtct-data)")
     args = parser.parse_args(argv)
 
     try:
-        provider = (ReplayProvider(args.replay, args.speed, args.out) if args.replay
-                    else LocalClusterProvider(args.out))
+        if args.replay:
+            provider = ReplayProvider(args.replay, args.speed, args.out)
+        elif args.cluster:
+            provider = ClusterProvider(args.cluster, args.out)
+        else:
+            provider = LocalClusterProvider(args.out)
     except ProviderError as error:
         sys.exit(str(error))
     monitor = Monitor(provider)
@@ -295,7 +305,7 @@ def main(argv=None):
     print(f"Live monitor at {url}  ({provider.name}; Ctrl-C to stop)", flush=True)
     if args.watch:
         try:
-            monitor.start()
+            monitor.start(record=args.record)
         except (MonitorError, ProviderError) as error:
             print(f"  not watching yet: {error}", flush=True)
     if args.open:
