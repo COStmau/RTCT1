@@ -134,7 +134,7 @@ independent of it; see "Capture to packet rows" below.
 | `baked_demo/` | The KUBEDATA page, prebuilt and with no capture data: `state_machine.html` (opens offline) and `bundle.json.gz` (what the harness opens on when there is no `KUBEDATA_ROOT`). Written by `viz/bake.py`. |
 | `Dockerfile` | The harness in a container, for a machine with only Docker. |
 | `requirements.txt` | The pinned runtime: Python 3.11 with numpy, pandas, matplotlib and scikit-learn at the versions the numbers were measured under. |
-| `EVENT_LOG.md` | The detection → response event contract (`LogV1`, carries the capture-relative second). |
+| `EVENT_LOG.md` | The detection → response event contract (`LogV2`: one line per persistent alert, with the capture-relative second, per-detector severity bands, the strongest-feature reason, and the capture's identity). |
 | `outputs/` | Everything generated. Safe to delete; `demo.py` item 8 rebuilds it. `outputs/SHOWCASE.md` is every measured result as one file. |
 
 

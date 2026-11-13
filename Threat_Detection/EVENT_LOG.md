@@ -39,6 +39,26 @@ strongest feature, `group` is its entry in `core.features.FEATURE_GROUPS`, and
 `observed`, `expected`, and signed `z` come directly from the columns produced
 by `annotate()`. The event writer does not calculate these values again.
 
+## What the emitter assumes
+
+Every current writer passes `detector="z_score"`: `demo.py` and
+`dev/experiments/sweep.py` each hold a single `DETECTOR` constant. The emitter is
+written for a detector that attributes a window to one feature and has a band in
+`SEVERITY_BANDS`. Two lookups enforce that, and both fail loudly rather than
+writing a half-filled event: `_feature_group` searches `FEATURE_GROUPS` for
+`reason.feature` and raises `StopIteration` when the feature belongs to none of
+them, and `_severity` raises `KeyError` for a detector name outside the three
+bands above. A learned detector attributes no single feature (its `top_feature`
+is `nan`), so it cannot write events until the emitter grows a branch for it. Do
+not add one to the sweep and assume events follow.
+
+`write_events` copies `reason` values from `annotate()` and never tests them for
+finiteness, so whatever the detector puts in the evidence columns is what lands
+in the file. `z_score` fills them with real numbers, which is why every event in
+`outputs/events.jsonl` parses as strict JSON. A detector that leaves a NaN in an
+evidence column would emit the bare token `NaN`, which is not valid JSON; the
+reader would have to drop the line.
+
 `capture` identifies the input recording. It holds the capture `label`, capture
 `method`, scenario folder, and `start_epoch_s`. `start_epoch_s` is the epoch
 second of the capture's first packet. `make_windows` keeps it when it subtracts
@@ -54,6 +74,10 @@ is the calibrated cutoff used for that capture. Both are JSON numbers, or `null`
 when unavailable; they are never strings. An emitted event satisfies
 `score > cutoff`, which is the strict comparison used by `Detector.flag()`.
 
+`write_events` opens the file for writing, not appending, so a reader that reads
+while a sweep or demo is running can see a truncated last line. Drop it rather
+than failing on the file.
+
 `severity` is one of `low`, `medium`, or `high`. Each detector uses bands on
 its own raw score scale because the values are not interchangeable:
 
@@ -67,6 +91,11 @@ An unbounded score counts as high.
 
 ## Changes
 
+- **Clarification, not a version change.** This document now states which detector
+  writes events today (`z_score` only), the two lookups that refuse any other
+  name, that `write_events` does not check evidence values for finiteness, and
+  that the file is rewritten rather than appended. The bytes on the wire are
+  unchanged; a LogV2 reader needs no change.
 - **LogV2** replaces the abbreviated middle severity value with `medium`, so the
   vocabulary is now `low`/`medium`/`high`, and selects bands per detector. This
   breaks LogV1 readers that accept the old abbreviation or apply the z-score
