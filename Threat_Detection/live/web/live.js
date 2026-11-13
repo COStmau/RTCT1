@@ -618,44 +618,64 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
   // hosts no capture claimed and with no pods are drawn small, up with the outside world
   const drawnHosts = hosts.filter(h => h.name || pods.has(h.id));
   const strayHosts = hosts.filter(h => !h.name && !pods.has(h.id));
-  const columns = drawnHosts.map(h => ({ kind: "host", host: h, pods: pods.get(h.id) || [],
-                                         weight: 1 + Math.sqrt((pods.get(h.id) || []).length) }));
-  if (unattributed.length) columns.push({ kind: "lane", pods: unattributed, weight: 0.9 });
-  const total = d3.sum(columns, c => c.weight);
-  const gap = compact ? 6 : 12;
-  const usable = box.w - gap * (columns.length - 1);
-  let x = box.x;
+  // A node box is only as big as what it carries: the side grows with the pod mass on it, so the
+  // gaps between boxes stay open and the conversations crossing them stay visible. Hovering or
+  // pinning one scales the whole column (`.node.grow` in live.css).
+  const massOf = p => (p.name ? 6 : 1);
+  const columns = drawnHosts.map(h => {
+    const own = pods.get(h.id) || [];
+    return { kind: "host", host: h, pods: own, mass: d3.sum(own, massOf) };
+  });
+  if (unattributed.length) columns.push({ kind: "lane", pods: unattributed, mass: d3.sum(unattributed, massOf) });
+  const gap = compact ? 6 : 14;
+  const unit = compact ? 8 : 24;        // box side per sqrt of pod mass on the node
+  const floor = compact ? 12 : 46;      // an empty node is still a box you can point at
+  const tallest = hostRow.h - pad;
+  for (const column of columns) {
+    const ghost = column.kind === "lane" || !column.host.name;
+    column.head = compact ? 14 : (ghost ? 30 : 58);
+    const side = Math.min(tallest - column.head,
+                          Math.max(floor, unit * Math.sqrt(Math.max(column.mass, 1))));
+    column.w = Math.min(compact ? 44 : 172, Math.max(compact ? 22 : 84, side * 1.35));
+    column.h = Math.min(tallest, side + column.head + 6);
+  }
+  const span = d3.sum(columns, c => c.w) + gap * Math.max(columns.length - 1, 0);
+  // the room the boxes do not take is shared between them, up to a limit, and the row centred
+  const spread = columns.length > 1
+    ? Math.min(compact ? 8 : 70, Math.max(0, box.w - span) / (columns.length - 1)) : 0;
+  let x = box.x + Math.max(0, (box.w - span - spread * Math.max(columns.length - 1, 0)) / 2);
 
   const hostG = g.append("g");
   for (const column of columns) {
-    const w = usable * column.weight / total;
-    const r = { x, y: hostRow.y + pad / 2, w, h: hostRow.h - pad };
-    x += w + gap;
+    const r = { x, y: hostRow.y + (hostRow.h - column.h) / 2, w: column.w, h: column.h };
+    x += column.w + gap + spread;
+    const head = column.head;
     const cp = column.kind === "host" && column.host.roles.includes("control-plane");
     const ghost = column.kind === "lane" || !column.host.name;
-    hostG.append("rect").attr("class", `host-box ${cp ? "cp" : ""} ${ghost ? "ghost" : ""}`)
-      .attr("data-el", column.kind === "host" ? column.host.id : null)
+    // one group per node, so hover and pin scale the box and everything drawn in it together
+    const gNode = hostG.append("g").attr("class", "node")
+      .attr("data-el", column.kind === "host" ? column.host.id : null);
+    gNode.append("rect").attr("class", `host-box ${cp ? "cp" : ""} ${ghost ? "ghost" : ""}`)
       .attr("x", r.x).attr("y", r.y).attr("width", r.w).attr("height", r.h).attr("rx", compact ? 6 : 12);
-    const head = compact ? 14 : (ghost ? 30 : 58);
     if (column.kind === "host") {
       const h = column.host;
       pos.set(h.id, { x: r.x + r.w / 2, y: r.y + head / 2 + 4, box: r, kind: "host" });
       if (!compact || h.name) {
-        hostG.append("text").attr("class", compact ? "t-small" : "t-title").attr("data-for", h.id)
+        gNode.append("text").attr("class", compact ? "t-small" : "t-title").attr("data-for", h.id)
           .attr("x", r.x + (compact ? 6 : 12)).attr("y", r.y + (compact ? 12 : 20))
           .text(h.name || h.ip);
       }
       if (!compact) {
         const lines = h.name ? [`${h.ip} · ${h.roles.join(" · ")}`, h.pod_cidr ? `pods ${h.pod_cidr}` : "no pod subnet"]
                              : ["no pods"];
-        lines.forEach((line, i) => hostG.append("text").attr("class", "t-small t-muted detail").attr("data-for", h.id)
+        lines.forEach((line, i) => gNode.append("text").attr("class", "t-small t-muted detail").attr("data-for", h.id)
           .attr("x", r.x + 12).attr("y", r.y + 35 + i * 13).text(fit(line, r.w - 24)));
       }
     } else if (!compact) {
-      hostG.append("text").attr("class", "t-small t-muted detail").attr("x", r.x + 12).attr("y", r.y + 20)
+      gNode.append("text").attr("class", "t-small t-muted detail").attr("x", r.x + 12).attr("y", r.y + 20)
         .text("pods with no node");
     }
-    hover(hostG.append("rect").attr("x", r.x).attr("y", r.y).attr("width", r.w).attr("height", head)
+    hover(gNode.append("rect").attr("x", r.x).attr("y", r.y).attr("width", r.w).attr("height", head)
       .attr("data-hit", column.kind === "host" ? column.host.id : null)
       .attr("fill", "transparent").datum(column), c => c.kind === "host"
         ? `<div class="tt-title">${c.host.name ? "node " + c.host.name : "host " + c.host.ip}</div>
@@ -668,13 +688,13 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     if (column.pods.length) {
       const inner = { x: r.x + 6, y: r.y + head, w: r.w - 12, h: r.h - head - 6 };
       const root = d3.hierarchy({ children: column.pods })
-        .sum(p => p.name ? 6 : 1)
+        .sum(massOf)
         .sort((a, b) => d3.descending(a.value, b.value) || d3.ascending(a.data.id, b.data.id));
       d3.pack().size([inner.w, inner.h]).padding(compact ? 2 : 5)(root);
       for (const leaf of root.leaves()) {
         const p = leaf.data, cx = inner.x + leaf.x, cy = inner.y + leaf.y, rr = Math.max(leaf.r, 2.5);
         pos.set(p.id, { x: cx, y: cy, r: rr, kind: "pod" });
-        const circle = hostG.append("circle")
+        const circle = gNode.append("circle")
           .attr("class", `pod ${p.host_network ? "hostnet" : p.name ? "named" : ""} ${p.new ? "new" : ""}`)
           .attr("data-id", p.id).attr("data-el", p.id).attr("cx", cx).attr("cy", cy).attr("r", rr).datum(p);
         hover(circle, d => `<div class="tt-title">${d.name || "pod " + d.ip}</div>
@@ -682,11 +702,11 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
           ${d.new ? `<div class="tt-row">an attack pod</div>` : ""}`);
         if (p.name && !compact && rr > 16) {
           const label = p.name.replace(/^pod-/, "");
-          hostG.append("text").attr("class", "t-small").attr("text-anchor", "middle").attr("data-for", p.id)
+          gNode.append("text").attr("class", "t-small").attr("text-anchor", "middle").attr("data-for", p.id)
             .attr("x", cx).attr("y", cy + 4).text(label.length * 6 > rr * 2 ? label.slice(0, Math.floor(rr / 3.2)) + "…" : label)
             .style("pointer-events", "none");
           if (p.host_network) {
-            hostG.append("text").attr("class", "t-small t-muted").attr("text-anchor", "middle").attr("data-for", p.id)
+            gNode.append("text").attr("class", "t-small t-muted").attr("text-anchor", "middle").attr("data-for", p.id)
               .attr("x", cx).attr("y", cy + 16).text("host net").style("pointer-events", "none");
           }
         }

@@ -11,8 +11,10 @@ Python standard library only for the server. It binds 127.0.0.1: it can start ca
 launch the local cluster's attacks, so it is a tool for the machine it runs on.
 
   GET  /                   the dashboard (live/web/)
+  GET  /log                the event and alert log viewer (live/web/log.html)
   GET  /static/<file>      its script, styles and D3
   GET  /api/state          the snapshot: inventory, taps and their machines, attacks, limits
+  GET  /api/log            one recorded session's events, filtered by kind, tap and text
   GET  /api/stream         text/event-stream of windows, alerts, tap changes, attacks;
                            resumes from Last-Event-ID (or ?since=) instead of replaying
   POST /api/taps/start     {taps, record} -> watch those taps (default ones when none named)
@@ -28,6 +30,7 @@ import argparse
 import json
 import mimetypes
 import queue
+import re
 import signal
 import sys
 import traceback
@@ -71,6 +74,72 @@ def static_file(name):
     return path if path.is_file() and WEB in path.parents else None
 
 
+# ---------------------------------------------------------------- the recorded event log
+
+LOG_LIMIT = 400                  # rows a viewer asks for at once
+LOG_LIMIT_MAX = 5000
+KIND_RE = re.compile(r'"kind":\s*"([a-z_]+)"')
+
+
+def log_sessions(root):
+    """Every recorded session under a data root, newest first."""
+    root = Path(root) if root else None
+    if root is None or not root.is_dir():
+        return []
+    sessions = []
+    for path in root.glob("session-*"):
+        events = path / "events.jsonl"
+        if events.is_file():
+            stat = events.stat()
+            sessions.append({"name": path.name, "bytes": stat.st_size, "at": stat.st_mtime})
+    return sorted(sessions, key=lambda s: s["at"], reverse=True)
+
+
+def _kind_of(line):
+    """The event's own kind, read off the line without parsing it: nested kinds come after."""
+    found = KIND_RE.search(line)
+    return found.group(1) if found else None
+
+
+def read_log(root, session=None, kinds=(), tap=None, text="", limit=LOG_LIMIT):
+    """One session's events, newest last, filtered by kind and tap and capped at `limit`.
+
+    Filtering runs on the raw line, so a 16 MB session costs string comparisons rather than
+    a json.loads per window; only the rows that survive are parsed.
+    """
+    sessions = log_sessions(root)
+    names = {s["name"] for s in sessions}
+    if session not in names:
+        session = sessions[0]["name"] if sessions else None
+    if session is None:
+        return {"session": None, "sessions": [], "counts": {}, "total": 0, "events": []}
+    wanted = tuple(k for k in kinds if k)
+    taps, needle = (tap and f'"label": "{tap}"'), text.strip().lower()
+    counts, rows = {}, []
+    with open(Path(root) / session / "events.jsonl", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            kind = _kind_of(line)
+            if kind is None:
+                continue
+            counts[kind] = counts.get(kind, 0) + 1
+            if wanted and kind not in wanted:
+                continue
+            if taps and taps not in line:
+                continue
+            if needle and needle not in line.lower():
+                continue
+            rows.append(line)
+    total = len(rows)
+    events = []
+    for line in rows[-limit:]:
+        try:
+            events.append(json.loads(line))
+        except ValueError:
+            continue                  # a half-written last line, kept out rather than fatal
+    return {"session": session, "sessions": sessions, "counts": counts, "total": total,
+            "events": events}
+
+
 def make_handler(monitor, quiet=False):
     class Handler(BaseHTTPRequestHandler):
         server_version = "rtct-live/1"
@@ -108,16 +177,35 @@ def make_handler(monitor, quiet=False):
                 traceback.print_exc()
                 self.send_json({"error": f"{type(error).__name__}: {error}"}, 500)
 
+        def log_root(self):
+            """Where this monitor keeps its sessions: its provider's data dir when it has one."""
+            try:
+                return monitor.provider.data_dir()
+            except Exception:            # no cluster running: fall back to the open session
+                return monitor.session.parent if monitor.session else None
+
         def do_GET(self):
             url = urlparse(self.path)
             if url.path in ("/", "/index.html"):
                 return self.send_bytes((WEB / "index.html").read_bytes(), "text/html; charset=utf-8")
+            if url.path == "/log":
+                return self.send_bytes((WEB / "log.html").read_bytes(), "text/html; charset=utf-8")
             if url.path.startswith("/static/"):
                 path = static_file(url.path[len("/static/"):])
                 if path is None:
                     return self.send_json({"error": "not found"}, 404)
                 kind = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
                 return self.send_bytes(path.read_bytes(), f"{kind}; charset=utf-8")
+            if url.path == "/api/log":
+                query = parse_qs(url.query)
+                one = lambda key, default=None: (query.get(key) or [default])[0]
+                try:
+                    limit = max(1, min(LOG_LIMIT_MAX, int(one("limit") or LOG_LIMIT)))
+                except ValueError:
+                    limit = LOG_LIMIT
+                return self.guarded(lambda: self.send_json(read_log(
+                    self.log_root(), session=one("session"), kinds=(one("kind") or "").split(","),
+                    tap=one("tap"), text=one("q") or "", limit=limit)))
             if url.path == "/api/state":
                 fresh = "fresh" in parse_qs(url.query)
                 return self.guarded(lambda: self.send_json(monitor.state(fresh)))

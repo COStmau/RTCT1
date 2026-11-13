@@ -4504,5 +4504,95 @@ class MonitorChecks(unittest.TestCase):
             server.server_close()
 
 
+class SessionLogViewerChecks(unittest.TestCase):
+    """live/serve.py: the log viewer reads a recorded session by kind, tap and text."""
+
+    def setUp(self):
+        import tempfile
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, self.root, True)
+
+    def write(self, name, events, mtime=None, trailing=None):
+        session = self.root / name
+        session.mkdir()
+        lines = [json.dumps(event) for event in events]
+        if trailing is not None:
+            lines.append(trailing)
+        (session / "events.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        if mtime is not None:
+            os.utime(session / "events.jsonl", (mtime, mtime))
+        return session
+
+    @staticmethod
+    def events():
+        return [{"kind": "started", "taps": ["pod-api"], "at": 100.0, "seq": 1},
+                {"kind": "window", "label": "pod-api", "t": 0, "peak": 1.0, "at": 101.0, "seq": 2},
+                {"kind": "alert", "label": "pod-api", "wall": 101.5, "score": 44.0, "cutoff": 30.0,
+                 "top": {"symbols": ["tcp_p1_p1"], "pairs": [["10.0.0.1", "10.0.0.2"]]}, "at": 101.6, "seq": 3},
+                {"kind": "window", "label": "node-child1", "t": 0, "peak": 2.0, "at": 102.0, "seq": 4},
+                {"kind": "release", "label": "pod-api", "wall": 110.0, "lasted": 8.5, "at": 110.1, "seq": 5},
+                {"kind": "attack", "phase": "start", "scenario": "http-flood", "seconds": 30, "at": 120.0, "seq": 6}]
+
+    def test_kinds_filter_and_counts_cover_the_whole_file(self):
+        from live import serve
+        self.write("session-20260101-000000", self.events())
+        log = serve.read_log(self.root, kinds=("alert", "release"))
+        self.assertEqual([event["kind"] for event in log["events"]], ["alert", "release"])
+        self.assertEqual(log["total"], 2)
+        self.assertEqual(log["counts"]["window"], 2)          # counted, then filtered out
+        self.assertEqual(log["counts"]["attack"], 1)
+
+    def test_tap_text_and_limit_narrow_the_same_read(self):
+        from live import serve
+        self.write("session-20260101-000000", self.events())
+        by_tap = serve.read_log(self.root, kinds=("window",), tap="pod-api")
+        self.assertEqual([event["seq"] for event in by_tap["events"]], [2])
+        by_text = serve.read_log(self.root, kinds=(), text="flood")
+        self.assertEqual([event["kind"] for event in by_text["events"]], ["attack"])
+        capped = serve.read_log(self.root, kinds=(), limit=2)
+        self.assertEqual([event["seq"] for event in capped["events"]], [5, 6])   # newest kept
+        self.assertEqual(capped["total"], 6)
+
+    def test_newest_session_is_the_default_and_an_old_one_can_be_asked_for(self):
+        from live import serve
+        self.write("session-20260101-000000", self.events(), mtime=1000)
+        self.write("session-20260102-000000", [{"kind": "note", "text": "later", "at": 2.0, "seq": 1}], mtime=2000)
+        self.assertEqual(serve.read_log(self.root)["session"], "session-20260102-000000")
+        older = serve.read_log(self.root, session="session-20260101-000000", kinds=("alert",))
+        self.assertEqual(len(older["events"]), 1)
+        self.assertEqual(len(older["sessions"]), 2)
+
+    def test_a_half_written_last_line_is_kept_out_rather_than_fatal(self):
+        from live import serve
+        self.write("session-20260101-000000", self.events()[:1], trailing='{"kind": "alert", "lab')
+        log = serve.read_log(self.root, kinds=())
+        self.assertEqual([event["kind"] for event in log["events"]], ["started"])
+
+    def test_an_empty_root_reads_as_no_session(self):
+        from live import serve
+        log = serve.read_log(self.root, kinds=("alert",))
+        self.assertEqual((log["session"], log["sessions"], log["events"]), (None, [], []))
+
+    def test_the_viewer_page_and_its_endpoint_answer(self):
+        import threading
+        import urllib.request
+        from live import serve
+        from live.monitor import Monitor
+        self.write("session-20260101-000000", self.events())
+        server = serve.serve(Monitor(_NoCluster.make()), port=0, quiet=True)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            with urllib.request.urlopen(base + "/log", timeout=10) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn(b"Event log", response.read())
+            with urllib.request.urlopen(base + "/api/log?kind=alert", timeout=10) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn("sessions", json.loads(response.read()))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
 if __name__ == "__main__":
     unittest.main()

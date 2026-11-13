@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Event log</title>
+<link rel="stylesheet" href="/static/live.css">
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <span class="brand-title">Event log</span>
+      <span class="brand-sub" id="subtitle">reading the sessions …</span>
+    </div>
+    <span class="spacer"></span>
+    <div class="bar-actions">
+      <select id="session" title="Which recorded session to read"></select>
+      <label class="check"><input type="checkbox" id="follow"> follow</label>
+      <button id="refresh" title="Read the session again">Refresh</button>
+      <a class="backlink" href="/">monitor →</a>
+      <button class="ghost" id="theme" title="Toggle light / dark">◐</button>
+    </div>
+  </header>
+  <main class="logmain">
+    <section class="card filters">
+      <span class="chips" id="kinds"></span>
+      <span class="spacer"></span>
+      <select id="tap" title="Only this tap"></select>
+      <input id="q" type="search" placeholder="filter text" title="Match anywhere in the event">
+      <select id="limit" title="Rows to fetch, newest kept">
+        <option value="200">200 rows</option>
+        <option value="400" selected>400 rows</option>
+        <option value="1000">1000 rows</option>
+        <option value="5000">5000 rows</option>
+      </select>
+    </section>
+    <section class="card listcard">
+      <h3>Events <span class="sub" id="count"></span></h3>
+      <div id="rows" class="rows"></div>
+    </section>
+    <section class="card detailcard">
+      <h3 id="detail-title">Event</h3>
+      <div id="detail" class="detail muted">Click a row to see it whole.</div>
+    </section>
+  </main>
+</div>
+<script src="/static/log.js"></script>
+</body>
+</html>

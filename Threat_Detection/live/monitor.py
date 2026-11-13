@@ -330,12 +330,16 @@ class Monitor:
         """Alert raised / released events, timed against the attack that was running."""
         if window["alert"] and run.alert_since is None:
             run.alert_since = window["wall"]
+            # score and cutoff ride along, so a logged alert says what raised it and against what
             self.publish({"kind": "alert", "label": run.label, "wall": window["wall"], "top": window.get("top"),
+                          "score": window.get("peak"), "cutoff": window.get("cutoff"),
                           **self._latency(window["wall"])})
         elif window["released"] and run.alert_since is not None:
             began, run.alert_since = run.alert_since, None
             self.publish({"kind": "release", "label": run.label, "wall": window["wall"],
-                          "lasted": round(window["wall"] - began, 1), **self._latency(window["wall"])})
+                          "lasted": round(window["wall"] - began, 1),
+                          "score": window.get("peak"), "cutoff": window.get("cutoff"),
+                          **self._latency(window["wall"])})
 
     def _latency(self, wall):
         for attack in reversed(self.attacks):

@@ -313,7 +313,9 @@ One screen:
   its flows were between (also drawn in red on the map), and what its detector rests on.
 - **Attacks** (local cluster only): the profile's own scenarios for 5-300 s, shaded on every strip.
   The event log gives each tap's alert latency from the attack's start and its release after the end.
-- **Events:** alerts, releases, attacks, and taps that stopped or stalled.
+- **Events:** alerts, releases, attacks, and taps that stopped or stalled. **whole log →** opens
+  `/log`, the event log viewer: every event of a chosen session, filtered by kind, tap or text,
+  with each alert's score against its cutoff and the conversations behind it.
 
 Where a tap's machine comes from, first that applies: one saved by an earlier run
 (`live/models/<label>.pkl`); the tap's benign recording from `collect.py run benign`, when that is
@@ -342,7 +344,8 @@ so the demo's Data tab or `--replay` can read them back.
 | `live/worker.py` | One tap's scoring process: learns or loads its machine, re-learns on command, writes one JSON line per closed second. `pace` plays a recording back as a stream. |
 | `live/taps.py` | Where packets come from, as a small provider interface: the local k3d clusters (`LocalClusterProvider`) or recordings (`ReplayProvider`). A deployed cluster is a third provider. |
 | `live/monitor.py` | The monitor: supervises each tap's processes, keeps the snapshot and the event stream a page needs, launches attacks, writes the session log. |
-| `live/serve.py` | Its server (standard library, 127.0.0.1): the dashboard in `live/web/`, `/api/state`, and `/api/stream`, which resumes from where a page left off. |
+| `live/serve.py` | Its server (standard library, 127.0.0.1): the dashboard in `live/web/`, `/api/state`, `/api/stream` (which resumes from where a page left off), and `/api/log` for the recorded event log. |
+| `live/web/log.js` | The event log viewer at `/log`: one recorded session's events, filtered by kind, tap and text, newest first, with the chosen event shown whole. Its filters run on the raw lines server-side, so a 16 MB session opens without shipping 31,000 windows to the page. |
 
 One rule has to change for a stream: offline, a 5-tuple whose packets span more than one second
 anywhere in the capture is dropped; live, a flow is kept in its second only if its 5-tuple appeared

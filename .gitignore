@@ -12,6 +12,9 @@ __pycache__/
 # Stray outputs from running scripts at the repo root
 /outputs/
 
+# Word files at the repo root are working copies (redlines, handouts), not sources
+/*.docx
+
 # Generated pages (3 MB, rebuilt by demo.py item 10)
 Threat_Detection/outputs/*.html
 
