@@ -21,8 +21,13 @@
   <main class="grid">
     <div class="col">
       <section class="card" id="map-card">
-        <h3>Cluster <span class="sub" id="map-sub"></span></h3>
+        <h3>Cluster <span class="sub" id="map-sub"></span><span class="spacer"></span>
+          <span class="zoom" id="map-zoom">
+            <button class="ghost small" data-step="-1" title="Smaller map text">A−</button>
+            <button class="ghost small" data-step="1" title="Larger map text">A+</button>
+          </span></h3>
         <svg id="map"></svg>
+        <div class="focus-line" id="focus-line"></div>
       </section>
       <section class="card">
         <h3>Taps <span class="sub" id="taps-sub"></span><span class="spacer"></span><span id="taps-actions"></span></h3>

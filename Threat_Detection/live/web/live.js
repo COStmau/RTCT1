@@ -7,6 +7,14 @@
 const SPAN = 180;            // seconds of history the charts show
 const KEEP = 330;            // seconds of windows kept in the page
 const MAP_SPAN = 30;         // seconds of conversations the map draws
+const TEXT_KEY = "rtct.mapText";   // the reader's choice of map label size, kept between visits
+const textScale = value => Math.min(1.6, Math.max(0.8, Math.round(value * 10) / 10));
+let TEXT_SCALE = textScale(storedText());
+let mapHover = false;         // the pointer is over the map, so its layout holds still
+
+function storedText() {
+  try { return Number(localStorage.getItem(TEXT_KEY)) || 1; } catch (e) { return 1; }
+}
 const tip = d3.select("#tooltip");
 const fmt = d3.format(",");
 const f1 = d3.format(".1f");
@@ -563,7 +571,10 @@ function drawMap(force = false) {
   // drawn again only when what it shows has changed, and never under the reader's pointer
   const sig = JSON.stringify([width, st.selected, model.pods.map(p => p.id + (p.new ? "!" : "")), model.edges.map(e => e.key).sort(),
                               model.external.map(e => e.id), model.vantages.map(v => v.label + Boolean(st.taps.get(v.label).watching))]);
-  const busy = svg.select(".focusing").size() || tip.classed("on");
+  // A redraw while the pointer is over the map moves the thing being aimed at, and it can wipe
+  // the focus just as the dwell fires. So the map is left alone from the moment the pointer
+  // enters it until it leaves: the reader is looking at it, so it should hold still.
+  const busy = svg.select(".focusing").size() || tip.classed("on") || mapHover;
   if (force || (sig !== st.mapSig && !busy && Date.now() - st.mapAt > 1500)) {
     st.mapSig = sig; st.mapAt = Date.now(); st.map = model;
     svg.selectAll("*").remove();
@@ -592,6 +603,15 @@ function mapLive() {
     hot.add(src < dst ? `${src}|${dst}` : `${dst}|${src}`);
   }
   svg.selectAll(".link").classed("why", e => hot.has(e.key));
+}
+
+// The reader's map text size. The labels are SVG text sized off --map-text, and `fit` divides by
+// the same factor, so a larger size truncates labels sooner instead of overflowing their boxes.
+function applyTextScale(value) {
+  TEXT_SCALE = textScale(value);
+  document.documentElement.style.setProperty("--map-text", TEXT_SCALE);
+  try { localStorage.setItem(TEXT_KEY, String(TEXT_SCALE)); } catch (e) { /* private mode */ }
+  drawMap(true);
 }
 
 // The map's layout and focus behaviour began as a copy of the demo's (viz/template/page.js
@@ -802,7 +822,7 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
     if (onTap) tg.style("cursor", "pointer").on("click", (event, d) => { event.stopPropagation(); hideTip(); onTap(d.label); });
     if (isFocus) pos.set("__focus__", { x: tx, y: ty });
   }
-  if (!compact) clusterFocus(g, cluster, pos, edges, box, label);
+  if (!compact) clusterFocus(g, cluster, edges, box, label);
   return { pos, edges, taps };
 
   function label(id) {
@@ -815,10 +835,10 @@ function renderCluster(g, cluster, box, { focus = null, compact = false, onTap =
 }
 
 // Focus on the full-size map: hovering an element brings it forward (it grows, its
-// conversation partners and links stay lit, everything else fades) and a card names it in a
-// larger type; clicking pins that focus until the background or the element is clicked again.
-// The compact maps leave this off: their highlighting belongs to the replay.
-function clusterFocus(g, cluster, pos, edges, box, nameOf) {
+// conversation partners and links stay lit, everything else fades) and a line under the map
+// names it in larger type; clicking pins that focus until the background or the element is
+// clicked again. The compact maps leave this off: their highlighting belongs to the replay.
+function clusterFocus(g, cluster, edges, box, nameOf) {
   const near = new Map();
   for (const e of cluster.edges) {
     if (!near.has(e.src)) near.set(e.src, new Set());
@@ -827,13 +847,16 @@ function clusterFocus(g, cluster, pos, edges, box, nameOf) {
     near.get(e.dst).add(e.src);
   }
   const hostOf = new Map(cluster.pods.map(p => [p.id, p.host]));
-  const card = g.append("g").attr("class", "focus-card");
+  // The readout lives in HTML under the map, not inside the SVG. Inside, it had to be placed
+  // somewhere over a map that fills its box edge to edge, so every position hid a pod or a chip;
+  // out here it hides nothing, never jumps as the pointer moves, and cannot be clicked at all.
+  const line = d3.select("#focus-line");
   let pinned = null;
 
   // the background takes the click that clears a pin
   g.insert("rect", ":first-child").attr("class", "focus-bg")
     .attr("x", box.x).attr("y", box.y).attr("width", box.w).attr("height", box.h)
-    .on("click.focus", () => { pinned = null; set(null); });
+    .on("click.focus", () => { pinned = null; cancelDwell(); set(null); });
 
   // [title, detail lines]: what the hover tooltip said, in the card instead
   function describe(id) {
@@ -864,22 +887,11 @@ function clusterFocus(g, cluster, pos, edges, box, nameOf) {
   }
 
   function drawCard(id) {
-    const at = pos.get(id);
-    if (!at) return;
     const [title, details] = describe(id);
     const partners = (near.get(id) || new Set()).size;
-    const lines = [...details, `${partners} conversation partner${partners === 1 ? "" : "s"}`].filter(Boolean);
-    const bg = card.append("rect").attr("class", "focus-card-bg").attr("rx", 8);
-    const t = card.append("text").attr("class", "focus-card-title").attr("x", 12).attr("y", 22).text(title);
-    lines.forEach((line, i) => card.append("text").attr("class", "focus-card-sub").attr("x", 12).attr("y", 40 + i * 15).text(line));
-    const width = Math.max(t.node().getComputedTextLength(), ...card.selectAll(".focus-card-sub").nodes().map(n => n.getComputedTextLength())) + 24;
-    const height = 30 + lines.length * 15;
-    bg.attr("width", width).attr("height", height);
-    const anchorY = at.kind === "host" ? at.box.y : at.y - (at.r || 12);
-    let x = Math.min(Math.max((at.kind === "host" ? at.box.x + at.box.w / 2 : at.x) - width / 2, box.x), box.x + box.w - width);
-    let y = anchorY - height - 10;
-    if (y < box.y) y = (at.kind === "host" ? at.box.y + 60 : at.y + (at.r || 12) + 10);
-    card.attr("transform", `translate(${x},${y})`).raise();
+    const rows = [...details, `${partners} conversation partner${partners === 1 ? "" : "s"}`].filter(Boolean);
+    line.html(`<span class="ft-title">${esc(title)}</span>`
+      + rows.map(row => `<span class="ft-row">${esc(row)}</span>`).join(""));
   }
 
   function set(id, edge = null) {
@@ -887,7 +899,7 @@ function clusterFocus(g, cluster, pos, edges, box, nameOf) {
     g.selectAll(".lit").classed("lit", false);
     g.selectAll(".grow").classed("grow", false);
     edges.classed("lit", false);
-    card.selectAll("*").remove();
+    line.html("");
     if (!id && !edge) return;
     const lit = new Set(edge ? [edge.src, edge.dst] : [id, ...(near.get(id) || [])]);
     for (const x of [...lit]) if (hostOf.get(x)) lit.add(hostOf.get(x));
@@ -904,23 +916,37 @@ function clusterFocus(g, cluster, pos, edges, box, nameOf) {
   }
 
   const keyOf = node => node.dataset.el || node.dataset.hit;
+  // A pointer crossing the map passes over many elements on the way to the one it wants, and
+  // focusing each one as it goes made the map twitch and grow things the reader never meant.
+  // Dwell first: focus only after the pointer has rested, and drop the pending focus on leave.
+  const HOVER_DELAY = 140;
+  let dwell = null;
+  const cancelDwell = () => { if (dwell) { clearTimeout(dwell); dwell = null; } };
+  const dwellOn = (id, edge = null) => {
+    if (pinned) return;
+    cancelDwell();
+    dwell = setTimeout(() => { dwell = null; set(id, edge); }, HOVER_DELAY);
+  };
+  const settle = () => { cancelDwell(); set(pinned); };
+
   g.selectAll("[data-el], [data-hit]")
     .on("pointerenter", null).on("pointermove", null)   // the card replaces their tooltips
-    .on("pointerenter.focus", function () { if (!pinned) set(keyOf(this)); })
-    .on("pointerleave.focus", () => set(pinned))
+    .on("pointerenter.focus", function () { dwellOn(keyOf(this)); })
+    .on("pointerleave.focus", settle)
     .on("click.focus", function (event) {
       event.stopPropagation();
+      cancelDwell();                       // a click is immediate: no waiting on the dwell
       const id = keyOf(this);
       pinned = pinned === id ? null : id;
-      set(pinned || id);
+      set(pinned);                         // a second click clears, rather than falling back to hover
     });
-  edges.on("pointerenter.focus", (event, e) => { if (!pinned) set(null, e); })
-    .on("pointerleave.focus", () => set(pinned));
+  edges.on("pointerenter.focus", (event, e) => dwellOn(null, e))
+    .on("pointerleave.focus", settle);
 }
 
-// shorten text to fit a pixel width at the small label size
+// shorten text to fit a pixel width at the current label size
 function fit(text, width) {
-  const max = Math.floor(width / 6);
+  const max = Math.floor(width / (6 * TEXT_SCALE));
   return text.length > max ? text.slice(0, Math.max(max - 1, 1)) + "…" : text;
 }
 
@@ -944,8 +970,16 @@ d3.select("#theme").on("click", () => {
   const dark = root.dataset.theme ? root.dataset.theme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
   root.dataset.theme = dark ? "light" : "dark";
 });
+// the reader's saved map text size, and the two buttons that change it
+document.documentElement.style.setProperty("--map-text", TEXT_SCALE);
+d3.selectAll("#map-zoom button").on("click", function () {
+  applyTextScale(TEXT_SCALE + Number(this.dataset.step) * 0.1);
+});
 let resizeTimer = null;
 window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { live(); drawMap(true); }, 150); });
+// the map holds still while the pointer is on it, and catches up once it leaves
+d3.select("#map").on("pointerenter.hover", () => { mapHover = true; })
+  .on("pointerleave.hover", () => { mapHover = false; drawMap(); });
 setInterval(() => { live(); log(); }, 1000);
 setInterval(() => { if (!st.busy) refresh(); }, 15000);     // pods come and go; the inventory is asked again now and then
 refresh().then(connect);
