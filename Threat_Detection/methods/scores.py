@@ -69,13 +69,14 @@ def pdfa_states_in_order(pdfa):
     return order
 
 
-def plot_pdfa(pdfa, path=None, min_label_prob=0.25):
+def plot_pdfa(pdfa, path=None, min_label_prob=0.25, label=None):
     """State graph: node size is visits, edge width is probability.
 
     Sized for a presentation slide (1.6:1, dpi 200) rather than a figure in a
     document, so the text stays readable when the slide is projected. Only edges
     at or above `min_label_prob` get a symbol label; the rest still draw, so nothing
-    structural disappears.
+    structural disappears. `label` names the capture point in the title, for a
+    one-machine-per-point set.
 
     Edge labels are placed off the exact arc midpoint: a transition and its reverse
     bend the same way in matplotlib's arc3, so a shared midpoint would stack both
@@ -130,10 +131,11 @@ def plot_pdfa(pdfa, path=None, min_label_prob=0.25):
     ax.scatter([], [], s=200, color="#deebf7", edgecolors="#1f77b4",
                label="state (id over visits)")
     ax.plot([], [], color="#1f77b4", linewidth=2.5, label="transition (width = probability)")
-    ax.set_title(f"Learned PDFA: {len(order)} states, "
-                 f"{sum(len(pdfa.probs[id(n)][1]) for n in order)} transitions"
-                 f" | labels on edges >= {min_label_prob:.0%}",
-                 fontsize=14, fontweight="bold")
+    title = (f"{label}\n" if label else "") + \
+            f"Learned PDFA: {len(order)} states, " \
+            f"{sum(len(pdfa.probs[id(n)][1]) for n in order)} transitions" \
+            f" | edge labels >= {min_label_prob:.0%}"
+    ax.set_title(title, fontsize=14, fontweight="bold")
     ax.legend(fontsize=10, loc="lower left")
     ax.set_axis_off()
     fig.tight_layout()
