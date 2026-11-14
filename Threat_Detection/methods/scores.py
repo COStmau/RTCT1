@@ -69,6 +69,25 @@ def pdfa_states_in_order(pdfa):
     return order
 
 
+def pdfa_graph(pdfa):
+    """The machine as JSON for a live viewer: states (id, visits) and edges (src, dst, symbol, prob).
+
+    `pdfa_states_in_order` fixes the ids breadth-first from the root, so state 0 is the start
+    state and the layout is stable across calls. `prob` is the transition probability; `symbol`
+    is the flow symbol that walks it.
+    """
+    order = pdfa_states_in_order(pdfa)
+    ids = {id(node): index for index, node in enumerate(order)}
+    edges = []
+    for index, node in enumerate(order):
+        _, outgoing = pdfa.probs[id(node)]
+        for symbol, (child, probability) in sorted(outgoing.items()):
+            edges.append({"src": index, "dst": ids[id(child)], "symbol": symbol,
+                          "prob": round(float(probability), 4)})
+    return {"states": [{"id": index, "visits": int(node.visits)} for index, node in enumerate(order)],
+            "edges": edges}
+
+
 def plot_pdfa(pdfa, path=None, min_label_prob=0.25, label=None):
     """State graph: node size is visits, edge width is probability.
 

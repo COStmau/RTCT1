@@ -42,7 +42,7 @@ from core.features import WINDOW_SIZE
 from live.stream import (LATENESS, CaptureReader, LiveDetector, PcapStream, Windower, _verdict,
                          calibrate_live, describe, packet_row)
 from methods.pdfa import FLOW_COLUMNS, PDFA
-from methods.scores import FORGET_SECONDS
+from methods.scores import FORGET_SECONDS, pdfa_graph
 
 MODEL_VERSION = 2              # bump when a saved machine can no longer be scored as it was learned
 LEARN_SECONDS = 60
@@ -90,7 +90,8 @@ def load_model(path, forget_seconds, lateness):
 
 def announce(saved, forget_seconds, lateness):
     return {"kind": "ready", **describe(saved, forget_seconds, lateness),
-            "source": saved["source"], "learned_at": saved["learned_at"]}
+            "source": saved["source"], "learned_at": saved["learned_at"],
+            "graph": pdfa_graph(saved["model"]["pdfa"])}
 
 
 # ---------------------------------------------------------------- the tap

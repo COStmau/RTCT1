@@ -1414,6 +1414,20 @@ class StateMachineChecks(unittest.TestCase):
                 self.assertGreaterEqual(probability, 0.0)
                 self.assertLessEqual(probability, 1.0)
 
+    def test_pdfa_graph_lists_states_and_edges(self):
+        pdfa = statemachine.learn_pdfa([("a", "b")] * 8 + [("a", "c")] * 8)
+        graph = statemachine.pdfa_graph(pdfa)
+        self.assertEqual(len(graph["states"]), pdfa.n_states)
+        ids = {s["id"] for s in graph["states"]}
+        self.assertEqual(ids, set(range(len(graph["states"]))))
+        self.assertTrue(all(isinstance(s["visits"], int) and s["visits"] > 0 for s in graph["states"]))
+        self.assertTrue(graph["edges"])
+        for edge in graph["edges"]:
+            self.assertIn(edge["src"], ids)
+            self.assertIn(edge["dst"], ids)
+            self.assertTrue(0.0 <= edge["prob"] <= 1.0)
+            self.assertIsInstance(edge["symbol"], str)
+
     def test_end_to_end_flags_new_protocol_and_spares_benign(self):
         import tempfile
         from pathlib import Path

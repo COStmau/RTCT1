@@ -26,10 +26,10 @@ from methods.pdfa import (ALERGIA_ALPHA, FLAG_COLUMNS, FLOW_COLUMNS, MISSING_PRO
                           make_traces, segment_flows, split_flows)
 from methods.scores import (FORGET_SECONDS, PAIR_CSV, TRAIN_COUNTS, FrequencyScorer,
                             WindowedFrequencyScorer, flags_for_windows, frequency_cutoff,
-                            frequency_scores_by_window, n_windows_for, pdfa_states_in_order,
-                            plot_pdfa, score_cutoff, score_flows, score_pair,
-                            state_train_counts, statemachine_rows, trace_score, trace_states,
-                            write_pair)
+                            frequency_scores_by_window, n_windows_for, pdfa_graph,
+                            pdfa_states_in_order, plot_pdfa, score_cutoff, score_flows,
+                            score_pair, state_train_counts, statemachine_rows, trace_score,
+                            trace_states, write_pair)
 from experiments.pdfa_sweep import SWEEP_CSV, main
 
 # Re-exported because the original module imported it: callers and tests read it here.
