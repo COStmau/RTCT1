@@ -32,31 +32,42 @@ GRACE = 5       # seconds after an attack's end in which its alert may still be 
 MARGIN = 30     # seconds after an attack's end kept out of the benign windows
 
 
+def judge(flagged, later, t0, attacks):
+    """One benign row and one row per attack for a run of window flags.
+
+    `later` marks the scored windows past the learning stretch; `attacks` is attacks.json.
+    An attack is detected by an alert newly raised: one in the attack or GRACE after it, with
+    none in the PRIOR seconds before. Benign windows keep MARGIN clear of every attack.
+    """
+    window = np.arange(len(later))
+    spans = [(a["scenario"], (a["started"] - t0) / WINDOW_SIZE, (a["ended"] - t0) / WINDOW_SIZE)
+             for a in attacks if "ended" in a]
+    away = np.ones(len(later), dtype=bool)
+    for _, start, end in spans:
+        away &= ~((window >= start - PRIOR) & (window <= end + MARGIN))
+    alert = persistent_mask(flagged).to_numpy()
+    benign = later & away
+    rows = [{"scenario": "benign", "windows": int(benign.sum()), "flagged": int(flagged[benign].sum()),
+             "alert_windows": int(alert[benign].sum())}]
+    for index, (scenario, start, end) in enumerate(spans):
+        during = (window >= start) & (window <= end + GRACE)
+        raised = np.flatnonzero(alert & during)
+        before = alert[(window >= start - PRIOR) & (window < start)].any()
+        rows.append({"scenario": scenario, "attack": index,
+                     "scored": bool((later & during).any()), "already_alerting": bool(before),
+                     "detected": bool(len(raised) and not before),
+                     "latency_s": float(raised[0] - start) if len(raised) and not before else np.nan})
+    return rows
+
+
 def tap_rows(label, packets, attacks, train_seconds):
     """One row per (rule, channel, attack) plus one benign row per (rule, channel)."""
     rows = []
     for rule, flows_of in RULES.items():
         later, flags, _, t0 = later_flags(packets, train_seconds, flows_of)
-        window = np.arange(len(later))
-        spans = [(a["scenario"], (a["started"] - t0) / WINDOW_SIZE, (a["ended"] - t0) / WINDOW_SIZE)
-                 for a in attacks if "ended" in a]
-        away = np.ones(len(later), dtype=bool)
-        for _, start, end in spans:
-            away &= ~((window >= start - PRIOR) & (window <= end + MARGIN))
         for channel, flagged in flags.items():
-            alert = persistent_mask(flagged).to_numpy()
-            common = {"label": label, "rule": rule, "channel": channel}
-            benign = later & away
-            rows.append(dict(common, scenario="benign", windows=int(benign.sum()),
-                             flagged=int(flagged[benign].sum()), alert_windows=int(alert[benign].sum())))
-            for index, (scenario, start, end) in enumerate(spans):
-                during = (window >= start) & (window <= end + GRACE)
-                raised = np.flatnonzero(alert & during)
-                before = alert[(window >= start - PRIOR) & (window < start)].any()
-                rows.append(dict(common, scenario=scenario, attack=index,
-                                 scored=bool((later & during).any()), already_alerting=bool(before),
-                                 detected=bool(len(raised) and not before),
-                                 latency_s=float(raised[0] - start) if len(raised) and not before else np.nan))
+            rows += [dict(row, label=label, rule=rule, channel=channel)
+                     for row in judge(flagged, later, t0, attacks)]
     return rows
 
 

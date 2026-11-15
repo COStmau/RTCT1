@@ -99,6 +99,7 @@ outside itself.
 | `core/reporting.py` | Console reports, charts, the `SHOWCASE.md` handover file, and the event log the response side reads. Takes results, renders them; computes no detection logic. Pins matplotlib to `Agg`, so nothing here opens a window. |
 | `methods/pdfa.py` | PDFA anomaly detection after Cao et al. (ARES 2022), learning half: packet flows to symbols, the prefix tree, ALERGIA state merging, the automaton. |
 | `methods/scores.py` | The scoring half of the same method: trace likelihood, and SEQUENT's cumulative and windowed frequency scores with their cutoffs. |
+| `methods/roles.py` | Role contracts: one machine per kind of workload (web server, sensor publisher), learned from every instance of it, over exchanges that pair both directions of a connection and read its state. An ablation under test, not what the live monitor runs. |
 
 ### The presentation
 

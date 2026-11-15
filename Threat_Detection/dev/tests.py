@@ -40,6 +40,7 @@ from verdicts import feature_set_hybrid as hybrid_verdict
 from verdicts import flag as flag_verdict
 from verdicts import load_behavior as load_behavior_verdict
 from verdicts import novelty as novelty_verdict
+from verdicts import roles as roles_verdict
 from verdicts import root_count as root_verdict
 from verdicts import session as session_verdict
 from verdicts import slices as slices_verdict
@@ -1960,6 +1961,108 @@ class SessionChecks(unittest.TestCase):
             self.assertFalse(row["detected"] and row["already_alerting"])
         benign = [r for r in rows if r["scenario"] == "benign"]
         self.assertTrue(all(r["windows"] <= 10 for r in benign))      # seconds 30-39 only
+
+
+class RoleChecks(unittest.TestCase):
+    """methods/roles.py: exchanges between a workload and its peers, and the role's machine."""
+
+    @staticmethod
+    def packets(requests=6, port0=40000, reset_last=False):
+        """A client calling the server on :80 once a second: SYN, request, response, FIN."""
+        rows = []
+        for i in range(requests):
+            base = {"proto": "tcp", "tcp_syn": 0, "tcp_fin": 0, "tcp_rst": 0}
+            call = dict(base, src_ip="10.0.0.9", dst_ip="10.0.0.1", src_port=port0 + i, dst_port=80)
+            back = dict(base, src_ip="10.0.0.1", dst_ip="10.0.0.9", src_port=80, dst_port=port0 + i)
+            last = reset_last and i == requests - 1
+            rows += [dict(call, ts=100.0 + i, frame_len=60, tcp_syn=1),
+                     dict(call, ts=100.1 + i, frame_len=400),
+                     dict(back, ts=100.2 + i, frame_len=1500),
+                     dict(back, ts=100.3 + i, frame_len=60, tcp_fin=0 if last else 1, tcp_rst=int(last))]
+        return pd.DataFrame(rows)
+
+    def test_roles_come_from_the_workload_a_pod_tap_names(self):
+        from methods import roles
+        self.assertEqual(roles.role_of("pod-nginx").name, "web server")
+        self.assertEqual(roles.role_of("pod-camera").name, "sensor publisher")
+        self.assertIsNone(roles.role_of("pod-redis"))
+        self.assertIsNone(roles.role_of("node-child1"))
+
+    def test_an_exchange_pairs_both_directions_and_reads_the_connections_state(self):
+        from methods import roles
+        packets = self.packets(requests=2, reset_last=True)
+        both = pd.concat([packets, self.packets(1).replace("10.0.0.9", "10.0.0.8")])
+        self.assertEqual(roles.own_address(both), "10.0.0.1")      # on an end of every packet
+        rows = roles.exchanges(packets, "10.0.0.1", 100.0)
+        self.assertEqual(rows[["peer", "service", "side", "phase", "packets_in", "packets_out",
+                               "bytes_in", "bytes_out"]].values.tolist(),
+                         [["10.0.0.9", 80, "s", "of", 2, 2, 460, 1560],
+                          ["10.0.0.9", 80, "s", "or", 2, 2, 460, 1560]])
+        calls = roles.exchanges(packets, "10.0.0.9", 100.0)          # the same packets, seen by the client
+        self.assertEqual(set(calls["side"]), {"c"})
+        self.assertEqual(calls["bytes_out"].tolist(), [460, 460])
+
+    def test_a_stream_that_carries_on_says_so(self):
+        from methods import roles
+        beat = {"src_ip": "10.0.0.1", "dst_ip": "10.0.0.5", "src_port": 5000, "dst_port": 7400,
+                "proto": "udp", "frame_len": 1200, "tcp_syn": None, "tcp_fin": None, "tcp_rst": None}
+        packets = pd.DataFrame([dict(beat, ts=t) for t in (0.1, 0.6, 1.1, 3.2)])
+        rows = roles.exchanges(packets, "10.0.0.1", 0.0)
+        self.assertEqual(rows[["window", "phase", "packets_out"]].values.tolist(),
+                         [[0, "n", 2], [1, "c", 1], [3, "n", 1]])
+
+    def test_each_peer_keeps_its_own_padded_trace(self):
+        from methods import roles
+        role = roles.role_of("pod-nginx")
+        two = pd.concat([self.packets(3), self.packets(3).replace("10.0.0.9", "10.0.0.8")]).sort_values("ts")
+        records = roles.exchanges(two, "10.0.0.1", 100.0)
+        traces = list(roles.peer_traces(records, role, roles.fit_bins(records, role), trace_len=3))
+        first = [trace for _, peer, trace in traces if peer == "10.0.0.8"]
+        self.assertEqual([t.count(roles.START) for t in first], [2, 1, 0])
+        self.assertEqual(len({t[-1] for _, _, t in traces}), 1)       # both peers behave the same
+
+    def test_a_role_machine_scores_an_instance_it_did_not_learn_from(self):
+        from methods import roles
+        role = roles.role_of("pod-nginx")
+        learned = [roles.exchanges(self.packets(40), "10.0.0.1", 100.0)]
+        model = roles.fit_role(learned, role)
+        other = self.packets(10, port0=50000).replace({"10.0.0.1": "10.9.9.1", "10.0.0.9": "10.9.9.7"})
+        scores, peers = roles.role_scores(model, roles.exchanges(other, "10.9.9.1", 100.0), 100.0, 12)
+        self.assertEqual(int(np.isfinite(scores).sum()), 10)
+        self.assertEqual(set(peers) - {None}, {"10.9.9.7"})
+        with self.assertRaises(ValueError):
+            roles.fit_role([learned[0].iloc[:0]], role)
+
+
+class RolesVerdictChecks(unittest.TestCase):
+    """verdicts/roles.py: a role machine must gain in every round and be no louder on benign."""
+
+    @staticmethod
+    def totals(**variants):
+        """variant "pooled_role"=(detected per round, benign alerts, second-session alerts)."""
+        rows = {"own_flow": ((4, 4, 4), 30, 30), **variants}
+        return [{"source": k.split("_")[0], "symbols": k.split("_")[1], "rounds": [(8, d) for d in rounds],
+                 "benign_windows": 2000, "benign_alert_windows": b,
+                 "second_benign_windows": 2000, "second_benign_alert_windows": s2}
+                for k, (rounds, b, s2) in rows.items()]
+
+    def test_a_gain_must_hold_in_every_round(self):
+        decide = lambda **v: roles_verdict.decide(self.totals(**v))[0]
+        self.assertEqual(decide(pooled_role=((5, 4, 6), 30, 30)), ("pooled", "role"))
+        self.assertEqual(decide(pooled_role=((8, 3, 8), 30, 30)), ("own", "flow"))      # behind in round 2
+        self.assertEqual(decide(pooled_role=((4, 4, 4), 0, 0)), ("own", "flow"))        # quieter is not a gain
+        self.assertEqual(decide(pooled_role=((5, 5, 5), 30, 30), own_role=((6, 6, 6), 30, 30)), ("own", "role"))
+
+    def test_louder_on_either_benign_control_disqualifies(self):
+        decide = lambda **v: roles_verdict.decide(self.totals(**v))[0]
+        self.assertEqual(decide(pooled_role=((8, 8, 8), 40, 30)), ("pooled", "role"))   # +0.005 exactly
+        self.assertEqual(decide(pooled_role=((8, 8, 8), 41, 30)), ("own", "flow"))
+        self.assertEqual(decide(pooled_role=((8, 8, 8), 30, 41)), ("own", "flow"))
+
+    def test_too_little_is_undecidable(self):
+        rows = self.totals(pooled_role=((8, 8, 8), 0, 0))
+        rows[0]["second_benign_windows"] = 999
+        self.assertEqual(roles_verdict.decide(rows)[0], "undecidable")
 
 
 class ScoreboardChecks(unittest.TestCase):
