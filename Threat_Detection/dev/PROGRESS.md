@@ -658,3 +658,41 @@ What the session says beyond the verdict:
 - Median time from attack start to a newly raised alert is about 4 s for both frequency variants.
 - This is one session on a single-host cluster, three repeats per attack kind. It decides
   between variants; it is not a detection rate.
+
+## Role machines: a development reading (2026-11-15)
+
+`methods/roles.py` changes three things at once, so `experiments/roles.py` separates two of
+them. The unit is an *exchange*: one peer, one service, one second, both directions together,
+with how the connection stood (opened, carried on, closed, reset); it is Zeek's connection
+record cut at the seconds it crosses. Each peer keeps its own trace, padded at its start.
+A role's symbols read what its protocol exchanges, and were fixed from benign traffic alone.
+The experiment crosses whose traffic a machine is learned from (`own` tap, or `pooled` over the
+role's instances) with its symbols (`flow`, today's, or `role`). The rule is
+`verdicts/roles.py`, committed in `103385da` before any role machine was scored on an attack;
+it is written for a held-out session, so what follows decides nothing.
+
+Development session `session-20261115-145028` (already seen), the two web-server instances
+`pod-frontend` and `pod-api`, 10 minutes learned, 24 attack-at-tap pairs; second benign session
+`session-20261113-124619`, two days earlier, never learned from (`outputs/roles.csv`):
+
+| learned from / symbols | attacks detected | later benign in alert | second session in alert |
+|---|---|---|---|
+| own / flow (the live detector) | 15 of 24 | 0.018 | **0.880** |
+| own / role | 12 of 24 | 0.011 | **0.020** |
+| pooled / flow | 7 of 24 | 0.006 | 0.827 |
+| pooled / role | 4 of 24 | 0.013 | 0.018 |
+
+- **Role symbols carry across sessions and flow symbols do not.** A flow-symbol machine learned
+  on the 15th flags 2,384 of 2,388 scored windows of benign traffic from the 13th at `pod-api`;
+  the role-symbol machine on the same packets flags 162 and leaves 2% in alert. This is the
+  session-difference problem of the benign control, and on these two taps the exchange symbols
+  with per-peer traces nearly remove it. Which of the two does it is not separated here.
+- **It costs some detection on this session**, 12 against 15: lateral movement at `pod-api`
+  goes from 3 of 3 to 0 of 3. Floods and scans hold (http-flood 6 of 6 both ways).
+- **Pooling, as defined here, hurts.** One machine and one cutoff for `frontend` and `api`
+  makes `pod-frontend` flag nothing at all, attacks included: the busier instance sets the
+  cutoff. The two are not the same role in any strict sense (`api` also calls redis and the
+  store), so this says the role list was drawn too coarsely, not that pooling cannot work;
+  true replicas of one deployment are the fair test and none is tapped yet.
+- Nothing here is a verdict. The held-out session (the staged campaign on the `lab` profile,
+  where the sensor-publisher role also exists) is what the rule is for.
