@@ -21,6 +21,7 @@ launch the local cluster's attacks, so it is a tool for the machine it runs on.
   POST /api/taps/stop      {taps} -> stop those, or all
   POST /api/learn          {taps, seconds} -> re-learn from the next N s of their own traffic
   POST /api/attack         {scenario, seconds} -> launch one of the provider's attacks
+  POST /api/attack/mark    {scenario, seconds} -> label an attack run by hand; nothing is launched
   POST /api/attack/stop
 
 Every POST must come from this page: a request whose Origin is another site is refused, so
@@ -220,6 +221,7 @@ def make_handler(monitor, quiet=False):
                 "/api/taps/stop": lambda r: monitor.stop(**_pick(r, labels="taps")),
                 "/api/learn": lambda r: monitor.learn(**_pick(r, labels="taps", seconds="seconds")),
                 "/api/attack": lambda r: monitor.launch(**_pick(r, scenario="scenario", seconds="seconds")),
+                "/api/attack/mark": lambda r: monitor.mark_attack(**_pick(r, scenario="scenario", seconds="seconds")),
                 "/api/attack/stop": lambda r: monitor.stop_attack(),
             }
             route = routes.get(urlparse(self.path).path)

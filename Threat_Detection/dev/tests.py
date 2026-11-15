@@ -4563,6 +4563,22 @@ class MonitorChecks(unittest.TestCase):
         self.assertTrue((session / "attacks.json").exists())
         self.assertFalse(monitor.taps)
 
+    def test_mark_attack_records_a_manual_segment_without_a_launcher(self):
+        from live.monitor import Monitor
+        monitor = Monitor(_NoCluster.make())
+        events, _ = monitor.subscribe()
+        state = monitor.mark_attack("nmap scan", seconds=30)
+        self.assertEqual([a["scenario"] for a in state["attacks"]], ["nmap scan"])
+        self.assertTrue(state["attacks"][0]["manual"])
+        self.assertIsNotNone(state["attack"])
+        monitor.stop_attack()
+        seen = []
+        while not events.empty():
+            seen.append(events.get_nowait())
+        phases = [(e["phase"], e.get("manual")) for e in seen if e["kind"] == "attack"]
+        self.assertEqual(phases, [("start", True), ("stop", None)])
+        self.assertIn("ended", monitor.state()["attacks"][0])
+
     def test_the_monitor_refuses_what_it_cannot_do(self):
         import threading
         import urllib.error

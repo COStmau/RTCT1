@@ -438,6 +438,28 @@ class Monitor:
         threading.Thread(target=self._attack_timer, args=(handle, record), daemon=True).start()
         return self.state()
 
+    def mark_attack(self, scenario=None, seconds=30):
+        """Label an attack run by hand (a `kubectl exec nmap`, say) so its span is recorded.
+
+        Nothing is started or stopped: this is a label, not a launcher, so it works on a
+        cluster the monitor cannot attack.
+        """
+        if not scenario:
+            raise MonitorError("Name the attack.")
+        seconds = _whole(seconds, ATTACK_SECONDS, "attack length")
+        with self._ctl:
+            if self.attack is not None:
+                raise MonitorError(f"{self.attack['scenario']} is still running: stop it first.")
+            started = time.time()
+            handle = {"scenario": scenario, "started": started, "ends": started + seconds, "manual": True}
+            record = {"scenario": scenario, "started": started, "seconds": seconds, "manual": True}
+            self.attacks.append(record)
+            self.attack = handle
+        self.publish({"kind": "attack", "phase": "start", "scenario": scenario,
+                      "wall": started, "seconds": seconds, "manual": True})
+        threading.Thread(target=self._attack_timer, args=(handle, record), daemon=True).start()
+        return self.state()
+
     def _attack_timer(self, handle, record):
         while time.time() < handle["ends"] + 1:
             if self.attack is not handle:
@@ -451,10 +473,11 @@ class Monitor:
                 return
             self.attack = None
         record["ended"] = min(time.time(), handle["ends"]) if not early else time.time()
-        try:
-            self.provider.stop_attack(handle)
-        except Exception as error:   # the attack is over either way; say what cleanup missed
-            self.publish({"kind": "note", "text": f"cleanup after {handle['scenario']}: {error}"})
+        if not handle.get("manual"):   # a marked attack has nothing to stop
+            try:
+                self.provider.stop_attack(handle)
+            except Exception as error:   # the attack is over either way; say what cleanup missed
+                self.publish({"kind": "note", "text": f"cleanup after {handle['scenario']}: {error}"})
         self.publish({"kind": "attack", "phase": "stop", "scenario": handle["scenario"],
                       "wall": record["ended"], "early": early})
 
