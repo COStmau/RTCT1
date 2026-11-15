@@ -14,7 +14,7 @@ from core.features import WINDOW_SIZE
 from core.reporting import CLEAR_WINDOWS
 from methods.pdfa import fit_model, make_flows, segment_flows, split_flows
 from methods.scores import (FORGET_SECONDS, frequency_cutoff, frequency_scores_by_window,
-                            n_windows_for, score_cutoff, score_flows)
+                            n_windows_for, novelty_by_window, score_cutoff, score_flows)
 
 # strongest first; "warmup" and "nodata" are insufficient evidence, never "normal"
 WINDOW_STATUSES = ("alert", "flagged", "unseen", "nodata", "warmup", "released", "normal")
@@ -62,8 +62,15 @@ def calibrate(benign, forget_seconds=FORGET_SECONDS, flows=None):
         "likelihood_traces": len(held_traces),
         "likelihood_benign_rate": float(np.mean([v < cutoffs["likelihood"] for _, v in held_traces])),
     }
+    # the novelty channel (kept by verdicts/novelty.py): its cutoff rests on the same held-out
+    # windows. It sits beside `cutoffs`, not inside, because the demo page publishes `cutoffs`.
+    novel = novelty_by_window(model, flows, t0, n_windows, forget_seconds)[first_held + 1:]
+    novel = novel[np.isfinite(novel)]
+    novelty = {"cutoff": frequency_cutoff(novel), "windows": int(len(novel))}
+    novelty["benign_rate"] = float(np.mean(novel > novelty["cutoff"]))
     return {"t0": t0, "flows": flows, "dropped": dropped, "train": train, "holdout": holdout,
-            "model": model, "events": events, "cutoffs": cutoffs, "n_windows": n_windows}
+            "model": model, "events": events, "cutoffs": cutoffs, "novelty": novelty,
+            "n_windows": n_windows}
 
 
 class WindowRules:

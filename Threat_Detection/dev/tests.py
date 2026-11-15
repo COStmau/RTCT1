@@ -4404,6 +4404,22 @@ class LiveChecks(unittest.TestCase):
                 self.assertAlmostEqual(w["peak"], v["peak"])
         self.assertTrue(any(v["alert"] for v in verdicts))
 
+    def test_live_detector_alerts_on_sequences_it_never_learned(self):
+        """Unseen symbols add nothing to the frequency score; the novelty channel raises them."""
+        from live import stream as live
+        calibration = live.calibrate_live(flow_capture(vary=True))
+        self.assertEqual(set(calibration["novelty"]), {"cutoff", "windows", "benign_rate"})
+        detector = live.LiveDetector(calibration)
+        verdicts = []
+        for w in range(4):
+            flows = pd.DataFrame([{"start_ts": w + i / 10, "bytes": 60, "duration": 0.0, "src_ip": "x",
+                                   "dst_ip": "y", "proto": "sctp"} for i in range(5)])
+            verdicts.append(detector.window({"t": w, "flow_rows": flows}, 0.0))
+        self.assertEqual([v["channels"] for v in verdicts], [["novelty"]] * 4)
+        self.assertGreater(verdicts[0]["novelty"], verdicts[0]["novelty_cutoff"])
+        self.assertEqual([v["alert"] for v in verdicts], [False, False, True, True])
+        self.assertEqual(verdicts[2]["top"]["pairs"], [["x", "y"]])
+
     def test_live_calibration_learns_from_live_cut_flows(self):
         from live import stream as live
         benign = flow_capture(vary=True)

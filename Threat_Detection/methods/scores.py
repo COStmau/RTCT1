@@ -315,9 +315,13 @@ class NoveltyScorer:
         when = float(when)
         while self.left and self.left[0] < when - self.forget_seconds:
             self.left.popleft()
-        if len(trace_states(self.pdfa, trace)) < len(trace):
+        if self.leaves(trace):
             self.left.append(when)
         return float(len(self.left))
+
+    def leaves(self, trace):
+        """Whether the machine lacks a transition this trace needs."""
+        return len(trace_states(self.pdfa, trace)) < len(trace)
 
 
 def novelty_by_window(model, flows, t0, n_windows, forget_seconds=FORGET_SECONDS):

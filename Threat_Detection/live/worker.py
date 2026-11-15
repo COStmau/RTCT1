@@ -44,7 +44,7 @@ from live.stream import (LATENESS, CaptureReader, LiveDetector, PcapStream, Wind
 from methods.pdfa import FLOW_COLUMNS, PDFA
 from methods.scores import FORGET_SECONDS, pdfa_graph
 
-MODEL_VERSION = 2              # bump when a saved machine can no longer be scored as it was learned
+MODEL_VERSION = 3              # bump when a saved machine can no longer be scored as it was learned
 LEARN_SECONDS = 60
 LEARN_LIMIT = 600              # a quiet tap keeps collecting up to this long before giving up
 LEARN_PACKETS = 1_500_000      # a flood during learning stops the collection here
@@ -61,7 +61,7 @@ def save_model(path, calibration, forget_seconds, lateness, source):
     keeps, so the file holds the state graph and load_model builds the index again.
     """
     saved = {"version": MODEL_VERSION, "forget_seconds": float(forget_seconds), "lateness": int(lateness),
-             "model": calibration["model"], "cutoffs": calibration["cutoffs"],
+             "model": calibration["model"], "cutoffs": calibration["cutoffs"], "novelty": calibration["novelty"],
              "train_flows": len(calibration["train"]), "source": source, "learned_at": time.time()}
     model = calibration["model"]
     stored = dict(saved, model={"enc": model["enc"], "trace_len": model["trace_len"], "root": model["pdfa"].root})
@@ -149,7 +149,7 @@ class Tap:
             self.emit({"kind": "learn", "phase": "collecting" if more else "failed", "error": str(error),
                        "seconds": job["seconds"], "extended": bool(more)})
             return
-        saved = {"model": calibration["model"], "cutoffs": calibration["cutoffs"],
+        saved = {"model": calibration["model"], "cutoffs": calibration["cutoffs"], "novelty": calibration["novelty"],
                  "train_flows": len(calibration["train"]), "source": "stream", "learned_at": self.clock()}
         if self.model_path:
             try:
@@ -325,7 +325,7 @@ def main(argv=None):
     if saved is None and baseline and not args.learn:
         try:
             calibration = calibrate_live(baseline, args.forget, args.lateness)
-            saved = {"model": calibration["model"], "cutoffs": calibration["cutoffs"],
+            saved = {"model": calibration["model"], "cutoffs": calibration["cutoffs"], "novelty": calibration["novelty"],
                      "train_flows": len(calibration["train"]), "source": str(baseline),
                      "learned_at": time.time()}
             if args.model:

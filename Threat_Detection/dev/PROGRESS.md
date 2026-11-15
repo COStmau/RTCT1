@@ -516,3 +516,57 @@ fractions is mostly the false-alarm side; the detection gain is in the matched-r
 in the hybrid section above, not in these fixed-cutoff fractions. Earlier sections of this
 file quote the 13-feature figures and are not rewritten: they describe what was measured then.
 The windowed score, the PDFA and the visualization do not use these features and are unchanged.
+
+## Novelty channel: kept by its rule (2026-11-14)
+
+The frequency scorers walk a trace with `trace_states`, which stops at the first transition the
+machine lacks. A sequence the machine never learned therefore adds *less* to the windowed score,
+and the likelihood flag only sets a status (`unseen`), never an alert. A diagnostic on four tcp
+taps showed what that costs: 92-100% of held-out benign traces walk the whole machine, against
+45-51% under the nginx attack on `pod-lidar` and `node-child1`.
+
+The candidate is a second channel, `methods.scores.NoveltyScorer`: the number of traces in the
+8 s clock that leave the machine, with its own cutoff from the same held-out windows, and a
+window flagged when either channel is over. The rule is `verdicts/novelty.py`, committed in
+`075b49ca` before any window-level or alert-level number existed; it says it is not blind (the
+diagnostic above preceded it). `experiments/novelty.py` writes `outputs/novelty.csv`.
+
+**Verdict: keep, on the line.** The rule reads only tcp taps with 30 or more held-out traces,
+which leaves four of the eight steady taps (`node-child2`, `node-gchild9`, `pod-robot-hardware`
+and `router-flannel` are left out). On those: 5 to 9 of 12 attack events detected, a gain of 4
+against a bar of 4; no persistent alert and 0.069 of 58 held-out windows flagged.
+
+All eight steady taps, an event being one attack recording with a persistent alert in its warm
+windows:
+
+| | tcp, frequency | tcp, novelty | tcp, either | ptcp, frequency | ptcp, either |
+|---|---|---|---|---|---|
+| injection | 1 of 8 | 3 of 8 | 3 of 8 | 1 of 8 | 3 of 8 |
+| lidar | 3 of 8 | 3 of 8 | 4 of 8 | 1 of 8 | 4 of 8 |
+| nginx | 3 of 8 | 8 of 8 | 8 of 8 | 4 of 8 | 6 of 8 |
+| held-out benign windows flagged | 7 of 86 | 1 of 86 | 8 of 86 | 8 of 77 | 11 of 77 |
+| held-out benign persistent alerts | 0 | 0 | 0 | 0 | 0 |
+
+These frequency figures are lower than the 2 / 3 / 4 of 8 quoted from `windowed_sweep.csv`
+earlier, because that file's `persistent` column counts warm-up windows and this does not.
+
+What the pass does and does not say. Novelty finds the nginx attack at every steady tap, where
+the frequency score ranked it at chance; lidar and injection barely move, so those two need
+something else (the detector still drops every flow that crosses a second). The benign side is
+the same 60 s recordings that set the cutoffs, 3-16 windows a tap, and four taps' novelty
+cutoffs are zero: one unseen trace in 8 s flags a window. Nothing here bounds a false-alarm
+rate. Wired into `methods.calibration.calibrate` (a `novelty` entry beside `cutoffs`, which the
+frozen page publishes and so must not change) and `live.stream.LiveDetector`, whose verdicts now
+carry `novelty`, `novelty_cutoff` and `channels`; saved machines are version 3.
+
+## Live sessions on the scoreboard (2026-11-14)
+
+`experiments/scoreboard.py` reads `session-*/events.jsonl` in the units last year's reports
+used. Nine existing sessions, all scored by the frequency channel alone: on the local k3d
+cluster 24 of 30 labelled attacks raised an alert at a tap that was scoring (the span runs to
+`RELEASE_WATCH`, 120 s after the attack, so this is lenient), median 10.5 s; and taps alerted
+2,954 times in 3,399 benign tap-minutes, 0.073 of benign windows in alert, `node-agent1` alone
+0.250. The lab-cluster sessions have no labelled attack, so they have no detection number.
+False alarms on long runs, not missed attacks, are where the live monitor is furthest from last
+year's reports, and novelty can only add flags. `Monitor.mark_attack` (`POST /api/attack/mark`)
+now labels an attack run by hand, so the next lab session has spans to score against.

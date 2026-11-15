@@ -335,6 +335,8 @@ class Monitor:
             # score and cutoff ride along, so a logged alert says what raised it and against what
             self.publish({"kind": "alert", "label": run.label, "wall": window["wall"], "top": window.get("top"),
                           "score": window.get("peak"), "cutoff": window.get("cutoff"),
+                          "novelty": window.get("novelty"), "novelty_cutoff": window.get("novelty_cutoff"),
+                          "channels": window.get("channels"),
                           **self._latency(window["wall"])})
         elif window["released"] and run.alert_since is not None:
             began, run.alert_since = run.alert_since, None

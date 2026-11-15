@@ -52,7 +52,7 @@ applying it. They exist so a verdict cannot be chosen after seeing the numbers.
 | `dev/verdicts/feature_set_hybrid.py` | The eight features plus `packet_count`, judged by the same rule (kept). |
 | `dev/verdicts/load_behavior.py` | The load-versus-behavior alert rule (dropped). |
 | `dev/verdicts/cv.py` | The cross-validated calibration rule (dropped). |
-| `dev/verdicts/novelty.py` | The novelty-channel rule: alert on sequences the machine never learned, beside the frequency score. |
+| `dev/verdicts/novelty.py` | The novelty-channel rule: alert on sequences the machine never learned, beside the frequency score (kept). |
 | `dev/experiments/pdfa_sweep.py` | The PDFA experiment CLI, one `flag_stats` row per capture stratum. `--flags` adds TCP SYN/RST presence to the symbol; default is the old alphabet. |
 | `dev/experiments/pcap_diff.py` | Regenerates every sponsor packet CSV from its capture file and diffs the two row for row, plus the window tables. Writes `outputs/pcap_diff.csv`. Reads every capture, so `demo.py` only summarizes the last run. |
 
@@ -82,6 +82,7 @@ cd Threat_Detection
 .venv/bin/python dev/experiments/cv_calibration.py                  # cross-validated calibration and its verdict
 .venv/bin/python dev/experiments/feature_set.py [--rule hybrid]     # all 13 features against the candidate set
 .venv/bin/python dev/experiments/load_behavior.py                   # load channel against behavior channel
+.venv/bin/python dev/experiments/novelty.py                         # novelty channel against the frequency score
 
 .venv/bin/python dev/experiments/pcap_diff.py                       # all 88 captures regenerated and diffed
 .venv/bin/python dev/experiments/pcap_diff.py --max-gb 0.2          # only the 64 captures under 0.2 GB, for quick checks
