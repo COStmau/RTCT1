@@ -570,3 +570,47 @@ cluster 24 of 30 labelled attacks raised an alert at a tap that was scoring (the
 False alarms on long runs, not missed attacks, are where the live monitor is furthest from last
 year's reports, and novelty can only add flags. `Monitor.mark_attack` (`POST /api/attack/mark`)
 now labels an attack run by hand, so the next lab session has spans to score against.
+
+## Sliced flows: kept by its rule, not adopted; and the control that reopens novelty (2026-11-15)
+
+`segment_flows` drops a flow that crosses a second; on three taps the kept flows carry 0.2-1.3%
+of the bytes. `methods.pdfa.slice_flows` cuts such a flow at the seconds it crosses and marks
+each slice new or continuing. The rule is `verdicts/slices.py`, committed in `2bb04103` before a
+sliced machine was scored; `experiments/slices.py` writes `outputs/slices.csv`.
+
+**Verdict: keep.** Seven eligible tcp taps (`router-flannel` left out): 14 to 20 of 21 events,
+no scenario losing any, no held-out persistent alert, 0.058 of 138 held-out windows flagged.
+Over all eight steady tcp taps, flag on either channel: injection 3 to 7 of 8, lidar 4 to 7,
+nginx 8 of 8 both; machines grow from 2-8 states to 2-11 and held-out windows from 86 to 141.
+
+**It is not adopted, because the measure it passed on is not sound.** The jump was large
+enough to check, and three controls, none of them part of the rule, say that an attack
+recording alerting against its benign recording does not show the attack was seen:
+
+- On the local-cluster recordings (`~/rtct-data/lab`, `general`) the whole-flow detector
+  already alerts on 32 of 32 and 7 of 8 attack recordings, at nearly every tap, including taps
+  an attack has no reason to reach. The event count is saturated there.
+- **A second benign recording alerts too.** `experiments/benign_control.py pair`, two benign
+  recordings of the same k3d taps 26 minutes apart, each learned from and scored against the
+  other (`outputs/benign_control_pair.csv`): with flags on either channel, 9 of 16 recordings
+  raise a persistent alert under whole flows and 16 of 18 under slices. The frequency channel
+  alone: 7 of 16, 0.030 of windows in alert. The novelty channel alone: 7 of 16, 0.283 in alert.
+- **Later benign traffic, 10 minutes learned** (`benign_control.py later`, four pod taps of a
+  51-77 minute benign recording, `outputs/benign_control_later.csv`): share of later benign
+  windows in alert is 0.010 for the frequency channel on whole flows, 0.021 for novelty, 0.032
+  for either; under slices 0.013, 0.042 and 0.055.
+
+What follows. Every per-recording event count in this file, the novelty section's included, is
+an upper bound that mixes the attack with the difference between two recording sessions; the
+sponsor set has one benign recording per tap, so it cannot separate them. Novelty's verdict
+stands as its rule was written, but the rule had no cross-session benign clause and novelty is
+what the control hits hardest: learned from about 42 s it puts 28% of another benign recording
+in alert, learned from 10 minutes about 2%. The live monitor learns from 60 s by default and
+novelty is wired into it, so that default now matters more than it did. Length of benign
+learning is the lever on false alarms: the frequency channel at 10 minutes is at 1%, under
+last year's 4.65%, where the 60-second live sessions sat at 7.3%.
+
+The test that can decide novelty and slices is one continuous recording with at least 10
+minutes of benign learning and labelled attacks inside it, so each attack is judged against
+the benign minutes around it. No such recording exists yet; the one recorded session with
+labelled attacks has 22 s of benign before the first.

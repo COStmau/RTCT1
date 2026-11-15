@@ -45,12 +45,20 @@ def _channels(frequency, novelty, cutoffs):
     return dict(flags, either=flags["frequency"] | flags["novelty"])
 
 
-def label_rows(label, method, benign, targets, forget_seconds=FORGET_SECONDS):
-    """Every row for one steady tap: held-out benign and each attack, per channel."""
+def whole_flows(packets, t0):
+    """Today's flow rule: a flow that crosses a second is dropped."""
+    return segment_flows(make_flows(packets), t0)[0]
+
+
+def label_rows(label, method, benign, targets, forget_seconds=FORGET_SECONDS, flows_of=whole_flows):
+    """Every row for one steady tap: held-out benign and each attack, per channel.
+
+    `flows_of(packets, t0)` is the flow rule; experiments/slices.py passes another.
+    """
     if label in BULK_LABELS:
         return []
     t0 = float(benign["ts"].min())
-    flows, _ = segment_flows(make_flows(benign), t0)
+    flows = flows_of(benign, t0)
     train, holdout = split_flows(flows)
     model = fit_model(train)
     n_windows = n_windows_for(benign)
@@ -68,7 +76,7 @@ def label_rows(label, method, benign, targets, forget_seconds=FORGET_SECONDS):
             for channel, flags in _channels(*scores, cutoffs).items()]
     for scenario, packets in targets.items():
         target_t0 = float(packets["ts"].min())
-        target_flows, _ = segment_flows(make_flows(packets), target_t0)
+        target_flows = flows_of(packets, target_t0)
         n = n_windows_for(packets)
         frequency = frequency_scores_by_window(model, target_flows, target_t0, n, forget_seconds)
         novelty = novelty_by_window(model, target_flows, target_t0, n, forget_seconds)

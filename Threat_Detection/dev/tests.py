@@ -1908,6 +1908,22 @@ class SlicesVerdictChecks(unittest.TestCase):
         self.assertIn("left out", reasons[0])
 
 
+class BenignControlChecks(unittest.TestCase):
+    """experiments/benign_control.py: later benign traffic, per flow rule and channel."""
+
+    def test_later_rows_score_only_what_follows_the_training_stretch(self):
+        from experiments import benign_control
+        rows = benign_control.later_rows("pod-web", flow_capture(vary=True), train_seconds=30)
+        self.assertEqual([(r["rule"], r["channel"]) for r in rows],
+                         [(rule, channel) for rule in ("whole", "sliced")
+                          for channel in ("frequency", "novelty", "either")])
+        for rule in ("whole", "sliced"):
+            by = {r["channel"]: r for r in rows if r["rule"] == rule}
+            self.assertLessEqual(by["either"]["scored_windows"], 30)      # a 60 s capture, 30 s learned from
+            self.assertGreater(by["either"]["scored_windows"], 0)
+            self.assertGreaterEqual(by["either"]["flagged"], max(by["frequency"]["flagged"], by["novelty"]["flagged"]))
+
+
 class ScoreboardChecks(unittest.TestCase):
     """experiments/scoreboard.py: a session's log in events, false alarms and latency."""
 
