@@ -37,7 +37,7 @@ from core.features import WINDOW_SIZE
 from core.reporting import CLEAR_WINDOWS
 from methods.calibration import WindowRules, calibrate
 from methods.pdfa import FLOW_COLUMNS, encode
-from methods.scores import FORGET_SECONDS, NoveltyScorer, WindowedFrequencyScorer, trace_score
+from methods.scores import FORGET_SECONDS, WindowedFrequencyScorer, trace_score
 
 LATENESS = 2               # windows a closed window waits for the packets after it
 HISTORY_SECONDS = 120      # how long a 5-tuple is remembered as "already seen"
@@ -229,8 +229,6 @@ class LiveDetector:
         self.cutoffs = calibration["cutoffs"]
         self.length = self.model["trace_len"]
         self.scorer = WindowedFrequencyScorer(self.model["pdfa"], self.forget_seconds)
-        self.novelty = NoveltyScorer(self.model["pdfa"], self.forget_seconds)
-        self.novelty_cutoff = float(calibration["novelty"]["cutoff"])
         self.symbols = deque(maxlen=self.length)
         self.pairs = deque(maxlen=self.length)      # each symbol's flow, for the peak trace
 
@@ -243,7 +241,6 @@ class LiveDetector:
         """The verdict for one closed window from Windower (t0: the stream's first packet)."""
         flows = closed["flow_rows"]
         peak, unlikely, top = np.nan, False, None
-        novel, left = np.nan, None        # most off-machine traces in the clock; the latest one
         if len(flows):
             for symbol, start, src, dst in zip(encode(flows, self.model["enc"]), flows["start_ts"],
                                                flows["src_ip"], flows["dst_ip"]):
@@ -253,27 +250,16 @@ class LiveDetector:
                     continue
                 trace = tuple(self.symbols)
                 # the scorer wants time order; a re-learned machine may see an older flow first
-                when = max(float(start) - t0, self.scorer.last_when)
-                score = self.scorer.score(trace, when)
-                novel = np.nanmax([novel, self.novelty.score(trace, when)])
-                if self.novelty.leaves(trace):
-                    left = (trace, tuple(self.pairs))
+                score = self.scorer.score(trace, max(float(start) - t0, self.scorer.last_when))
                 if np.isnan(peak) or score > peak:
                     peak, top = score, (trace, tuple(self.pairs))
                 unlikely |= trace_score(self.model["pdfa"], trace) < self.cutoffs["likelihood"]
         scored = not np.isnan(peak)
-        # either channel flags: more of something known, or something never learned
-        channels = [name for name, over in (("frequency", scored and peak > self.cutoffs["windowed"]),
-                                            ("novelty", scored and novel > self.novelty_cutoff)) if over]
-        flagged = bool(channels)
-        if channels == ["novelty"] and left is not None:
-            top = left                    # the trace behind a novelty flag is one that left the machine
+        flagged = bool(scored and peak > self.cutoffs["windowed"])
         verdict = self.rules.step(closed["t"], scored, flagged, bool(unlikely))
         self.last_window = closed["t"]
         out = {"t": closed["t"], "peak": None if not scored else float(peak),
                "cutoff": float(self.cutoffs["windowed"]), "flagged": flagged,
-               "novelty": None if not scored else float(novel), "novelty_cutoff": self.novelty_cutoff,
-               "channels": channels,
                "likelihood_flag": bool(unlikely), **verdict}
         if top is not None and (flagged or unlikely):
             # why: the trace behind the peak, and who its flows were between
@@ -298,7 +284,6 @@ def describe(calibration, forget_seconds=FORGET_SECONDS, lateness=None):
 def no_verdict(closed):
     """A closed window from a tap with no machine yet: counted, not judged."""
     return {"t": closed["t"], "peak": None, "cutoff": None, "flagged": False,
-            "novelty": None, "novelty_cutoff": None, "channels": [],
             "likelihood_flag": False, "alert": False, "released": False, "status": "learning",
             "forgetting_shown": False}
 

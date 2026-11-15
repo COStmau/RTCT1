@@ -614,3 +614,47 @@ The test that can decide novelty and slices is one continuous recording with at 
 minutes of benign learning and labelled attacks inside it, so each attack is judged against
 the benign minutes around it. No such recording exists yet; the one recorded session with
 labelled attacks has 22 s of benign before the first.
+
+## The labelled session: the incumbent stays, and novelty comes out (2026-11-15)
+
+Recorded on the local k3d `general` cluster, `~/rtct-data/general/live/session-20261115-145028`:
+eight taps, 12 minutes of benign traffic, then http-flood, scan, lateral and sensor-flood three
+times each, 30 s on and 90 s off. The rule, `verdicts/session.py`, was committed in `33562b1f`
+while it was recording. `experiments/session_score.py` learns each tap from its first 10 minutes
+and scores the rest (`outputs/session_score.csv`); `pod-redis` has too few whole flows to learn
+from and is left out, so 7 taps and 84 attack-at-tap pairs. A detection is an alert newly
+raised, none in the 10 s before the attack.
+
+| flow rule / channel | attacks detected | benign windows in alert | rule |
+|---|---|---|---|
+| whole / frequency (incumbent) | 42 of 84 (0.50) | 0.030 | |
+| whole / novelty | 50 of 84 (0.60) | 0.081 | not under 0.0465 |
+| whole / either | 49 of 84 (0.58) | 0.111 | not under 0.0465 |
+| sliced / frequency | 53 of 84 (0.63) | 0.025 | gain +0.13, below 0.15 |
+| sliced / novelty | 60 of 84 (0.71) | 0.068 | not under 0.0465 |
+| sliced / either | 56 of 84 (0.67) | 0.094 | not under 0.0465 |
+
+**Verdict: whole flows with the frequency channel stay.** No challenger is both clean and 15
+points better. As the rule says, the novelty channel is out of the live detector again:
+`live/stream.py`, `live/worker.py`, `live/monitor.py` and `methods/calibration.py` are back to
+what they were before `9718b58d` (saved machines are version 2 again), and `NoveltyScorer`,
+`slice_flows` and their experiments stay as measured ablations.
+
+What the session says beyond the verdict:
+
+- **Novelty detects more and costs too much.** It finds lateral movement and scans the frequency
+  score misses (`pod-worker` 9 of 12 against 3), but it leaves 8% of benign windows in alert
+  even after 10 minutes of learning, 15% on `pod-worker` and `node-agent1`. The 60 s recordings
+  that passed it had hidden that.
+- **Sliced flows with the frequency channel alone are the near miss.** 53 against 42 attacks with
+  slightly *less* benign alerting (0.025 against 0.030), two points short of the bar, so by the
+  rule it is a drop. Where it is good it is very good: http-flood 16 of 21, scan 15 of 21 (the
+  incumbent has 9), sensor-flood 16 of 21 (10); `pod-api`, `pod-store` and `node-server` each
+  catch all nine of their flood, scan and sensor-flood attacks, at 0.4-2.5% of benign windows in
+  alert. Lateral movement is its hole, 6 of 21. A candidate limited to those three attack
+  kinds, or to pod taps, would be a new candidate and needs its own rule and a new session.
+- **One tap carries a third of the false alarms.** `node-agent2` has 11-12% of benign windows in
+  alert under either flow rule; the other six taps are at 0-3% for the incumbent.
+- Median time from attack start to a newly raised alert is about 4 s for both frequency variants.
+- This is one session on a single-host cluster, three repeats per attack kind. It decides
+  between variants; it is not a detection rate.
