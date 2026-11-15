@@ -1842,6 +1842,31 @@ class NoveltyChecks(unittest.TestCase):
         self.assertEqual(novelty_verdict.decide(self.rows(4, 8, events=8))[0], "undecidable")
 
 
+class ScoreboardChecks(unittest.TestCase):
+    """experiments/scoreboard.py: a session's log in events, false alarms and latency."""
+
+    def test_alerts_are_split_by_the_attacks_the_log_names(self):
+        from experiments import scoreboard
+        windows = [{"kind": "window", "label": label, "wall": 100.0 + t, "peak": 1.0,
+                    "alert": label == "a" and t in (5, 6)}
+                   for label in ("a", "b") for t in range(60)]
+        windows.append({"kind": "window", "label": "idle", "wall": 100.0, "peak": None, "alert": False})
+        events = windows + [
+            {"kind": "attack", "phase": "start", "scenario": "scan", "wall": 130.0},
+            {"kind": "attack", "phase": "stop", "scenario": "scan", "wall": 140.0},
+            {"kind": "alert", "label": "a", "wall": 105.0},      # nothing running: a false alarm
+            {"kind": "alert", "label": "a", "wall": 134.5},      # 4.5 s into the scan
+            {"kind": "alert", "label": "a", "wall": 139.0},      # the same attack again: one event
+            {"kind": "attack", "phase": "start", "scenario": "flood", "wall": 500.0}]   # never ended
+        self.assertEqual(scoreboard.attack_spans(events), [("scan", 130.0, 140.0)])
+        rows = {row["label"]: row for row in scoreboard.session_rows(events)}
+        self.assertEqual((rows["a"]["attacks"], rows["a"]["detected"], rows["a"]["median_latency_s"]), (1, 1, 4.5))
+        self.assertEqual((rows["a"]["false_alerts"], rows["a"]["benign_alert_windows"]), (1, 2))
+        self.assertEqual((rows["b"]["attacks"], rows["b"]["detected"], rows["b"]["false_alerts"]), (1, 0, 0))
+        self.assertEqual((rows["idle"]["attacks"], rows["idle"]["benign_windows"]), (0, 0))   # scored nothing
+        self.assertIn("attacks detected 1/2", scoreboard.summarize(pd.DataFrame(rows.values()))[-1])
+
+
 class RootVerdictChecks(unittest.TestCase):
     """The start-state count rule, fixed before either variant's AUROC was computed."""
 

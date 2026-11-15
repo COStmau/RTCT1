@@ -35,6 +35,8 @@ also run on their own, as a script or with `-m`.
 | `dev/experiments/cv_calibration.py` | Cross-validated calibration of the windowed score (every benign window scored out of fold) against the split. Prints the pre-registered verdict: drop, so the split stays. |
 | `dev/experiments/feature_set.py` | All 13 features against the eight without volume and size/timing: persistent alerts, AUROC and detection at a 5% benign budget per scenario. Prints the pre-registered verdict: drop; `--rule hybrid` runs the nine-feature candidate (kept). |
 | `dev/experiments/load_behavior.py` | Load channel (z-score) against behavior channel (windowed SEQUENT): does the second gate the first on the bulk taps and the attacks. Prints the pre-registered verdict: drop. |
+| `dev/experiments/novelty.py` | The novelty channel (traces that leave the machine) beside the windowed frequency score: attack events detected per tap and held-out benign alerts, per channel. Prints the pre-registered verdict: keep. |
+| `dev/experiments/scoreboard.py` | Live sessions in last year's units: labelled attacks detected per tap, latency, and alerts with no attack running. Reads `session-*/events.jsonl`. |
 | `dev/experiments/metrics.py` | One `auroc`, one `detection_at_rate`, one `detection_at_budget`, with the two missing-data policies stated rather than accidental. Imports nothing from the project, so any experiment can use it. |
 
 ## The pre-registered rules
