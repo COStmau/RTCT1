@@ -83,9 +83,31 @@ def segment_flows(flows, t0, window_size=WINDOW_SIZE):
     return flows[~crossing].reset_index(drop=True), int(crossing.sum())
 
 
+def slice_flows(packets, t0, window_size=WINDOW_SIZE):
+    """One row per 5-tuple per window it has packets in: nothing is dropped.
+
+    `segment_flows` discards a flow that crosses a window boundary, which on a busy tap is
+    nearly all of the bytes. Here such a flow is cut at the boundaries instead: each slice
+    carries the bytes and the first-to-last packet time of its own window, and `continuing`
+    says the same 5-tuple also had packets in the window before. The rule is causal, so a
+    live tap can apply it as each window closes.
+    """
+    frames = packets[["ts", "frame_len", "src_ip", "dst_ip", "src_port", "dst_port", "proto"]].copy()
+    frames["window"] = np.floor((frames["ts"].astype(float) - t0) / window_size).astype(int)
+    key = ["src_ip", "dst_ip", "src_port", "dst_port", "proto"]
+    slices = frames.groupby(["window"] + key, dropna=False).agg(
+        start_ts=("ts", "min"), last_ts=("ts", "max"), bytes=("frame_len", "sum")).reset_index()
+    slices["duration"] = (slices["last_ts"] - slices["start_ts"]).astype(float)
+    before = slices[key].assign(window=slices["window"] + 1, continuing=True)
+    slices = slices.merge(before, on=["window"] + key, how="left")
+    slices["continuing"] = slices["continuing"].notna()
+    columns = ["start_ts", "bytes", "duration", "proto", "src_ip", "dst_ip", "continuing"]
+    return slices.sort_values("start_ts", kind="stable").reset_index(drop=True)[columns]
+
+
 def fit_percentile(flows, nbins=NBINS, flags=False):
     """Quantile bin edges for bytes and duration, fitted on benign flows."""
-    enc = {"kind": "percentile", "flags": bool(flags)}
+    enc = {"kind": "percentile", "flags": bool(flags), "slices": "continuing" in flows.columns}
     for column in ("bytes", "duration"):
         cuts = np.quantile(flows[column].to_numpy(dtype=float),
                            np.linspace(0, 1, nbins + 1))
@@ -99,7 +121,7 @@ def fit_frequency(flows, nbins=NBINS, min_count=3, flags=False):
     The paper's frequency encoding with a count threshold, adapted to
     near-continuous flow sizes: only exactly repeated values earn a label.
     """
-    enc = {"kind": "frequency", "flags": bool(flags)}
+    enc = {"kind": "frequency", "flags": bool(flags), "slices": "continuing" in flows.columns}
     for column in ("bytes", "duration"):
         counts = flows[column].value_counts()
         frequent = sorted(counts[counts.ge(min_count)].index.tolist())
@@ -133,10 +155,12 @@ def _flag_bits(flows, enabled):
 def encode(flows, enc):
     """Flows to PROTO_[FLAGS_]SIZE_DURATION symbols using the fitted encoding."""
     symbols = []
-    for proto, flags, size, duration in zip(flows["proto"],
-                                            _flag_bits(flows, enc.get("flags", False)),
-                                            flows["bytes"], flows["duration"]):
-        parts = [str(proto)]
+    # slices (slice_flows) say whether their flow is new this window or carries on
+    marks = ["c" if c else "n" for c in flows["continuing"]] if enc.get("slices") else [""] * len(flows)
+    for proto, mark, flags, size, duration in zip(flows["proto"], marks,
+                                                  _flag_bits(flows, enc.get("flags", False)),
+                                                  flows["bytes"], flows["duration"]):
+        parts = [str(proto)] + ([mark] if mark else [])
         if flags:
             parts.append(flags)
         parts += [_encode_value(size, enc["bytes"]),

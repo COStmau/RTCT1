@@ -41,6 +41,7 @@ from verdicts import flag as flag_verdict
 from verdicts import load_behavior as load_behavior_verdict
 from verdicts import novelty as novelty_verdict
 from verdicts import root_count as root_verdict
+from verdicts import slices as slices_verdict
 
 from viz import cluster
 from viz import layout
@@ -1840,6 +1841,71 @@ class NoveltyChecks(unittest.TestCase):
         self.assertIn("left out", reasons[0])
         self.assertEqual(novelty_verdict.decide(self.rows(4, 8, method="ptcp"))[0], "undecidable")
         self.assertEqual(novelty_verdict.decide(self.rows(4, 8, events=8))[0], "undecidable")
+
+
+class SliceChecks(unittest.TestCase):
+    """methods.pdfa.slice_flows: every flow is kept, cut at the seconds it crosses."""
+
+    @staticmethod
+    def packets():
+        rows = [(0.2, 100, 1), (0.8, 50, 1), (1.5, 70, 1), (3.1, 10, 1),    # one 5-tuple over 4 s
+                (0.5, 40, 2)]                                             # another, inside second 0
+        return pd.DataFrame([{"ts": 10.0 + ts, "frame_len": size, "src_ip": "a", "dst_ip": "b",
+                              "src_port": port, "dst_port": 80, "proto": "tcp"} for ts, size, port in rows])
+
+    def test_a_long_flow_becomes_one_slice_per_second_it_is_active_in(self):
+        from methods.pdfa import slice_flows
+        slices = slice_flows(self.packets(), 10.0)
+        got = [(round(s.start_ts - 10, 1), s.bytes, round(s.duration, 1), s.continuing)
+               for s in slices.itertuples()]
+        self.assertEqual(got, [(0.2, 150, 0.6, False), (0.5, 40, 0.0, False),
+                               (1.5, 70, 0.0, True),      # active the second before
+                               (3.1, 10, 0.0, False)])    # second 2 was silent: new again
+        self.assertEqual(int(slices["bytes"].sum()), int(self.packets()["frame_len"].sum()))
+
+    def test_sliced_symbols_say_new_or_continuing_and_whole_flows_are_unchanged(self):
+        from methods.pdfa import encode, fit_percentile, make_flows, slice_flows
+        slices = slice_flows(self.packets(), 10.0)
+        symbols = list(encode(slices, fit_percentile(slices)))
+        self.assertEqual([s.split("_")[1] for s in symbols], ["n", "n", "c", "n"])
+        whole = make_flows(self.packets())
+        self.assertEqual({len(s.split("_")) for s in encode(whole, fit_percentile(whole))}, {3})
+
+
+class SlicesVerdictChecks(unittest.TestCase):
+    """verdicts/slices.py: sliced flows are kept only for a gain that costs nginx and benign nothing."""
+
+    @staticmethod
+    def rows(whole, sliced, benign=(0, 0), sliced_traces=60):
+        """`whole` / `sliced`: taps (of 4) alerting per scenario, in scenario order."""
+        out = []
+        for rule, hits, traces in (("whole", whole, 10), ("sliced", sliced, sliced_traces)):
+            for tap in range(4):
+                base = {"label": f"tap{tap}", "method": "tcp", "group": "steady", "channel": "either",
+                        "rule": rule, "held_traces": traces, "scored_windows": 25}
+                for scenario, n in zip(("injection", "lidar", "nginx"), hits):
+                    out.append(dict(base, scenario=scenario, flagged=5, persistent=int(tap < n)))
+                out.append(dict(base, scenario="benign", flagged=benign[0] if not tap else 0,
+                                persistent=benign[1] if not tap else 0))
+        return out
+
+    def test_keep_needs_three_more_events(self):
+        self.assertEqual(slices_verdict.decide(self.rows((1, 1, 4), (2, 3, 4)))[0], "keep")
+        verdict, reasons = slices_verdict.decide(self.rows((1, 1, 4), (2, 2, 4)))
+        self.assertEqual((verdict, reasons[-1]), ("drop", "gain 2 events, below 3"))
+
+    def test_a_gain_bought_with_the_good_scenario_is_a_drop(self):
+        verdict, reasons = slices_verdict.decide(self.rows((0, 0, 4), (4, 4, 2)))
+        self.assertEqual(verdict, "drop")
+        self.assertIn("nginx lost 2 events", reasons[-1])
+        self.assertEqual(slices_verdict.decide(self.rows((0, 0, 4), (4, 4, 3)))[0], "keep")
+
+    def test_benign_bounds_and_thin_taps(self):
+        self.assertEqual(slices_verdict.decide(self.rows((1, 1, 4), (2, 3, 4), benign=(10, 10)))[0], "drop")
+        self.assertEqual(slices_verdict.decide(self.rows((1, 1, 4), (2, 3, 4), benign=(21, 0)))[0], "drop")
+        verdict, reasons = slices_verdict.decide(self.rows((1, 1, 4), (2, 3, 4), sliced_traces=29))
+        self.assertEqual(verdict, "undecidable")
+        self.assertIn("left out", reasons[0])
 
 
 class ScoreboardChecks(unittest.TestCase):
