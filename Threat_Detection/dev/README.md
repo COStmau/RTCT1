@@ -38,6 +38,7 @@ also run on their own, as a script or with `-m`.
 | `dev/experiments/novelty.py` | The novelty channel (traces that leave the machine) beside the windowed frequency score: attack events detected per tap and held-out benign alerts, per channel. Prints the pre-registered verdict: keep. |
 | `dev/experiments/slices.py` | Sliced flows against whole flows on the adopted detector, every stratum. Prints the pre-registered verdict: keep, not adopted (see `benign_control.py`). |
 | `dev/experiments/benign_control.py` | Benign traffic the machine did not learn from: the rest of a long recording, or a second recording of the same tap, per flow rule and channel. The control the attack sweeps lack. |
+| `dev/experiments/session_score.py` | One continuous recorded session with labelled attacks, learned from its first minutes and scored by every flow rule and channel. Prints the pre-registered verdict on which detector the live monitor runs. |
 | `dev/experiments/scoreboard.py` | Live sessions in last year's units: labelled attacks detected per tap, latency, and alerts with no attack running. Reads `session-*/events.jsonl`. |
 | `dev/experiments/metrics.py` | One `auroc`, one `detection_at_rate`, one `detection_at_budget`, with the two missing-data policies stated rather than accidental. Imports nothing from the project, so any experiment can use it. |
 
@@ -55,6 +56,7 @@ applying it. They exist so a verdict cannot be chosen after seeing the numbers.
 | `dev/verdicts/load_behavior.py` | The load-versus-behavior alert rule (dropped). |
 | `dev/verdicts/cv.py` | The cross-validated calibration rule (dropped). |
 | `dev/verdicts/slices.py` | The sliced-flow rule: cut a flow at the seconds it crosses instead of dropping it (kept by the rule, not adopted). |
+| `dev/verdicts/session.py` | Which flow rule and channel the live monitor runs, decided on a labelled session that holds its own benign control. |
 | `dev/verdicts/novelty.py` | The novelty-channel rule: alert on sequences the machine never learned, beside the frequency score (kept). |
 | `dev/experiments/pdfa_sweep.py` | The PDFA experiment CLI, one `flag_stats` row per capture stratum. `--flags` adds TCP SYN/RST presence to the symbol; default is the old alphabet. |
 | `dev/experiments/pcap_diff.py` | Regenerates every sponsor packet CSV from its capture file and diffs the two row for row, plus the window tables. Writes `outputs/pcap_diff.csv`. Reads every capture, so `demo.py` only summarizes the last run. |

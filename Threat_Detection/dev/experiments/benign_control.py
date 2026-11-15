@@ -35,27 +35,38 @@ from methods.scores import FORGET_SECONDS, frequency_cutoff, frequency_scores_by
 RULES = {"whole": novelty.whole_flows, "sliced": slice_flows}
 
 
-def later_rows(label, packets, train_seconds, forget_seconds=FORGET_SECONDS):
-    """Per flow rule and channel: later benign windows scored, flagged and in alert."""
+def later_flags(packets, train_seconds, flows_of, forget_seconds=FORGET_SECONDS):
+    """Learn from the first `train_seconds`, flag every window after: (later, flags, model, t0).
+
+    `later` marks the scored windows past the training stretch; `flags` is per channel. The
+    cutoffs rest on the held-out end of the training stretch, as everywhere.
+    """
     t0 = float(packets["ts"].min())
     n = int((float(packets["ts"].max()) - t0) // WINDOW_SIZE) + 1
+    flows = flows_of(packets, t0)
+    train, holdout = split_flows(flows[flows["start_ts"] - t0 < train_seconds])
+    model = fit_model(train)
+    scores = {"frequency": frequency_scores_by_window(model, flows, t0, n, forget_seconds),
+              "novelty": novelty_by_window(model, flows, t0, n, forget_seconds)}
+    held = slice(int((float(holdout["start_ts"].iloc[0]) - t0) // WINDOW_SIZE) + 1, int(train_seconds))
+    flags = {name: np.nan_to_num(values, nan=-np.inf) > frequency_cutoff(values[held])
+             for name, values in scores.items()}
+    flags["either"] = flags["frequency"] | flags["novelty"]
+    later = np.isfinite(scores["frequency"])
+    later[:int(train_seconds)] = False
+    model["held_windows"] = int(np.isfinite(scores["frequency"][held]).sum())
+    return later, flags, model, t0
+
+
+def later_rows(label, packets, train_seconds, forget_seconds=FORGET_SECONDS):
+    """Per flow rule and channel: later benign windows scored, flagged and in alert."""
     rows = []
     for rule, flows_of in RULES.items():
-        flows = flows_of(packets, t0)
-        train, holdout = split_flows(flows[flows["start_ts"] - t0 < train_seconds])
-        model = fit_model(train)
-        scores = {"frequency": frequency_scores_by_window(model, flows, t0, n, forget_seconds),
-                  "novelty": novelty_by_window(model, flows, t0, n, forget_seconds)}
-        held = slice(int((float(holdout["start_ts"].iloc[0]) - t0) // WINDOW_SIZE) + 1, int(train_seconds))
-        flags = {name: np.nan_to_num(values, nan=-np.inf) > frequency_cutoff(values[held])
-                 for name, values in scores.items()}
-        flags["either"] = flags["frequency"] | flags["novelty"]
-        later = np.isfinite(scores["frequency"])
-        later[:int(train_seconds)] = False
+        later, flags, model, _ = later_flags(packets, train_seconds, flows_of, forget_seconds)
         for channel, flagged in flags.items():
             rows.append({"control": "later", "label": label, "rule": rule, "channel": channel,
                          "train_seconds": train_seconds, "states": model["pdfa"].n_states,
-                         "held_windows": int(np.isfinite(scores["frequency"][held]).sum()),
+                         "held_windows": model["held_windows"],
                          "scored_windows": int(later.sum()), "flagged": int(flagged[later].sum()),
                          "persistent": int(persistent_mask(flagged).to_numpy()[later].sum())})
     return rows

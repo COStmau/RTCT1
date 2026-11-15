@@ -41,6 +41,7 @@ from verdicts import flag as flag_verdict
 from verdicts import load_behavior as load_behavior_verdict
 from verdicts import novelty as novelty_verdict
 from verdicts import root_count as root_verdict
+from verdicts import session as session_verdict
 from verdicts import slices as slices_verdict
 
 from viz import cluster
@@ -1922,6 +1923,43 @@ class BenignControlChecks(unittest.TestCase):
             self.assertLessEqual(by["either"]["scored_windows"], 30)      # a 60 s capture, 30 s learned from
             self.assertGreater(by["either"]["scored_windows"], 0)
             self.assertGreaterEqual(by["either"]["flagged"], max(by["frequency"]["flagged"], by["novelty"]["flagged"]))
+
+
+class SessionChecks(unittest.TestCase):
+    """verdicts/session.py and experiments/session_score.py: one labelled session decides."""
+
+    @staticmethod
+    def totals(**variants):
+        """variant "whole_either"=(detected, benign_alert_windows); 40 attacks, 4000 benign windows."""
+        rows = {"whole_frequency": (10, 40), **variants}
+        return [{"rule": k.split("_")[0], "channel": k.split("_")[1], "attacks": 40, "detected": d,
+                 "benign_windows": 4000, "benign_alert_windows": b} for k, (d, b) in rows.items()]
+
+    def test_a_challenger_must_be_clean_and_clearly_better(self):
+        decide = lambda **v: session_verdict.decide(self.totals(**v))[0]
+        self.assertEqual(decide(), ("whole", "frequency"))
+        self.assertEqual(decide(whole_either=(16, 100)), ("whole", "either"))        # +0.15, 2.5% in alert
+        self.assertEqual(decide(whole_either=(15, 100)), ("whole", "frequency"))     # gain too small
+        self.assertEqual(decide(whole_either=(40, 186)), ("whole", "frequency"))     # 4.65%: not under it
+        self.assertEqual(decide(whole_either=(20, 100), sliced_either=(30, 150)), ("sliced", "either"))
+
+    def test_too_little_evidence_is_undecidable(self):
+        rows = self.totals(whole_either=(30, 10))
+        rows[0]["attacks"] = 19
+        self.assertEqual(session_verdict.decide(rows)[0], "undecidable")
+
+    def test_an_alert_already_up_before_the_attack_earns_nothing(self):
+        from experiments import session_score
+        packets = flow_capture(vary=True)
+        t0 = float(packets["ts"].min())
+        attacks = [{"scenario": "flood", "started": t0 + 40, "ended": t0 + 50}]
+        rows = session_score.tap_rows("pod-web", packets, attacks, train_seconds=30)
+        attack_rows = [r for r in rows if r["scenario"] == "flood"]
+        self.assertEqual(len(attack_rows), 6)
+        for row in attack_rows:
+            self.assertFalse(row["detected"] and row["already_alerting"])
+        benign = [r for r in rows if r["scenario"] == "benign"]
+        self.assertTrue(all(r["windows"] <= 10 for r in benign))      # seconds 30-39 only
 
 
 class ScoreboardChecks(unittest.TestCase):
