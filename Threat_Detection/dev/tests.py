@@ -39,6 +39,7 @@ from verdicts import feature_set as feature_set_verdict
 from verdicts import feature_set_hybrid as hybrid_verdict
 from verdicts import flag as flag_verdict
 from verdicts import load_behavior as load_behavior_verdict
+from verdicts import novelty as novelty_verdict
 from verdicts import root_count as root_verdict
 
 from viz import cluster
@@ -1788,6 +1789,57 @@ class LoadBehaviorVerdictChecks(unittest.TestCase):
         attacks[0]["warm"] = 5
         verdict, _ = load_behavior_verdict.claim_b(attacks, self.benign())
         self.assertEqual(verdict, "undecidable")
+
+
+class NoveltyChecks(unittest.TestCase):
+    """The novelty channel: its scorer counts what the machine never learned, and its rule."""
+
+    def test_only_traces_that_leave_the_machine_count_and_they_are_forgotten(self):
+        from methods.scores import NoveltyScorer
+        pdfa = statemachine.learn_pdfa([("a", "b", "c")] * 8)
+        scorer = NoveltyScorer(pdfa, forget_seconds=2.0)
+        self.assertEqual(scorer.score(("a", "b", "c"), 0.0), 0.0)
+        self.assertEqual(scorer.score(("a", "x", "c"), 0.5), 1.0)
+        self.assertEqual(scorer.score(("x", "b", "c"), 1.0), 2.0)
+        self.assertEqual(scorer.score(("a", "b", "c"), 2.4), 2.0)   # both still inside 2 s
+        self.assertEqual(scorer.score(("a", "b", "c"), 2.6), 1.0)   # the one at 0.5 has left
+        self.assertEqual(scorer.score(("a", "b", "c"), 9.0), 0.0)
+
+    @staticmethod
+    def rows(frequency_hits, either_hits, benign=(0, 0), held_traces=60, method="tcp", events=12):
+        out = []
+        for channel, hits in (("frequency", frequency_hits), ("either", either_hits)):
+            for index in range(events):
+                out.append({"label": f"tap{index % 4}", "scenario": f"attack{index // 4}",
+                            "method": method, "group": "steady", "channel": channel,
+                            "held_traces": held_traces, "scored_windows": 30,
+                            "flagged": 5, "persistent": int(index < hits)})
+            for index in range(4):
+                out.append({"label": f"tap{index}", "scenario": "benign", "method": method,
+                            "group": "steady", "channel": channel, "held_traces": held_traces,
+                            "scored_windows": 25, "flagged": benign[0] if not index else 0,
+                            "persistent": benign[1] if not index else 0})
+        return out
+
+    def test_keep_needs_a_real_gain_and_quiet_benign(self):
+        self.assertEqual(novelty_verdict.decide(self.rows(4, 8))[0], "keep")
+        verdict, reasons = novelty_verdict.decide(self.rows(4, 7))
+        self.assertEqual(verdict, "drop")
+        self.assertIn("gain 3 events", reasons[-1])
+
+    def test_benign_alerts_at_the_fsr_bound_drop_it(self):
+        self.assertEqual(novelty_verdict.decide(self.rows(4, 8, benign=(9, 9)))[0], "keep")
+        verdict, reasons = novelty_verdict.decide(self.rows(4, 8, benign=(10, 10)))   # 10 of 100
+        self.assertEqual(verdict, "drop")
+        self.assertIn("benign alerts 0.100", reasons[-1])
+        self.assertEqual(novelty_verdict.decide(self.rows(4, 8, benign=(21, 0)))[0], "drop")
+
+    def test_thin_taps_and_other_methods_decide_nothing(self):
+        verdict, reasons = novelty_verdict.decide(self.rows(4, 8, held_traces=29))
+        self.assertEqual(verdict, "undecidable")
+        self.assertIn("left out", reasons[0])
+        self.assertEqual(novelty_verdict.decide(self.rows(4, 8, method="ptcp"))[0], "undecidable")
+        self.assertEqual(novelty_verdict.decide(self.rows(4, 8, events=8))[0], "undecidable")
 
 
 class RootVerdictChecks(unittest.TestCase):

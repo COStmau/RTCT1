@@ -294,6 +294,37 @@ class WindowedFrequencyScorer:
         return float(sum(map(sum, terms)))
 
 
+class NoveltyScorer:
+    """How many traces in the last `forget_seconds` left the machine: sequences never learned.
+
+    The frequency scorers walk a trace with `trace_states`, which stops at the first
+    transition the machine lacks, so an unseen sequence adds less to their score, not more.
+    This counts those traces instead. A count, not a share: a quiet tap has one or two traces
+    in its clock, and a share of two is noise.
+    """
+
+    def __init__(self, pdfa, forget_seconds=FORGET_SECONDS):
+        if not forget_seconds > 0:
+            raise ValueError("forget_seconds must be positive.")
+        self.pdfa = pdfa
+        self.forget_seconds = float(forget_seconds)
+        self.left = deque()            # when each off-machine trace was seen, oldest first
+
+    def score(self, trace, when):
+        """Off-machine traces in the window ending at `when`, this one included."""
+        when = float(when)
+        while self.left and self.left[0] < when - self.forget_seconds:
+            self.left.popleft()
+        if len(trace_states(self.pdfa, trace)) < len(trace):
+            self.left.append(when)
+        return float(len(self.left))
+
+
+def novelty_by_window(model, flows, t0, n_windows, forget_seconds=FORGET_SECONDS):
+    """Most off-machine traces any trace of the window saw in its clock; NaN where no trace ended."""
+    return _by_window(model, flows, t0, n_windows, NoveltyScorer(model["pdfa"], forget_seconds).score)
+
+
 def frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds=None,
                                train_counts=TRAIN_COUNTS):
     """Most anomalous state-frequency score per window; NaN where no trace ended.
@@ -306,6 +337,11 @@ def frequency_scores_by_window(model, flows, t0, n_windows, forget_seconds=None,
         score = lambda trace, when: scorer.score(trace)
     else:
         score = WindowedFrequencyScorer(model["pdfa"], forget_seconds, train_counts).score
+    return _by_window(model, flows, t0, n_windows, score)
+
+
+def _by_window(model, flows, t0, n_windows, score):
+    """The largest `score(trace, when)` among the traces ending in each window."""
     symbols = list(encode(flows, model["enc"]))
     trace_len = model["trace_len"]
     scores = np.full(n_windows, np.nan)

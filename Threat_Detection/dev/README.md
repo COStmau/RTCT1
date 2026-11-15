@@ -50,6 +50,7 @@ applying it. They exist so a verdict cannot be chosen after seeing the numbers.
 | `dev/verdicts/feature_set_hybrid.py` | The eight features plus `packet_count`, judged by the same rule (kept). |
 | `dev/verdicts/load_behavior.py` | The load-versus-behavior alert rule (dropped). |
 | `dev/verdicts/cv.py` | The cross-validated calibration rule (dropped). |
+| `dev/verdicts/novelty.py` | The novelty-channel rule: alert on sequences the machine never learned, beside the frequency score. |
 | `dev/experiments/pdfa_sweep.py` | The PDFA experiment CLI, one `flag_stats` row per capture stratum. `--flags` adds TCP SYN/RST presence to the symbol; default is the old alphabet. |
 | `dev/experiments/pcap_diff.py` | Regenerates every sponsor packet CSV from its capture file and diffs the two row for row, plus the window tables. Writes `outputs/pcap_diff.csv`. Reads every capture, so `demo.py` only summarizes the last run. |
 
