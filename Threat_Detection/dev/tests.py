@@ -2035,6 +2035,21 @@ class RoleChecks(unittest.TestCase):
         with self.assertRaises(ValueError):
             roles.fit_role([learned[0].iloc[:0]], role)
 
+    def test_a_conversation_outside_the_contract_is_counted_as_leaving_it(self):
+        from methods import roles
+        role = roles.role_of("pod-nginx")
+        model = roles.fit_role([roles.exchanges(self.packets(40), "10.0.0.1", 100.0)], role)
+        same = roles.exchanges(self.packets(10, port0=50000), "10.0.0.1", 100.0)
+        self.assertEqual(np.nanmax(roles.role_leaving(model, same, 100.0, 12)[0]), 0)
+        big = self.packets(10, port0=50000)
+        big["frame_len"] *= 10                                       # ten times anything learned
+        records = roles.exchanges(big, "10.0.0.1", 100.0)
+        self.assertTrue(all(s.endswith("x_x") for s in roles.symbols(records, role, model["edges"])))
+        left, peers = roles.role_leaving(model, records, 100.0, 12)
+        self.assertEqual(left[0], 1)
+        self.assertEqual(np.nanmax(left), 9)                         # all the clock holds: eight seconds back, inclusive
+        self.assertEqual(peers[0], "10.0.0.9")
+
 
 class RolesVerdictChecks(unittest.TestCase):
     """verdicts/roles.py: a role machine must gain in every round and be no louder on benign."""
