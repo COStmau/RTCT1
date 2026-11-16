@@ -696,3 +696,64 @@ Development session `session-20261115-145028` (already seen), the two web-server
   true replicas of one deployment are the fair test and none is tapped yet.
 - Nothing here is a verdict. The held-out session (the staged campaign on the `lab` profile,
   where the sensor-publisher role also exists) is what the rule is for.
+
+## Role machines on the held-out campaign: pooled / flow by the rule, and what the rule did not ask (2026-11-15)
+
+The held-out session is `~/rtct-data/lab/live/session-20261115-220300` on the k3d `lab`
+profile: 12 minutes benign, then five rounds of the staged campaign (slow scan, lateral
+movement, beacon, exfil, HTTP flood, replay; three rounds of 30-second stages, two of 60).
+None of its attack kinds was scored while the role symbols were designed. The second benign
+session is `session-20261115-214728`, recorded just before it and never learned from. Taps
+with a role: `pod-nginx` (web server), `pod-lidar` and `pod-camera` (sensor publisher); 10
+minutes learned; 90 attack-at-tap pairs (`outputs/roles_heldout.csv`).
+
+| learned from / symbols | attacks detected | per round | later benign in alert | second session in alert |
+|---|---|---|---|---|
+| own / flow (the live detector) | 28 of 90 | 6, 5, 5, 7, 5 | 0.018 | **0.445** |
+| own / role | 20 of 90 | 5, 3, 4, 3, 5 | 0.001 | **0.002** |
+| pooled / flow | 32 of 90 | 6, 6, 6, 7, 7 | 0.005 | 0.126 |
+| pooled / role | 16 of 90 | 4, 2, 2, 4, 4 | 0.003 | 0.003 |
+
+**Verdict by `verdicts/roles.py` (committed in `103385da`): pooled / flow.** It is never behind
+the incumbent in a round, ahead in total, and quieter on both controls. Both role-symbol
+variants fail the first test: fewer attacks than the incumbent.
+
+The verdict stands as written. What it means is narrower than it sounds:
+
+- **Pooled / flow is not a usable detector, and the rule had no way to say so.** The rule
+  compares a challenger with the incumbent and sets no ceiling on benign alerts. `pod-nginx`
+  is the only web server, so there pooled is the incumbent, identical. The gain is all at the
+  publishers, and it is the pathology of the development reading again: one cutoff for lidar
+  and camera makes `pod-lidar` flag nothing (0 of 30 attacks, 0.000 benign) while
+  `pod-camera` goes from 11 to 20 attacks and stays in alert for 36% of a benign session
+  recorded fifteen minutes earlier. It is not wired into the live monitor.
+- **The incumbent does not survive a quarter of an hour.** Own / flow at `pod-lidar` is in
+  alert for every scored window of the second session (3 states learned), 30% at
+  `pod-camera`. With a detector alerting that often, "newly raised" detections are partly
+  chance, so the 28 and the 32 are both soft.
+- **Role symbols carry across sessions again, now on three taps and a second role**: 0.2% of
+  second-session benign in alert against 44.5%. That is the result of the development
+  reading, repeated on data it was not designed on.
+- **Where role symbols detect, they detect every time**: HTTP flood 5 of 5 and beacon 5 of 5
+  at `pod-nginx` (the beacon calls nginx), with no benign window in alert in either control;
+  HTTP flood 5 of 5 at `pod-lidar`.
+- **Where they miss, the cause is in the design, three of them:**
+  1. *Bins saturate.* Exfil from the camera is ten times its normal upload rate and scores 0
+     of 15: quantile bins clip at the top bin, so ten times normal reads as "a busy second".
+     Flow symbols catch it at the camera 5 of 5.
+  2. *A per-peer trace with the frequency score cannot see a new peer.* Slow scan 0 of 5 at
+     `pod-nginx` and lateral movement 1 of 15 overall: a peer that sends one unfamiliar symbol
+     adds little to a count. This is the Structure channel's question, as planned.
+  3. *The wrong vantage point.* Replay goes from a second pod to the controller; neither
+     publisher's tap carries it (1 of 15). It needs the controller's tap or the
+     Agreement channel.
+- **The web-server machine has one state.** The lab nginx has a single client making one
+  kind of request, so its contract is a count of one symbol. It works here and says little
+  about a server with varied clients.
+- **How early.** Flow-symbol variants raise their first alert in the slow scan in all five
+  rounds. Own / role does so in three and at the beacon in the other two; pooled / role first
+  alerts at the lateral or beacon stage in four rounds. All are before the impact stages.
+
+What follows for the design: the role contract is the quiet half of a detector and needs a
+magnitude that does not clip and a notion of a peer that should not be there. The next rule
+must carry a ceiling on benign alerts for every variant, the incumbent included.
