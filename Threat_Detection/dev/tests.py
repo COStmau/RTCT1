@@ -2065,6 +2065,37 @@ class RolesVerdictChecks(unittest.TestCase):
         self.assertEqual(roles_verdict.decide(rows)[0], "undecidable")
 
 
+class LeavingVerdictChecks(unittest.TestCase):
+    """verdicts/leaving.py: a ceiling on benign alerts for every variant, then a gain in every round."""
+
+    @staticmethod
+    def totals(**variants):
+        """variant=(detected per round, benign alerts, second-session alerts), of 2000 windows."""
+        return [{"variant": k, "rounds": [(8, d) for d in rounds], "benign_windows": 2000,
+                 "benign_alert_windows": b, "second_benign_windows": 2000, "second_benign_alert_windows": s2}
+                for k, (rounds, b, s2) in variants.items()]
+
+    def test_a_loud_variant_is_out_however_much_it_detects(self):
+        from verdicts import leaving
+        decide = lambda **v: leaving.decide(self.totals(**v))[0]
+        self.assertEqual(decide(flow=((8, 8, 8), 10, 900), role=((3, 3, 3), 0, 0)), "role")
+        self.assertEqual(decide(flow=((8, 8, 8), 93, 10), role=((3, 3, 3), 0, 0)), "role")     # 0.0465 exactly
+        self.assertEqual(decide(flow=((8, 8, 8), 900, 900), role=((3, 3, 3), 900, 0)), "none")
+
+    def test_the_winner_is_ahead_of_every_other_in_every_round(self):
+        from verdicts import leaving
+        decide = lambda **v: leaving.decide(self.totals(**v))[0]
+        self.assertEqual(decide(a=((4, 4, 4), 0, 0), b=((5, 4, 6), 0, 0), c=((3, 4, 4), 0, 0)), "b")
+        self.assertEqual(decide(a=((4, 4, 4), 0, 0), b=((8, 3, 8), 0, 0)), "none")             # behind in round 2
+        self.assertEqual(decide(a=((4, 4, 4), 0, 0), b=((4, 4, 4), 0, 0)), "none")
+
+    def test_too_little_is_undecidable(self):
+        from verdicts import leaving
+        rows = self.totals(a=((8, 8, 8), 0, 0), b=((8, 8, 8), 0, 0))
+        rows[1]["second_benign_windows"] = 999
+        self.assertEqual(leaving.decide(rows)[0], "undecidable")
+
+
 class ScoreboardChecks(unittest.TestCase):
     """experiments/scoreboard.py: a session's log in events, false alarms and latency."""
 

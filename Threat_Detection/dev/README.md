@@ -59,6 +59,7 @@ applying it. They exist so a verdict cannot be chosen after seeing the numbers.
 | `dev/verdicts/slices.py` | The sliced-flow rule: cut a flow at the seconds it crosses instead of dropping it (kept by the rule, not adopted). |
 | `dev/verdicts/session.py` | Which flow rule and channel the live monitor runs, decided on a labelled session that holds its own benign control. |
 | `dev/verdicts/roles.py` | Whether a role machine replaces a tap's own: a gain in every round of attacks, no louder on two benign controls. |
+| `dev/verdicts/leaving.py` | Which detector a role's taps should run once a contract counts the conversations that leave it: a ceiling on benign alerts for every variant, then a gain in every round over every other. |
 | `dev/verdicts/novelty.py` | The novelty-channel rule: alert on sequences the machine never learned, beside the frequency score (kept). |
 | `dev/experiments/pdfa_sweep.py` | The PDFA experiment CLI, one `flag_stats` row per capture stratum. `--flags` adds TCP SYN/RST presence to the symbol; default is the old alphabet. |
 | `dev/experiments/pcap_diff.py` | Regenerates every sponsor packet CSV from its capture file and diffs the two row for row, plus the window tables. Writes `outputs/pcap_diff.csv`. Reads every capture, so `demo.py` only summarizes the last run. |
