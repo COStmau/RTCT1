@@ -40,13 +40,17 @@ TRAIN_FRACTION = 0.7       # of the learning stretch; the rest sets the cutoff
 VARIANTS = [(source, symbols) for source in ("own", "pooled") for symbols in ("flow", "role")]
 
 
-def load_instance(capture):
-    """One tapped instance: its packets as both kinds of record, on its own clock."""
+def load_instance(capture, own=None):
+    """One tapped instance: its packets as both kinds of record, on its own clock.
+
+    `own` is the workload's address where the capture cannot say (a single peer); a second
+    session of the same pod passes the address the first one found.
+    """
     packets = roles.load_packets(capture)
     t0 = float(packets["ts"].min())
-    return {"t0": t0, "n": int((float(packets["ts"].max()) - t0) // WINDOW_SIZE) + 1,
-            "flow": whole_flows(packets, t0),
-            "role": roles.exchanges(packets, roles.own_address(packets), t0)}
+    own = own or roles.own_address(packets)
+    return {"t0": t0, "n": int((float(packets["ts"].max()) - t0) // WINDOW_SIZE) + 1, "own": own,
+            "flow": whole_flows(packets, t0), "role": roles.exchanges(packets, own, t0)}
 
 
 def fit(role, symbols, learned):
@@ -86,7 +90,7 @@ def session_rows(session, train_seconds, second=None):
         if not labels:
             continue
         instances = {label: load_instance(here[label]) for label in labels}
-        others = {label: load_instance(there[label]) for label in labels if label in there}
+        others = {label: load_instance(there[label], instances[label]["own"]) for label in labels if label in there}
         for (source, symbols), fitted in role_models(role, instances, train_seconds).items():
             for label, (model, cutoff) in fitted.items():
                 common = {"role": role.name, "label": label, "source": source, "symbols": symbols,

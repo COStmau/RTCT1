@@ -757,3 +757,55 @@ The verdict stands as written. What it means is narrower than it sounds:
 What follows for the design: the role contract is the quiet half of a detector and needs a
 magnitude that does not clip and a notion of a peer that should not be there. The next rule
 must carry a ceiling on benign alerts for every variant, the incumbent included.
+
+## A contract that can say a conversation left it: a development reading (2026-11-16)
+
+Two of the three misses on the campaign had one cause. The frequency score counts visits to
+learned states, and a trace the machine lacks stops being walked, so it scores *lower*. A
+quantity ten times the learned range was clipped into the top bin; a peer doing something
+never learned added almost nothing. Two changes to `methods/roles.py`, neither read from an
+attack:
+
+- a quantity above the largest value learned is its own symbol, `x`, as zero already is `z`;
+- `role_leaving` counts, over the same 8-second clock, the conversations whose trace the
+  machine lacks. A window is flagged by the frequency score or by this count, each against
+  its own cutoff from the held-out end of the learning stretch.
+
+The rule is `verdicts/leaving.py`, committed in `580e7bdf` before either change was scored.
+It has what the last rule lacked: a ceiling on benign alerts (0.0465) for every variant, no
+privileged incumbent. Both lab sessions had already been read, so this decides nothing.
+
+Same sessions and taps as the entry above (`outputs/leaving.csv`), each machine learned from
+its own tap:
+
+| detector | attacks detected | per round | later benign in alert | second session in alert |
+|---|---|---|---|---|
+| flow, frequency (the live detector) | 28 of 90 | 6, 5, 5, 7, 5 | 0.017 | **0.442** |
+| role, frequency | 18 of 90 | 4, 3, 3, 3, 5 | 0.001 | 0.002 |
+| role, frequency or leaving | **37 of 90** | 8, 6, 7, 7, 9 | 0.042 | **0.010** |
+
+- **Detection doubles and the second session stays quiet.** Ahead of today's detector in
+  every round, with 1% of an unseen benign session in alert against 44%. The rule would
+  name it; a session recorded after this design was frozen has to.
+- **What it now sees:** exfil at the camera 0 to 5 of 5 (the `x` symbol), lateral movement
+  at the camera 0 to 5 of 5 (the foothold calling services it never calls), slow scan at
+  the lidar 2 to 5 of 5, HTTP flood at nginx 3 to 5 of 5 (five unseen clients).
+- **What it still does not:** slow scan and lateral movement at `pod-nginx` (0 of 10) and
+  replay everywhere (1 of 15). The scan of nginx and the replay to the controller do not
+  pass these taps as conversations with the workload; that is the vantage-point gap, not
+  this one.
+- **The 4.2% of later benign in alert is mostly one tap and probably not benign.** 11% at
+  `pod-camera`, against 1.6% on the second session. Its off-contract conversations in
+  "benign" windows fall 32 to 49 seconds after each lateral stage ends, with the symbol that
+  stage produces, past the 30-second margin the judge allows. The lateral stage outruns its
+  label. The recorder has to close that before the next session; the judge is left alone.
+
+**A correction to the entry above.** `own_address` picked the end of a capture seen on most
+packets; with a single peer both ends tie, and on the benign-only session it took the client
+for `pod-nginx`. Every nginx trace of that session was off the machine, which the frequency
+score reads as quiet, so the nginx share of "second session in alert" for the role variants
+was vacuous. A tie is now an error and the second session takes the address the first one
+found. Rerun, `outputs/roles_heldout.csv`: nginx is still 0.000 on the second session, now
+for a reason; own / role is 18 of 90 and pooled / role 14 of 90 (the `x` symbol takes a few
+frequency detections away), and the verdict is unchanged. The sessions do not record a pod's
+address; they should.

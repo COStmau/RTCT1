@@ -40,6 +40,7 @@ also run on their own, as a script or with `-m`.
 | `dev/experiments/benign_control.py` | Benign traffic the machine did not learn from: the rest of a long recording, or a second recording of the same tap, per flow rule and channel. The control the attack sweeps lack. |
 | `dev/experiments/session_score.py` | One continuous recorded session with labelled attacks, learned from its first minutes and scored by every flow rule and channel. Prints the pre-registered verdict on which detector the live monitor runs. |
 | `dev/experiments/roles.py` | Role machines against a tap's own machine on a labelled session: own or pooled learning, crossed with flow or role symbols. Prints the pre-registered verdict, which is meant for a held-out session. |
+| `dev/experiments/leaving.py` | A role contract that also counts the conversations that leave it, against the role's frequency score alone and today's flow detector, on a labelled session with two benign controls. |
 | `dev/experiments/scoreboard.py` | Live sessions in last year's units: labelled attacks detected per tap, latency, and alerts with no attack running. Reads `session-*/events.jsonl`. |
 | `dev/experiments/metrics.py` | One `auroc`, one `detection_at_rate`, one `detection_at_budget`, with the two missing-data policies stated rather than accidental. Imports nothing from the project, so any experiment can use it. |
 

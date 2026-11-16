@@ -8,6 +8,7 @@ recordings, and each instance is judged against it.
     exchanges(packets, own, t0)     what the workload said to each peer, second by second
     ROLES                           the roles, as data: who they are and what their symbols read
     fit_role / role_scores          the pooled machine and an instance scored against it
+    role_leaving                    how many of an instance's conversations left the contract
 
 The unit is an exchange slice: one peer, one service, one second, both directions together,
 with how the connection stood (opened, carried on, closed, reset). It is Zeek's connection
@@ -24,7 +25,7 @@ import pandas as pd
 
 from core.features import WINDOW_SIZE
 from methods.pdfa import ALERGIA_ALPHA, FLOW_COLUMNS, NBINS, TRACE_LEN, learn_pdfa
-from methods.scores import FORGET_SECONDS, WindowedFrequencyScorer
+from methods.scores import FORGET_SECONDS, NoveltyScorer, WindowedFrequencyScorer
 
 ROLE_COLUMNS = FLOW_COLUMNS + ["tcp_syn", "tcp_fin", "tcp_rst"]
 START = "^"                # pads a peer's first traces, so the machine learns how a conversation begins
@@ -66,11 +67,17 @@ def load_packets(path):
 
 
 def own_address(packets):
-    """The tapped workload's address: the one on an end of the most packets."""
-    ends = pd.concat([packets["src_ip"], packets["dst_ip"]]).dropna()
-    if ends.empty:
+    """The tapped workload's address: the one on an end of the most packets.
+
+    A tap with a single peer has two such addresses and no way to tell them apart from the
+    packets; that is an error, and the caller must say which it is.
+    """
+    counts = pd.concat([packets["src_ip"], packets["dst_ip"]]).dropna().value_counts()
+    if counts.empty:
         raise ValueError("No addressed packets to find the workload's own address in.")
-    return ends.value_counts().index[0]
+    if len(counts) > 1 and counts.iloc[0] == counts.iloc[1]:
+        raise ValueError(f"The workload's own address is ambiguous: {counts.index[0]} or {counts.index[1]}.")
+    return counts.index[0]
 
 
 def port_class(port):
@@ -131,6 +138,8 @@ def fit_bins(records, role, nbins=NBINS):
 def _bin(value, edges):
     if value <= 0:
         return "z"                  # nothing that way this second is its own symbol, not a small amount
+    if len(edges) and value > edges[-1]:
+        return "x"                  # more than was ever learned is not the top bin; it is outside the contract
     if len(edges) < 2:
         return "0"
     return str(int(np.clip(np.searchsorted(edges[1:-1], value, side="right"), 0, len(edges) - 2)))
@@ -182,4 +191,24 @@ def role_scores(model, records, t0, n_windows, forget_seconds=FORGET_SECONDS, wi
         window = int((when - t0) // window_size)
         if 0 <= window < n_windows and not value <= scores[window]:
             scores[window], peers[window] = value, peer
+    return scores, peers
+
+
+def role_leaving(model, records, t0, n_windows, forget_seconds=FORGET_SECONDS, window_size=WINDOW_SIZE):
+    """Per window: how many conversations in the clock left the contract, and the last peer to.
+
+    The frequency score counts visits to learned states, so a trace the machine lacks scores
+    lower, not higher. This counts those traces: a quantity beyond the learned range, a
+    service or a connection state never seen, a peer that does not begin as peers begin.
+    NaN and None where the instance exchanged nothing.
+    """
+    scorer = NoveltyScorer(model["pdfa"], forget_seconds)
+    scores, peers = np.full(n_windows, np.nan), [None] * n_windows
+    for when, peer, trace in peer_traces(records, model["role"], model["edges"], model["trace_len"]):
+        value = scorer.score(trace, when - t0)
+        window = int((when - t0) // window_size)
+        if 0 <= window < n_windows:
+            scores[window] = value
+            if scorer.leaves(trace):
+                peers[window] = peer
     return scores, peers

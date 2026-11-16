@@ -1993,6 +1993,8 @@ class RoleChecks(unittest.TestCase):
         packets = self.packets(requests=2, reset_last=True)
         both = pd.concat([packets, self.packets(1).replace("10.0.0.9", "10.0.0.8")])
         self.assertEqual(roles.own_address(both), "10.0.0.1")      # on an end of every packet
+        with self.assertRaises(ValueError):
+            roles.own_address(packets)                               # one peer: either end could be it
         rows = roles.exchanges(packets, "10.0.0.1", 100.0)
         self.assertEqual(rows[["peer", "service", "side", "phase", "packets_in", "packets_out",
                                "bytes_in", "bytes_out"]].values.tolist(),
