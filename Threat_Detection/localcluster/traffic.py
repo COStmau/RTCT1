@@ -6,7 +6,8 @@ Mounted from a ConfigMap into python:3.12-alpine and started as
 
 Benign modes (the lab look-alike): controller, lidar, camera, hardware.
 Benign modes (the general app):     web, api, store, worker, loadgen.
-Attack modes:                       flood-http, flood-udp, flood-tcp, lateral.
+Attack modes:                       flood-http, flood-udp, flood-tcp, lateral,
+                                    beacon, exfil, replay (the later stages of a campaign).
 
 The rates are set so a 60 s recording carries a steady, repetitive pattern per tap, which
 is what the state machine learns. Addresses are Service names, so every request also does
@@ -339,10 +340,47 @@ def lateral(targets="", every=0.5, seconds=40):
         time.sleep(float(every))
 
 
+def beacon(host="nginx", port=80, every=5.0, seconds=40):
+    """A foothold calling home: one small request on a slow, jittered beat, and nothing else."""
+    end = until(seconds)
+    log(f"beacon to {host}:{port} every ~{every}s for {seconds}s")
+    while time.time() < end:
+        try:
+            http_call(host, port, "GET", "/", timeout=2)
+        except Exception:
+            pass
+        time.sleep(float(every) * random.uniform(0.7, 1.3))
+
+
+def exfil(host="robot-controller", port=8080, size=200000, every=0.5, seconds=40):
+    """Data leaving in bulk: large uploads, steadily, over a path that normally carries little."""
+    end, blob, sent = until(seconds), os.urandom(int(size)), 0
+    log(f"exfil to {host}:{port}, {size} bytes every {every}s for {seconds}s")
+    while time.time() < end:
+        try:
+            http_call(host, port, "POST", "/frame", blob, timeout=5)
+            sent += len(blob)
+        except Exception:
+            pass
+        time.sleep(float(every))
+    log(f"sent {sent} bytes")
+
+
+def replay(target="robot-controller", port=7400, every=0.1, burst=3, size=1200, seconds=40):
+    """A hidden second publisher: the lidar's own stream, at its own cadence, sent again."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    address, payload, end = socket.gethostbyname(target), os.urandom(int(size)), until(seconds)
+    log(f"replay -> {target}({address}):{port} for {seconds}s")
+    while time.time() < end:
+        for _ in range(int(burst)):
+            sock.sendto(payload, (address, int(port)))
+        time.sleep(float(every) * random.uniform(0.9, 1.1))
+
+
 MODES = {"controller": controller, "lidar": lidar, "camera": camera, "hardware": hardware,
          "web": web, "api": api, "store": store, "worker": worker, "loadgen": loadgen,
          "flood-http": flood_http, "flood-udp": flood_udp, "flood-tcp": flood_tcp,
-         "lateral": lateral}
+         "lateral": lateral, "beacon": beacon, "exfil": exfil, "replay": replay}
 
 
 def main(argv):

@@ -163,8 +163,8 @@ def _target(spec):
     if spec["kind"] == "scan":
         return ", ".join(spec["targets"])
     if spec["kind"] == "exec":
-        return f"from {spec['from']} to {args.get('targets', '')}"
-    host = args.get("url_host") or args.get("host")
+        return f"from {spec['from']} to {args.get('targets') or args.get('host', '')}"
+    host = args.get("url_host") or args.get("host") or args.get("target")
     return f"{host}:{args.get('port')}" if host else ""
 
 

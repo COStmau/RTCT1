@@ -158,10 +158,11 @@ def render_attack_job(profile, scenario, seconds):
         container = {"name": "attack", "image": IMAGES["netshoot"], "imagePullPolicy": "IfNotPresent",
                      # fast enough to finish inside a recording: most of these addresses
                      # are empty, so wide host groups and a packet-rate floor matter more
-                     # than port count
+                     # than port count. A scan with a `rate` is the slow kind: capped, not floored.
                      "command": ["timeout", str(int(seconds)), "nmap", "-sT", "-Pn", "-n", "-T4",
                                  "--max-retries", "0", "--host-timeout", "5s",
-                                 "--min-hostgroup", "256", "--min-rate", "2000",
+                                 *(["--max-rate", str(spec["rate"])] if spec.get("rate") else
+                                   ["--min-hostgroup", "256", "--min-rate", "2000"]),
                                  "--top-ports", "20", *spec["targets"]]}
         volumes = []
     elif spec["kind"] == "job":

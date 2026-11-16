@@ -263,6 +263,12 @@ and run to the end:
 - `lateral`: a compromised workload connecting to peers and ports it never uses.
 - `sensor-flood`: the lidar stream at about 20x its rate, or a TCP flood on redis in `general`.
 
+The `lab` profile also has the later stages of a staged campaign, each its own scenario so a
+session can run them in order with every stage's span labelled: `slow-scan` (the scan capped at
+20 packets a second), `beacon` (a foothold in the camera calling nginx every few seconds),
+`exfil` (bulk uploads from the camera to the controller) and `replay` (a second pod re-sending
+the lidar's stream at the lidar's own cadence, the sponsor's LiDAR-replay scenario).
+
 Attack traffic only targets the local cluster's addresses.
 
 **Taps.** Each recording runs tcpdump at the same three levels as KUBEDATA:
