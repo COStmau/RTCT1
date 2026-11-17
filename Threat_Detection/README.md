@@ -8,7 +8,7 @@ the project virtualenv: `.venv/bin/python`.
 The provided dataset is not in this repository. What is here is the page built from
 them (`baked_demo/`), and the harness that opens on it and loads your own captures. Pick one:
 
-**1. Look only (no install).** Open `baked_demo/state_machine.html` in a browser. The file is
+**1. Look only (no install).** Open `other/baked_demo/state_machine.html` in a browser. The file is
 self-contained and works offline. It shows the cluster map, the state machine learning, and
 every attack replayed through the detector.
 
@@ -34,13 +34,13 @@ I haven't been able to test this yet.
 
 ```bash
 cd RTCT1/Threat_Detection
-docker build -t rtct-detect .
+docker build -f other/Dockerfile -t rtct-detect .
 docker run --rm -p 127.0.0.1:8765:8765 rtct-detect
 # then open http://127.0.0.1:8765/
 ```
 
 To load your captures, mount the folder and scan it on start:
-`docker run --rm -p 127.0.0.1:8765:8765 -v "$PWD/captures:/data" rtct-detect python viz/serve.py --host 0.0.0.0 --data /data`
+`docker run --rm -p 127.0.0.1:8765:8765 -v "$PWD/captures:/data" rtct-detect python other/viz/serve.py --host 0.0.0.0 --data /data`
 (PowerShell: `-v "${PWD}/captures:/data"`).
 
 If you have no captures of your own, Docker and [k3d](https://k3d.io) can record some from a
@@ -48,10 +48,10 @@ local cluster. See "Collecting new captures" below (macOS and Linux).
 
 The repository is private. Ask Charles to add your GitHub account as a collaborator. Without
 access, the clone asks for a login and then reports that the repository is not found.
-`demo.py` items 1-8 need the dataset itself (`local_paths.py`). Without the dataset, they
+`other/demo.py` items 1-8 need the dataset itself (`other/local_paths.py`). Without the dataset, they
 print a message and skip.
 
-Rebuild the page into `baked_demo/` with `.venv/bin/python viz/bake.py`, on a machine that has
+Rebuild the page into `other/baked_demo/` with `.venv/bin/python other/viz/bake.py`, on a machine that has
 the captures. The script refuses to write a page that still holds a local path.
 
 ## How it fits together
@@ -70,16 +70,29 @@ portable and testable on their own. `core/` may not import `methods/`, `viz/`, `
 nor anything in `dev/` (`experiments`, `verdicts`, `metrics`, `statemachine`).
 
 ```
-core/          the subsystem. This is what goes into the project.
-methods/       the second detection method, a learned automaton.
-viz/           the interactive visualization page.
-convert/       capture files -> the sponsor's packet CSVs.
-dev/           how it was built and judged: experiments, verdicts, tests, design notes.
+subsystem/         the subsystem itself.
+  core/            the four pipeline layers. This is what goes into the project.
+  methods/         the second detection method, a learned automaton.
+  convert/         capture files -> the sponsor's packet CSVs.
+  live/            the live monitor: taps, scoring workers, its own server and dashboard.
+  localcluster/    a local k3d cluster that records new captures; live/ taps it.
+other/             everything around it.
+  viz/             the interactive visualization page and the harness.
+  baked_demo/      that page prebuilt, for a clone with no dataset.
+  demo.py          the menu over the whole subsystem.
+  dev/             how it was built and judged: experiments, verdicts, tests, design notes.
+  outputs/         everything generated.
+  Dockerfile       the harness in a container.
+run.py, requirements.txt and this README stay at the top.
 ```
+
+The file tables below name each file from inside its folder (`core/data_io.py` is
+`subsystem/core/data_io.py`; `viz/page.py` is `other/viz/page.py`). Commands run from this
+folder.
 
 Everything under `dev/` (the measurements, the keep-or-drop
 rules, the unit suite, the progress log and the rearchitecting notes) is mapped in
-[`dev/README.md`](dev/README.md). Nothing outside `dev/` imports from it.
+[`other/dev/README.md`](other/dev/README.md). Nothing outside `dev/` imports from it.
 
 ## What each file is
 
@@ -146,9 +159,9 @@ Build the virtualenv once from the pinned runtime:
 
 ```bash
 cd Threat_Detection
-.venv/bin/python demo.py            # menu
-.venv/bin/python demo.py 2          # one item, no menu
-.venv/bin/python demo.py all        # sweep, ablation, compare, features, then the report
+.venv/bin/python other/demo.py            # menu
+.venv/bin/python other/demo.py 2          # one item, no menu
+.venv/bin/python other/demo.py all        # sweep, ablation, compare, features, then the report
 ```
 
 The menu, in order:
@@ -172,13 +185,13 @@ Items 4-7, 9 and 11 run scripts in `dev/`. In a copy without `dev/`, they print 
 skip. You can also build the page directly:
 
 ```bash
-.venv/bin/python viz/page.py        # interactive page, every steady tap; --vantage pod-nginx opens on it
+.venv/bin/python other/viz/page.py        # interactive page, every steady tap; --vantage pod-nginx opens on it
 ```
 
 The experiments, the tests and the capture diff live in `dev/`. Their commands are in
 `dev/README.md`.
 
-Generated files always go to `Threat_Detection/outputs/`, whatever directory you start from.
+Generated files always go to `Threat_Detection/other/outputs/`, whatever directory you start from.
 After you change the dataset, delete `outputs/capture_manifest.csv`. Otherwise the sweep
 scores the previous inventory.
 
@@ -191,7 +204,7 @@ editing code:
 ```bash
 cd Threat_Detection
 python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once
-.venv/bin/python viz/serve.py --open                                    # or: demo.py 12
+.venv/bin/python other/viz/serve.py --open                                    # or: demo.py 12
 ```
 
 The harness adds no dependencies. The options are `--port`, `--data <folder>` (a folder that
@@ -238,10 +251,10 @@ them like the sponsor's data.
 
 ```bash
 brew install k3d                                       # once; Docker Desktop must be running
-.venv/bin/python localcluster/collect.py up            # the lab look-alike cluster
-.venv/bin/python localcluster/collect.py all --csv     # benign + every attack, 60 s each
-.venv/bin/python viz/serve.py --no-preload --open      # Data tab: Load manifest, root ~/rtct-data/lab
-.venv/bin/python localcluster/collect.py down
+.venv/bin/python subsystem/localcluster/collect.py up            # the lab look-alike cluster
+.venv/bin/python subsystem/localcluster/collect.py all --csv     # benign + every attack, 60 s each
+.venv/bin/python other/viz/serve.py --no-preload --open      # Data tab: Load manifest, root ~/rtct-data/lab
+.venv/bin/python subsystem/localcluster/collect.py down
 ```
 
 **Profiles.** Choose one with `--profile`. Each is a folder holding `k3d.yaml` (the cluster)
@@ -298,14 +311,14 @@ detector (`methods/calibration.py`: one calibration, one set of alert and releas
 nothing else, so a live tap and a replayed recording of it can be checked against each other.
 
 ```bash
-.venv/bin/python localcluster/collect.py up --profile general
-.venv/bin/python live/serve.py --open                         # http://127.0.0.1:8766
+.venv/bin/python subsystem/localcluster/collect.py up --profile general
+.venv/bin/python subsystem/live/serve.py --open                         # http://127.0.0.1:8766
 ```
 
 No cluster is needed to try it: recordings can be played back as if they were taps.
 
 ```bash
-.venv/bin/python live/serve.py --open --replay ~/rtct-data/general/"http-flood attack"/"pcapng files"/pod-api-tcp.pcap --speed 10
+.venv/bin/python subsystem/live/serve.py --open --replay ~/rtct-data/general/"http-flood attack"/"pcapng files"/pod-api-tcp.pcap --speed 10
 ```
 
 One screen:

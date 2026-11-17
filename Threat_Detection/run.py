@@ -5,8 +5,8 @@
 
 The first run makes a virtualenv in .venv beside this file and installs requirements.txt
 into it (a few minutes, once). Every run after that starts at once. Then the harness
-(viz/serve.py) opens in your browser on the baked KUBEDATA page; its Data tab loads your
-own captures. Anything after run.py goes to viz/serve.py:
+(other/viz/serve.py) opens in your browser on the baked KUBEDATA page; its Data tab loads your
+own captures. Anything after run.py goes to other/viz/serve.py:
 
     python3 run.py --data ~/captures     # scan a folder when the page opens
     python3 run.py --port 9000
@@ -67,7 +67,7 @@ def main(argv):
                  "and run this again; check your internet connection.")
     env = dict(os.environ, PYTHONUTF8="1", PYTHONUNBUFFERED="1")
     try:
-        return subprocess.call([str(python), str(HERE / "viz" / "serve.py"), *args],
+        return subprocess.call([str(python), str(HERE / "other" / "viz" / "serve.py"), *args],
                                cwd=str(HERE), env=env)
     except KeyboardInterrupt:
         return 0

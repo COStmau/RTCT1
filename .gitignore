@@ -1,5 +1,5 @@
 # Local CSV paths
-Threat_Detection/local_paths.py
+Threat_Detection/other/local_paths.py
 
 # Python
 __pycache__/
@@ -16,7 +16,7 @@ __pycache__/
 /*.docx
 
 # Generated pages (3 MB, rebuilt by demo.py item 10)
-Threat_Detection/outputs/*.html
+Threat_Detection/other/outputs/*.html
 
 # macOS
 .DS_Store
@@ -29,5 +29,5 @@ Threat_Detection/outputs/*.html
 docs/superpowers/
 
 # Harness working files: uploaded and converted captures
-Threat_Detection/outputs/uploads/
-Threat_Detection/outputs/converted/
+Threat_Detection/other/outputs/uploads/
+Threat_Detection/other/outputs/converted/
