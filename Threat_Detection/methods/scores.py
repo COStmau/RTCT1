@@ -5,8 +5,7 @@ Two questions, both answered here. How unlikely is this trace under the learned 
 (SEQUENT's frequency score), counted either cumulatively or over a trailing ``FORGET_SECONDS``
 clock so a burst expires instead of accumulating forever.
 
-Every score is oriented so higher means more anomalous, the same convention the detectors in
-``detectors`` use.
+For every score higher means more anomalous.
 """
 from collections import Counter, deque
 

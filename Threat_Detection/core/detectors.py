@@ -112,16 +112,16 @@ class Detector:
 
 
 class ZScoreDetector(Detector):
-    """Largest absolute standardized deviation across features. Transparent by design.
+    """Largest absolute standardized deviation across features.
 
-    The baseline is a robust centre and spread -- median and MAD -- not mean and standard
+    The baseline is a robust median and MAD, not mean and standard
     deviation. A captured workload mixes idle web traffic with a few enormous bulk-transfer
     windows, and on the KUBEDATA captures 8 of 47 benign windows at router-any carry the
     entire dynamic range (up to 146 MB against a 50 KB median). A mean/std summary is set by
     those windows, so a held-out window sitting in the dominant quiet mode still lands outside
     the cutoff and a third of normal traffic flags. Median/MAD ignores them.
 
-    Where MAD is 0 -- a feature that is genuinely constant in the reference -- the standard
+    Where MAD is 0, a feature that is constant in the reference, the standard
     deviation is used instead, because a zero divisor would flag every window. `degenerate`
     records which features took that fallback, so the caller can see it rather than infer it.
     """
@@ -154,7 +154,7 @@ class ZScoreDetector(Detector):
         return self
 
     def calibrate(self, held_out_benign):
-        """A design constant, not a fitted quantile: the FSR's 3 sigma, overridden by `threshold`."""
+        """A design constant: the FSR's 3 sigma, overridden by `threshold`."""
         self.cutoff = float(self.threshold)
         return self
 
@@ -221,7 +221,7 @@ class LearnedDetector(Detector):
     quantile cutoff live here so both learned detectors behave identically.
     """
 
-    def _build(self):                      # pragma: no cover - overridden
+    def _build(self):
         raise NotImplementedError
 
     def fit(self, reference):
