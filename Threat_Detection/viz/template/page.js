@@ -1615,7 +1615,553 @@ function demoSlides() {
                         draw: box => slideReplay(box, attack) }] : []),
     ...(forgets ? [{ topic: ["Windowed SEQUENT", `${S.meta.forget_seconds} s forgetting clock`], title: "…then it forgets", source: source(attack), line: `Visits expire after ${S.meta.forget_seconds} s, so the alert clears.`,
                      draw: box => slideForget(box, attack) }] : []),
+    ...(S.playback.captures.some(c => c.new_edges.length || c.new_elements.length) ? [
+      { topic: ["New conversations", "never seen in benign"], title: "What each attack brought with it",
+        line: `The map ${S.meta.vantage} learned, then what each attack added to it.`, draw: slideBrought }] : []),
+    ...(S.playback.captures.length > 1 ? [
+      { topic: ["Likelihood channel", "traces that leave the machine"], title: "Never seen before",
+        line: `One dot per trace at ${S.meta.vantage}. Red: the machine has no path for it.`, draw: slideNovel }] : []),
+    // the payoff needs other taps and at least one attack to compare with benign
+    ...(VANTAGES.length > 1 && S.playback.captures.length > 1 ? [
+      { topic: ["Scorecard", `${VANTAGES.length} taps · each on its own cutoffs`], title: "Every recording, every tap",
+        line: "One strip per recording, one bar per second.", draw: slideMatrix },
+      { topic: ["Where it fires", "number = seconds in alert"], title: "Where each attack is heard",
+        line: "Benign first, then each attack in turn.", draw: slideWhere },
+      ...(B.validation && B.validation.comparison ? [
+        { topic: ["Detector comparison", "same sponsor recordings, same held-out benign"], title: "Loud or quiet: the trade-off",
+          line: "Up: more attack recordings caught. Right: more false alarms on benign.", draw: slideTradeoff }] : []),
+      ...(B.validation && B.validation.session ? [
+        { topic: ["Live monitor", "local k3d cluster · one labelled session"], title: "A live session, attack by attack",
+          line: "The detector the live monitor runs, on a recording with 12 labelled attacks.", draw: slideSession }] : []),
+      { topic: ["Validation", "FSR tests, checked on this page's data"], title: "The requirements, checked",
+        line: "Each tile is computed from the recordings shown.", draw: slideValidation },
+    ] : []),
   ];
+}
+
+// every scenario on the page, benign first, in the order the taps list them
+function demoScenarios() {
+  const seen = [];
+  for (const label of [S.meta.vantage, ...VANTAGES])
+    for (const c of B.vantages[label].playback.captures)
+      if (!seen.includes(c.scenario)) seen.push(c.scenario);
+  return seen;
+}
+
+// short column heads: the level above, the name without its level prefix below
+const tapHead = label => ({ level: B.vantages[label].meta.level, name: label.replace(/^(pod|node|router)-/, "") });
+
+function slideMatrix(box) {
+  const g = svg.append("g");
+  const scenarios = demoScenarios();
+  const byScenario = new Map(scenarios.map(s => [s, new Map(tapRows(s).map(r => [r.label, r]))]));
+  const nameW = Math.min(190, box.w * 0.16), sumW = Math.min(170, box.w * 0.14), headH = 44;
+  const colW = (box.w - nameW - sumW) / VANTAGES.length;
+  const rowH = Math.min(140, (box.h - headH - 40) / scenarios.length);
+  const cx = j => box.x + nameW + j * colW, ry = i => box.y + headH + i * rowH;
+
+  VANTAGES.forEach((label, j) => {
+    const h = tapHead(label), mine = label === S.meta.vantage;
+    g.append("text").attr("class", "t-small t-muted").attr("text-anchor", "middle")
+      .attr("x", cx(j) + colW / 2).attr("y", box.y + 14).text(h.level);
+    g.append("text").attr("class", mine ? "t-title" : null).attr("text-anchor", "middle")
+      .style("fill", mine ? "var(--accent)" : null)
+      .attr("x", cx(j) + colW / 2).attr("y", box.y + 32).text(fit(h.name, colW - 6));
+  });
+
+  const bars = [], badges = [], sums = [];
+  scenarios.forEach((scenario, i) => {
+    const y = ry(i), rows = byScenario.get(scenario), benign = i === 0 && scenario === S.playback.captures[0].scenario;
+    g.append("text").attr("class", "t-title").attr("x", box.x).attr("y", y + rowH / 2 + 2)
+      .style("fill", benign ? "var(--good-ink)" : null).text(fit(scenario, nameW - 10));
+    let hit = 0, judged = 0, alerts = 0;
+    VANTAGES.forEach((label, j) => {
+      const r = rows.get(label), x0 = cx(j) + 4, w = colW - 8, cellH = rowH - 12;
+      g.append("rect").attr("x", x0).attr("y", y + 2).attr("width", w).attr("height", cellH).attr("rx", 8)
+        .style("fill", "var(--surface)").style("stroke", "var(--ring)");
+      if (!r) return;
+      judged += r.blind ? 0 : 1;
+      if (r.alerts) { hit += 1; alerts += r.alerts; }
+      const ws = r.v.meta.window_size, span = Math.max(r.end - r.begin, ws);
+      const bx = t => x0 + 6 + (t - r.begin) / span * (w - 12);
+      const bandY = y + 2 + cellH * 0.3, bandH = cellH * 0.4;
+      g.append("g").selectAll("rect").data(r.shown).join("rect")
+        .attr("class", d => d.status === "nodata" ? "band-empty" : null)
+        .attr("x", d => bx(Math.max(r.begin, d.index * ws)))
+        .attr("width", d => Math.max(bx(Math.min(r.end, (d.index + 1) * ws)) - bx(Math.max(r.begin, d.index * ws)) - 0.8, 0.8))
+        .attr("y", bandY).attr("height", bandH).attr("rx", 1).style("fill", BAND_FILL.sequent)
+        .each(function (d) { bars.push({ el: this, row: i, at: ((d.index + 0.5) * ws - r.begin) / span }); });
+      // the cell's verdict, once its strip has played: a red frame for an alert
+      const badge = g.append("g").attr("opacity", 0);
+      if (r.alerts) {
+        badge.append("rect").attr("x", x0).attr("y", y + 2).attr("width", w).attr("height", cellH).attr("rx", 8)
+          .style("fill", "none").style("stroke", "var(--critical)").style("stroke-width", 3);
+        badge.append("text").attr("class", "t-small").attr("x", x0 + w - 8).attr("y", y + 2 + cellH - 6)
+          .attr("text-anchor", "end").style("fill", "var(--critical)").style("font-weight", 700).text("ALERT");
+      } else if (r.blind) {
+        badge.append("text").attr("class", "t-small t-muted").attr("x", x0 + w / 2).attr("y", y + 2 + cellH - 6)
+          .attr("text-anchor", "middle").text("no verdict");
+      }
+      badges.push({ el: badge, row: i });
+    });
+    // the row's verdict at the right
+    const sum = g.append("g").attr("opacity", 0).attr("transform", `translate(${box.x + box.w - sumW + 16},${y + rowH / 2})`);
+    const quiet = alerts === 0;
+    sum.append("text").attr("y", 4).style("font-size", "34px").style("font-weight", 700)
+      .style("fill", benign ? (quiet ? "var(--good-ink)" : "var(--critical)") : quiet ? "var(--muted)" : "var(--critical)")
+      .text(benign ? (quiet ? "0" : alerts) : `${hit}/${judged}`);
+    sum.append("text").attr("class", "t-small t-muted").attr("y", 22)
+      .text(benign ? "alert windows · sets cutoff" : quiet ? "taps alert · missed" : "taps alert");
+    sums.push({ el: sum, row: i });
+  });
+
+  const legendY = ry(scenarios.length) + 18;
+  const swatch = fill => item => item.append("rect").attr("x", 0).attr("y", -9).attr("width", 18).attr("height", 9)
+    .attr("rx", 2).style("fill", fill);
+  legendRow(g.append("g").attr("transform", `translate(${box.x + nameW + 4},${legendY})`), [
+    ["quiet second", swatch("var(--surface-2)")], ["flagged", swatch("var(--warning)")],
+    [`alert: ${S.meta.persistence}+ in a row`, swatch("var(--critical)")], ["clock warming up", swatch("var(--grid)")],
+  ], box.w - nameW - sumW);
+
+  // rows sweep in one after another; each row's verdicts land as its sweep ends
+  const sweep = 1.8, stagger = 0.7;
+  demoTimeline({
+    duration: (scenarios.length - 1) * stagger + sweep + 1.2,
+    render: t => {
+      for (const b of bars) b.el.style.opacity = ramp(t, b.row * stagger + b.at * sweep, 0.12);
+      for (const b of badges) b.el.attr("opacity", ramp(t, b.row * stagger + sweep, 0.3));
+      for (const s of sums) s.el.attr("opacity", ramp(t, s.row * stagger + sweep + 0.2, 0.3));
+    },
+  });
+}
+
+// The FSR tests this page's own data can answer, one tile each: the numbers are counted here
+// from the bundle (the conversion diff's counts come with the KUBEDATA bundle when it was run).
+function validationChecks() {
+  const scenarios = demoScenarios(), held = S.playback.captures[0].scenario;
+  const attacks = scenarios.filter(s => s !== held).map(s => {
+    const rows = tapRows(s);
+    return { scenario: s, taps: rows.filter(r => r.alerts).length };
+  });
+  // every window of every recording at every tap, for the benign count and the persistence rule
+  let benignWindows = [], onsets = 0, early = 0, bursts = 0, silent = 0;
+  for (const label of VANTAGES) {
+    const v = B.vantages[label], p = v.meta.persistence;
+    for (const c of v.playback.captures) {
+      const w = c.windows;
+      if (c.scenario === held) benignWindows = benignWindows.concat(w.filter(x => x.status !== "nodata"));
+      let run = 0, alerted = false;
+      w.forEach((x, i) => {
+        if (x.alert && !(i > 0 && w[i - 1].alert)) {
+          onsets += 1;
+          if (i < p - 1 || !d3.range(i - p + 1, i + 1).every(j => w[j].flagged)) early += 1;
+        }
+        if (x.flagged) { run += 1; alerted = alerted || x.alert; }
+        if (!x.flagged || i === w.length - 1) {
+          if (run && !alerted) { if (run < p) bursts += 1; else silent += 1; }
+          run = 0; alerted = false;
+        }
+      });
+    }
+  }
+  const benignAlerts = benignWindows.filter(x => x.alert).length;
+  const conversion = B.validation && B.validation.conversion;
+  // the live session's first alert per attack (detection leg only; the response leg is 404's)
+  const session = B.validation && B.validation.session;
+  const latency = session ? [...d3.group(session.attacks.filter(a => a.detected), a => a.attack).values()]
+    .map(rows => d3.min(rows, a => a.latency)) : null;
+  return [
+    { fsr: "3.2.1.1 · 3.2.1.5", name: "Attack coverage", rule: "every attack alerts at 1+ tap",
+      big: `${attacks.filter(a => a.taps).length}/${attacks.length}`, unit: "attacks caught",
+      pass: attacks.length > 0 && attacks.every(a => a.taps), kind: "coverage", attacks },
+    { fsr: "3.2.1.4", name: "False positives", rule: "alerts under 10% of held-out benign",
+      big: `${benignAlerts}`, unit: `alert windows · ${fmt(benignWindows.length)} judged`,
+      note: "held-out benign · it sets the cutoff",
+      pass: benignWindows.length > 0 && benignAlerts / benignWindows.length < 0.1, kind: "benign", windows: benignWindows },
+    { fsr: "3.1.2", name: "Magnitude and duration", rule: `under ${S.meta.persistence} windows never alerts; ${S.meta.persistence}+ alerts`,
+      big: `${onsets - early}/${onsets}`, unit: `alerts after ${S.meta.persistence}+ in a row`,
+      note: `${fmt(bursts)} shorter bursts never alerted`,
+      pass: onsets > 0 && early === 0 && silent === 0, kind: "persistence" },
+    ...(latency && latency.length ? [{ fsr: "3.2.1.6", name: "Detection latency", rule: "alert within 10 s of the attack (goal 5 s)",
+      big: `${f1(d3.max(latency))} s`, unit: `slowest first alert · median ${f1(d3.median(latency))} s`,
+      note: `live session · ${latency.length} attacks caught`,
+      pass: d3.max(latency) < 10, kind: "latency", latency }] : []),
+    ...(conversion ? [{ fsr: "3.2.3.1.1", name: "Capture conversion", rule: "rows from pcaps match the sponsor CSVs",
+      big: `${conversion.cells_differ}`, unit: `cells differ in ${conversion.captures} captures`,
+      note: conversion.short ? `${conversion.short} cut short: a zero-filled tail` : "",
+      pass: conversion.cells_differ === 0, kind: "conversion", conversion }] : []),
+  ];
+}
+
+function slideValidation(box) {
+  const checks = validationChecks();
+  const cards = d3.select("#demo-cards").attr("class", "demo-cards demo-valid")
+    .style("top", `${box.y}px`).style("height", `${box.h - 10}px`)
+    .style("grid-template-columns", `repeat(${checks.length}, minmax(0, 1fr))`);
+  cards.html(checks.map((c, i) => `
+    <div class="demo-card v-tile" data-i="${i}">
+      <div class="demo-k">FSR ${c.fsr}</div>
+      <div class="v-name">${c.name}</div>
+      <div class="v-art" id="v-art-${i}"></div>
+      <div class="v-big">${c.big}</div>
+      <div class="v-unit">${c.unit}</div>
+      ${c.note ? `<div class="demo-count">${c.note}</div>` : ""}
+      <div class="v-rule">${c.rule}</div>
+      <div class="v-stamp ${c.pass ? "pass" : "fail"}">${c.pass ? "✓ PASS" : "✕ NOT MET"}</div>
+    </div>`).join(""));
+  const reveals = [];   // [element, start time] for each piece that fades in on the slide's clock
+  checks.forEach((c, i) => {
+    const art = cards.select(`#v-art-${i}`), t0 = i * 0.9;
+    const width = art.node().clientWidth || 260;
+    if (c.kind === "coverage") {
+      art.html(c.attacks.map(a => `<div class="v-row"><span class="v-dot ${a.taps ? "hit" : ""}"></span>${a.scenario}
+        <b>${a.taps ? `${a.taps} tap${a.taps === 1 ? "" : "s"}` : "missed"}</b></div>`).join(""));
+      art.selectAll(".v-row").each(function (d, k) { reveals.push([this, t0 + 0.3 + k * 0.25]); });
+    } else {
+      // a grid of squares: benign windows, or captures converted
+      const items = c.kind === "benign" ? c.windows.map(w => w.alert ? "var(--critical)" : w.flagged ? "var(--warning)" : "var(--surface-2)")
+        : c.kind === "conversion" ? d3.range(c.conversion.captures).map(k => k < c.conversion.captures - c.conversion.short ? "var(--good)" : "var(--warning)")
+        : null;
+      if (c.kind === "latency") {
+        // each attack's first alert on a 0-10 s line, the 5 s goal marked
+        const s = art.append("svg").attr("width", width).attr("height", 70);
+        const x = d3.scaleLinear().domain([0, 10]).range([8, width - 12]);
+        s.append("rect").attr("x", x(0)).attr("y", 30).attr("width", x(10) - x(0)).attr("height", 4).attr("rx", 2).style("fill", "var(--surface-2)");
+        s.append("line").attr("x1", x(5)).attr("x2", x(5)).attr("y1", 14).attr("y2", 48).style("stroke", "var(--muted)").style("stroke-dasharray", "3 3");
+        s.append("text").attr("class", "t-small t-muted").attr("x", x(5)).attr("y", 10).attr("text-anchor", "middle").text("goal 5 s");
+        s.append("text").attr("class", "t-small t-muted").attr("x", x(10)).attr("y", 62).attr("text-anchor", "end").text("10 s");
+        s.append("text").attr("class", "t-small t-muted").attr("x", x(0)).attr("y", 62).text("0");
+        const sorted = c.latency.slice().sort(d3.ascending);
+        s.selectAll("circle").data(sorted).join("circle").attr("cx", d => x(Math.min(d, 10)))
+          .attr("cy", (d, k) => 32 + (k % 2 ? 9 : -9)).attr("r", 5).style("fill", "var(--critical)")
+          .each(function (d, k) { reveals.push([this, t0 + 0.3 + k * 0.08]); });
+      } else if (items) {
+        const n = items.length, cols = Math.ceil(Math.sqrt(n * 2.4)), cell = Math.min(16, (width - 4) / cols);
+        const s = art.append("svg").attr("width", cols * cell).attr("height", Math.ceil(n / cols) * cell);
+        s.selectAll("rect").data(items).join("rect").attr("x", (d, k) => (k % cols) * cell)
+          .attr("y", (d, k) => Math.floor(k / cols) * cell).attr("width", cell - 1.5).attr("height", cell - 1.5)
+          .attr("rx", 2).style("fill", d => d)
+          .each(function (d, k) { reveals.push([this, t0 + 0.3 + k / n * 0.9]); });
+      } else {
+        // the rule itself: a short burst stays quiet, three in a row raise the alert
+        const p = S.meta.persistence, cell = 22;
+        const lanes = [[...d3.range(p - 1).map(() => "var(--warning)"), "var(--surface-2)", "var(--surface-2)"],
+                       [...d3.range(p).map(() => "var(--warning)"), "var(--critical)", "var(--critical)"]];
+        const s = art.append("svg").attr("width", (p + 2) * cell + 70).attr("height", 2 * cell + 16);
+        lanes.forEach((lane, li) => {
+          s.append("g").selectAll("rect").data(lane).join("rect").attr("x", (d, k) => k * cell)
+            .attr("y", li * (cell + 12)).attr("width", cell - 3).attr("height", cell - 3).attr("rx", 3)
+            .style("fill", d => d).each(function (d, k) { reveals.push([this, t0 + 0.3 + li * 0.6 + k * 0.12]); });
+          const tag = s.append("text").attr("class", "t-small").attr("x", lane.length * cell + 6)
+            .attr("y", li * (cell + 12) + cell * 0.65).style("font-weight", 700)
+            .style("fill", li ? "var(--critical)" : "var(--muted)").text(li ? "alert" : "quiet");
+          reveals.push([tag.node(), t0 + 0.3 + li * 0.6 + lane.length * 0.12]);
+        });
+      }
+    }
+  });
+  const tiles = cards.selectAll(".v-tile"), stamps = cards.selectAll(".v-stamp"), bigs = cards.selectAll(".v-big");
+  const last = (checks.length - 1) * 0.9 + 2.2;
+  demoTimeline({
+    duration: last + 0.8,
+    render: t => {
+      tiles.style("opacity", (d, i) => ramp(t, i * 0.9, 0.35));
+      bigs.style("opacity", (d, i) => ramp(t, i * 0.9 + 1.3, 0.3));
+      stamps.style("opacity", (d, i) => ramp(t, i * 0.9 + 1.8, 0.2))
+        .style("transform", (d, i) => `scale(${1.6 - 0.6 * ramp(t, i * 0.9 + 1.8, 0.2)}) rotate(-6deg)`);
+      for (const [el, at] of reveals) el.style.opacity = ramp(t, at, 0.15);
+    },
+  });
+}
+
+// the full map with every attack's new addresses and conversations added; one attack at a
+// time is shown, dashed red, on top of what benign taught the machine
+function slideBrought(box) {
+  const caps = S.playback.captures;
+  const owner = new Map();   // element id or edge key -> recordings that brought it
+  const claim = (key, i) => owner.set(key, [...(owner.get(key) || []), i]);
+  const pods = [], services = [], external = [], edges = [];
+  caps.forEach((c, i) => {
+    for (const e of c.new_elements) {
+      if (!owner.has(e.id)) (e.kind === "pod" ? pods : e.kind === "service" ? services : external).push(e);
+      claim(e.id, i);
+    }
+    for (const e of c.new_edges) {
+      const key = `${e.src}|${e.dst}`;
+      if (!owner.has(key)) edges.push({ src: e.src, dst: e.dst, packets: e.flows, ports: [], new: true });
+      claim(key, i);
+    }
+  });
+  const map = { ...S.cluster, pods: [...S.cluster.pods, ...pods], services: [...S.cluster.services, ...services],
+                external: [...S.cluster.external, ...external], edges: [...S.cluster.edges, ...edges] };
+  const g = svg.append("g").attr("class", "brought");
+  renderCluster(g, map, { ...box, h: box.h - 64 }, { focus: S.meta.vantage });
+  const keyOf = function () {
+    const named = this.getAttribute("data-for");
+    if (named) return named;
+    const d = d3.select(this).datum();
+    return d && d.src ? `${d.src}|${d.dst}` : d && d.id;
+  };
+  const fresh = g.selectAll(".new, text[data-for]").filter(function () { return owner.has(keyOf.call(this)); });
+  // phase 0 is the learned map; then one phase per recording that is not the held-out benign
+  const phases = [{ label: "learned from benign", i: 0 }, ...caps.slice(1).map((c, k) => ({ label: c.scenario, i: k + 1 }))];
+  const cards = d3.select("#demo-cards").style("top", `${box.y + box.h - 6}px`).style("transform", "translateY(-100%)");
+  cards.html(`<div class="demo-chips">${phases.map((p, k) => {
+    const c = caps[p.i], n = k ? c.new_elements.length + c.new_edges.length : 0;
+    return `<span class="${k ? "" : "benign"}">${p.label}<b>${k ? ` · ${n ? `${n} new` : "nothing new"}` : ""}</b></span>`;
+  }).join("")}</div>`);
+  const chips = cards.selectAll(".demo-chips span");
+  const pill = d3.select("#demo-status").attr("hidden", null);
+  const per = 3.4;
+  let shown = -1;
+  demoTimeline({
+    duration: phases.length * per,
+    label: t => phases[Math.min(phases.length - 1, Math.floor(t / per))].label,
+    render: t => {
+      const k = Math.min(phases.length - 1, Math.floor(t / per));
+      if (k !== shown) {
+        shown = k;
+        chips.classed("on", (d, j) => j === k);
+        const c = caps[phases[k].i];
+        pill.attr("class", `status demo-status ${k && (c.new_elements.length || c.new_edges.length) ? "critical" : "good"}`)
+          .html(`<span class="dot"></span>${k ? `${c.new_elements.length} new address${c.new_elements.length === 1 ? "" : "es"} · ${c.new_edges.length} new conversation${c.new_edges.length === 1 ? "" : "s"}` : "the map benign traffic drew"}`);
+      }
+      // the shown attack's new things fade in over the first second of its phase
+      const fade = k ? ramp(t - k * per, 0, 0.8) : 0;
+      fresh.style("opacity", function () { return k && (owner.get(keyOf.call(this)) || []).includes(phases[k].i) ? fade : 0; });
+    },
+  });
+}
+
+// every trace of each recording at this tap as a dot, red when it left the machine
+function slideNovel(box) {
+  const caps = S.playback.captures, g = svg.append("g");
+  const nameW = Math.min(200, box.w * 0.16), sumW = Math.min(180, box.w * 0.15);
+  const gridW = box.w - nameW - sumW, rowGap = 22;
+  const most = d3.max(caps, c => c.traces.length) || 1;
+  // one dot size for every row, so the rows compare by area
+  let dot = 22;
+  const rowsOf = n => Math.ceil(n / Math.floor(gridW / dot));
+  while (dot > 4 && d3.sum(caps, c => rowsOf(c.traces.length) * dot) + rowGap * caps.length > box.h - 30) dot -= 1;
+  const perRow = Math.floor(gridW / dot);
+  const dots = [], sums = [];
+  let y = box.y + 6;
+  caps.forEach((c, i) => {
+    const off = c.traces.filter(tr => tr.fell_off_at !== null && tr.fell_off_at !== undefined).length;
+    const h = Math.max(rowsOf(c.traces.length) * dot, 30);
+    g.append("text").attr("class", "t-title").attr("x", box.x).attr("y", y + Math.min(h, 40) / 2 + 5)
+      .style("fill", i === 0 ? "var(--good-ink)" : null).text(fit(c.scenario, nameW - 10));
+    g.append("text").attr("class", "t-small t-muted").attr("x", box.x).attr("y", y + Math.min(h, 40) / 2 + 20)
+      .text(`${fmt(c.traces.length)} traces`);
+    g.append("g").selectAll("circle").data(c.traces).join("circle")
+      .attr("cx", (d, k) => box.x + nameW + (k % perRow + 0.5) * dot)
+      .attr("cy", (d, k) => y + (Math.floor(k / perRow) + 0.5) * dot).attr("r", dot * 0.38)
+      .style("fill", d => d.fell_off_at !== null && d.fell_off_at !== undefined ? "var(--critical)" : "var(--axis)")
+      .each(function (d, k) { dots.push({ el: this, at: i * 0.6 + k / most * 2.2 }); });
+    const share = c.traces.length ? off / c.traces.length : 0;
+    const sum = g.append("g").attr("opacity", 0).attr("transform", `translate(${box.x + box.w - sumW + 20},${y + Math.min(h, 40) / 2 + 6})`);
+    sum.append("text").style("font-size", "32px").style("font-weight", 700)
+      .style("fill", i === 0 ? "var(--ink-2)" : share > 0.1 ? "var(--critical)" : "var(--ink-2)")
+      .text(`${Math.round(share * 100)}%`);
+    sum.append("text").attr("class", "t-small t-muted").attr("y", 18).text(`${off} of ${c.traces.length} never seen`);
+    sums.push({ el: sum, at: i * 0.6 + 2.4 });
+    y += h + rowGap;
+  });
+  demoTimeline({
+    duration: (caps.length - 1) * 0.6 + 3.2,
+    render: t => {
+      for (const d of dots) d.el.style.opacity = ramp(t, d.at, 0.1);
+      for (const s of sums) s.el.attr("opacity", ramp(t, s.at, 0.3));
+    },
+  });
+}
+
+// every detector on the same sponsor recordings: attack recordings caught against false alarms
+function slideTradeoff(full) {
+  const rows = B.validation.comparison.map(r => ({ ...r, fp: r.benign_windows ? r.benign_alerts / r.benign_windows : 0,
+    machine: r.detector.startsWith("state machine") }));
+  const names = { z_score: "z-score", isolation_forest: "isolation forest", one_class_svm: "one-class SVM" };
+  const w = Math.min(full.w, full.h * 1.9);
+  const box = { x: full.x + (full.w - w) / 2 + 60, y: full.y + 10, w: w - 120, h: full.h - 70 };
+  const g = svg.append("g");
+  const x = d3.scaleLinear().domain([0, Math.max(0.08, d3.max(rows, r => r.fp) * 1.25)]).range([box.x, box.x + box.w]);
+  const total = d3.max(rows, r => r.recordings);
+  const y = d3.scaleLinear().domain([0, total]).range([box.y + box.h, box.y]);
+  // the corner every detector wants: many caught, no false alarms
+  g.append("rect").attr("x", x(0)).attr("y", y(total)).attr("width", x(0.015) - x(0)).attr("height", y(total * 0.75) - y(total))
+    .attr("rx", 8).style("fill", "color-mix(in srgb, var(--good) 14%, transparent)");
+  g.append("text").attr("class", "t-small").attr("x", x(0) + 8).attr("y", y(total) + 16).style("fill", "var(--good-ink)").text("ideal");
+  g.append("g").attr("class", "axis").attr("transform", `translate(0,${box.y + box.h})`)
+    .call(d3.axisBottom(x).ticks(5).tickFormat(d3.format(".0%")).tickSize(4));
+  g.append("g").attr("class", "axis").attr("transform", `translate(${box.x},0)`).call(d3.axisLeft(y).ticks(6).tickSize(4));
+  g.append("g").attr("class", "grid").attr("transform", `translate(${box.x},0)`)
+    .call(d3.axisLeft(y).ticks(6).tickSize(-box.w).tickFormat("")).call(s => s.select(".domain").remove());
+  g.append("text").attr("class", "t-small t-muted").attr("x", box.x + box.w).attr("y", box.y + box.h + 34).attr("text-anchor", "end")
+    .text("held-out benign windows in alert →");
+  g.append("text").attr("class", "t-small t-muted").attr("x", box.x - 8).attr("y", box.y - 10)
+    .text(`↑ attack recordings with an alert, of ${total}`);
+  // the state machine judges only the seconds where a trace ended, so it sees fewer benign windows
+  const stats = rows.find(r => !r.machine), machine = rows.find(r => r.machine);
+  if (stats && machine && stats.benign_windows !== machine.benign_windows)
+    g.append("text").attr("class", "t-small t-muted").attr("x", box.x).attr("y", box.y + box.h + 34)
+      .text(`every detector judged after each attack's first 8 s · benign windows judged: ${stats.benign_windows} statistical · ${machine.benign_windows} state machine`);
+  // two-line labels of dots that sit close together are pushed down until they clear each other
+  const labelAt = new Map();
+  [...rows].sort((a, b) => y(a.caught) - y(b.caught)).forEach(r => {
+    const above = [...labelAt].filter(([o]) => Math.abs(x(o.fp) - x(r.fp)) < 240).map(([, ly]) => ly + 34);
+    labelAt.set(r, Math.max(y(r.caught), ...above));
+  });
+  const marks = rows.map(r => {
+    const m = g.append("g").attr("transform", `translate(${x(r.fp)},${y(r.caught)})`).attr("opacity", 0);
+    const dy = labelAt.get(r) - y(r.caught);
+    m.append("circle").attr("r", r.machine ? 11 : 9)
+      .style("fill", r.machine ? "var(--accent)" : "var(--surface)").style("stroke", r.machine ? "var(--accent)" : "var(--ink-2)")
+      .style("stroke-width", 2.5);
+    m.append("text").attr("class", "t-title halo").attr("x", 16).attr("y", dy - 2)
+      .text(names[r.detector] || r.detector);
+    m.append("text").attr("class", "t-small t-muted halo").attr("x", 16).attr("y", dy + 13)
+      .text(`${r.caught}/${r.recordings} caught · ${r.benign_alerts} false-alarm window${r.benign_alerts === 1 ? "" : "s"}`);
+    return m;
+  });
+  // the never-seen channel's gain, as an arrow from the frequency channel alone
+  const alone = rows.find(r => r.detector === "state machine · frequency"), both = rows.find(r => r.detector.includes("never-seen"));
+  let arrow = null;
+  if (alone && both) {
+    arrow = g.append("line").attr("x1", x(alone.fp) - 30).attr("y1", y(alone.caught) - 14)
+      .attr("x2", x(both.fp) - 30).attr("y2", y(both.caught) + 14)
+      .style("stroke", "var(--accent)").style("stroke-width", 2.5).attr("marker-end", "url(#v-arrow)").attr("opacity", 0);
+    g.append("defs").append("marker").attr("id", "v-arrow").attr("viewBox", "0 0 10 10").attr("refX", 6).attr("refY", 5)
+      .attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto")
+      .append("path").attr("d", "M0,0 L10,5 L0,10 z").style("fill", "var(--accent)");
+  }
+  const order = rows.map((r, i) => i).sort((a, b) => rows[a].machine - rows[b].machine);
+  demoTimeline({
+    duration: order.length * 0.7 + 1.4,
+    render: t => {
+      order.forEach((i, k) => marks[i].attr("opacity", ramp(t, k * 0.7, 0.35)));
+      if (arrow) arrow.attr("opacity", ramp(t, order.length * 0.7, 0.4));
+    },
+  });
+}
+
+// the labelled live session: each tap against each attack, in the order they ran
+function slideSession(box) {
+  const { attacks, benign } = B.validation.session;
+  const taps = [...new Set(attacks.map(a => a.tap))];
+  const order = [...new Set(attacks.map(a => a.attack))].sort((a, b) => a - b);
+  const kindOf = new Map(attacks.map(a => [a.attack, a.scenario]));
+  const kinds = [...new Set(order.map(i => kindOf.get(i)))];
+  const color = d3.scaleOrdinal(kinds, ["var(--s2)", "var(--s7)", "var(--s5)", "var(--s3)", "var(--s4)", "var(--s1)"]);
+  const at = new Map(attacks.map(a => [`${a.tap}|${a.attack}`, a]));
+  // an attack counts once: its first newly raised alert at any tap
+  const first = order.map(i => d3.min(attacks.filter(a => a.attack === i && a.detected), a => a.latency));
+  const caught = first.filter(v => v !== undefined);
+  const benignShare = d3.sum(benign, b => b.alerts) / Math.max(d3.sum(benign, b => b.windows), 1);
+  const statW = Math.min(250, box.w * 0.2), nameW = 130, fpW = 110;
+  const gridW = box.w - statW - nameW - fpW - 30;
+  const colW = gridW / order.length, headH = 54;
+  const rowH = Math.min(52, (box.h - headH - 70) / taps.length);
+  const g = svg.append("g");
+  const cx = j => box.x + nameW + j * colW;
+  const cells = [];
+  order.forEach((i, j) => {
+    g.append("rect").attr("x", cx(j) + 2).attr("y", box.y).attr("width", colW - 4).attr("height", 8).attr("rx", 3)
+      .style("fill", color(kindOf.get(i)));
+    g.append("text").attr("class", "t-small t-muted").attr("text-anchor", "middle").attr("x", cx(j) + colW / 2)
+      .attr("y", box.y + 24).text(`#${j + 1}`);
+    const mark = g.append("text").attr("text-anchor", "middle").attr("x", cx(j) + colW / 2).attr("y", box.y + 44)
+      .style("font-weight", 700).style("font-size", "14px")
+      .style("fill", first[j] !== undefined ? "var(--good-ink)" : "var(--critical)")
+      .text(first[j] !== undefined ? `${f1(first[j])} s` : "missed").attr("opacity", 0);
+    cells.push({ el: mark, j: j + 0.5 });
+  });
+  taps.forEach((tap, k) => {
+    const y = box.y + headH + k * rowH;
+    g.append("text").attr("x", box.x).attr("y", y + rowH / 2 + 4).text(fit(tap, nameW - 8));
+    order.forEach((i, j) => {
+      const a = at.get(`${tap}|${i}`);
+      const r = g.append("rect").attr("x", cx(j) + 3).attr("y", y + 3).attr("width", colW - 6).attr("height", rowH - 6).attr("rx", 5)
+        .style("fill", !a ? "none" : a.detected ? "var(--critical)" : a.already ? "var(--surface-2)" : "var(--surface)")
+        .style("stroke", !a ? "none" : a.detected ? "var(--critical)" : "var(--ring)")
+        .attr("opacity", 0);
+      cells.push({ el: r, j });
+      if (a && a.already) {
+        const t = g.append("text").attr("class", "t-small t-muted").attr("text-anchor", "middle")
+          .attr("x", cx(j) + colW / 2).attr("y", y + rowH / 2 + 4).text("busy").attr("opacity", 0);
+        cells.push({ el: t, j });
+      }
+    });
+    // how often this tap was in alert on benign traffic
+    const b = benign.find(b => b.tap === tap), share = b ? b.alerts / Math.max(b.windows, 1) : 0;
+    const bx = box.x + nameW + gridW + 14;
+    g.append("rect").attr("x", bx).attr("y", y + rowH / 2 - 5).attr("width", fpW - 50).attr("height", 10).attr("rx", 5)
+      .style("fill", "var(--surface-2)");
+    g.append("rect").attr("x", bx).attr("y", y + rowH / 2 - 5).attr("width", Math.max(2, (fpW - 50) * Math.min(share / 0.2, 1)))
+      .attr("height", 10).attr("rx", 5).style("fill", share > 0.0465 ? "var(--warning)" : "var(--good)");
+    g.append("text").attr("class", "t-small t-muted").attr("x", bx + fpW - 44).attr("y", y + rowH / 2 + 4)
+      .text(`${(share * 100).toFixed(1)}%`);
+  });
+  g.append("text").attr("class", "t-small t-muted").attr("x", box.x + nameW + gridW + 14).attr("y", box.y + 44)
+    .text("benign in alert");
+  const legendY = box.y + headH + taps.length * rowH + 26;
+  const swatch = fill => item => item.append("rect").attr("x", 0).attr("y", -10).attr("width", 18).attr("height", 11)
+    .attr("rx", 3).style("fill", fill).style("stroke", "var(--ring)");
+  legendRow(g.append("g").attr("transform", `translate(${box.x + nameW},${legendY})`), [
+    ...kinds.map(k => [k, swatch(color(k))]),
+    ["new alert raised", swatch("var(--critical)")], ["no new alert", swatch("var(--surface)")],
+    ["busy: already alerting", swatch("var(--surface-2)")],
+  ], gridW + fpW);
+  // the session in three numbers
+  const cards = d3.select("#demo-cards").classed("side", true).style("top", `${box.y}px`).style("width", `${statW}px`);
+  cards.html(`
+    <div class="demo-card"><div class="demo-k">attacks caught</div><div class="demo-big">${caught.length}/${order.length}</div>
+      <div class="demo-count">at 1+ tap, by a newly raised alert</div></div>
+    <div class="demo-card"><div class="demo-k">first alert</div><div class="demo-big">${f1(d3.median(caught))} s</div>
+      <div class="demo-count">median · slowest ${f1(d3.max(caught))} s</div></div>
+    <div class="demo-card"><div class="demo-k">benign windows in alert</div><div class="demo-big">${(benignShare * 100).toFixed(1)}%</div>
+      <div class="demo-count">all ${taps.length} taps pooled</div></div>`);
+  const stats = cards.selectAll(".demo-card");
+  demoTimeline({
+    duration: order.length * 0.35 + 2,
+    render: t => {
+      for (const c of cells) c.el.attr("opacity", ramp(t, c.j * 0.35, 0.25));
+      stats.style("opacity", (d, i) => ramp(t, order.length * 0.35 + i * 0.3, 0.3));
+    },
+  });
+}
+
+// the cluster map once per recording: the taps that alerted on it pulse red
+function slideWhere(box) {
+  const scenarios = demoScenarios();
+  const rowsBy = scenarios.map(s => new Map(tapRows(s).map(r => [r.label, r])));
+  const hits = rowsBy.map(rows => new Map([...rows.values()].filter(r => r.alerts).map(r => [r.label, r.alerts])));
+  const { taps } = renderCluster(svg.append("g"), S.cluster, { ...box, h: box.h - 64 }, { focus: null });
+  const ring = taps.selectAll("g.tap").append("circle").attr("class", "tap-alarm").attr("r", 14);
+  const count = taps.selectAll("g.tap").append("text").attr("class", "t-title halo tap-count")
+    .attr("x", 14).attr("y", -10).style("fill", "var(--critical)");
+  const cards = d3.select("#demo-cards").style("top", `${box.y + box.h - 6}px`).style("transform", "translateY(-100%)");
+  cards.html(`<div class="demo-chips">${scenarios.map((s, i) =>
+    `<span data-i="${i}" class="${i === 0 ? "benign" : ""}">${s}<b></b></span>`).join("")}</div>`);
+  const chips = cards.selectAll(".demo-chips span");
+  chips.select("b").text((d, i) => hits[i].size ? ` · ${hits[i].size} tap${hits[i].size === 1 ? "" : "s"}` : " · quiet");
+  const pill = d3.select("#demo-status").attr("hidden", null);
+  const per = 3.2;
+  let shown = -1;
+  demoTimeline({
+    duration: scenarios.length * per,
+    label: t => scenarios[Math.min(scenarios.length - 1, Math.floor(t / per))],
+    render: t => {
+      const k = Math.min(scenarios.length - 1, Math.floor(t / per));
+      if (k === shown) return;
+      shown = k;
+      const lit = hits[k];
+      taps.selectAll("g.tap").classed("alarm", v => lit.has(v.label)).classed("calm", v => { const r = rowsBy[k].get(v.label); return Boolean(r && !r.alerts && !r.blind); });
+      count.text(v => lit.has(v.label) ? lit.get(v.label) : "");
+      chips.classed("on", (d, i) => i === k);
+      pill.attr("class", `status demo-status ${lit.size ? "critical" : "good"}`)
+        .html(`<span class="dot"></span>${scenarios[k]} · ${lit.size ? `alert at ${lit.size} tap${lit.size === 1 ? "" : "s"}` : "no alert anywhere"}`);
+    },
+  });
 }
 
 function drawSlide() {

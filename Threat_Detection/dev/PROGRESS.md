@@ -809,3 +809,26 @@ found. Rerun, `outputs/roles_heldout.csv`: nginx is still 0.000 on the second se
 for a reason; own / role is 18 of 90 and pooled / role 14 of 90 (the `x` symbol takes a few
 frequency detections away), and the verdict is unchanged. The sessions do not record a pod's
 address; they should.
+
+## The detector comparison judges every detector by the same warm-up (2026-11-17)
+
+`experiments/novelty.py` never lets the state machine flag an attack recording's first
+`FORGET_SECONDS` (its clock is cold there); `experiments/compare.py` let the statistical
+detectors alert in those seconds. Windows on both sides start at the recording's first packet,
+so the comparison was lopsided. `compare.py` now also writes `warm_persistent`, the persistent
+count with those windows blanked on attack recordings (held-out benign is unchanged, as in
+`novelty.py`); the old columns are byte-for-byte the same, so the 403 deck's 42 / 33 / 23 still
+trace to `persistent`. The demo's trade-off slide reads `warm_persistent`. On the 48 attack
+recordings both experiments scored:
+
+| detector | caught, all windows | caught, after the first 8 s | held-out benign windows in alert |
+|---|---|---|---|
+| z-score | 42 | 32 | 18 of 292 |
+| one-class SVM | 33 | 26 | 0 of 292 |
+| isolation forest | 23 | 15 | 0 of 292 |
+| state machine, frequency | | 13 | 0 of 163 |
+| state machine, frequency or never-seen | | 28 | 0 of 163 |
+
+No detector was changed. The sponsor-set caveats of the sliced-flow entry still apply: one
+benign recording per tap, so every count here is an upper bound that mixes the attack with the
+session difference, and the never-seen channel is not what the live monitor runs.

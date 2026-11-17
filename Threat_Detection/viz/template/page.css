@@ -305,6 +305,41 @@ table.taps tbody tr:hover td { background: var(--surface-2); }
 .demo-trace .chip .sw { width: 11px; height: 11px; }
 .demo-arrow { color: var(--muted); font-size: 18px; }
 .demo-frame { fill: none; stroke: var(--ink); stroke-width: 2.5px; }
+/* the scorecard's map: taps that alerted on the recording pulse red, the rest step back */
+.tap .tap-alarm { fill: none; stroke: var(--critical); stroke-width: 3px; opacity: 0; }
+.tap.alarm .tap-alarm { animation: tap-alarm 1.4s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+.tap.alarm circle.tap-dot { fill: var(--critical); stroke: var(--critical); }
+.tap.calm circle.tap-dot { fill: var(--good); stroke: var(--good); }
+.tap .tap-count { font-size: 18px; }
+@keyframes tap-alarm { 0% { transform: scale(.6); opacity: .95; } 100% { transform: scale(2.4); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .tap.alarm .tap-alarm { animation: none; opacity: .8; } }
+/* the validation slide: one tile per FSR test, a stamp lands once its evidence has drawn */
+.demo-cards.demo-valid { display: grid; gap: 18px; align-items: stretch; }
+.v-tile { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 18px 18px; }
+.v-name { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.v-art { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: 8px; margin: 8px 0; }
+.v-art svg { position: static; width: auto; height: auto; max-width: 100%; }
+.v-row { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.v-row b { margin-left: auto; color: var(--critical); font-weight: 650; }
+.v-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--axis); }
+.v-dot.hit { background: var(--critical); box-shadow: 0 0 0 4px color-mix(in srgb, var(--critical) 25%, transparent); }
+.v-big { font-size: 52px; font-weight: 750; line-height: 1; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.v-unit { font-size: 14px; color: var(--ink-2); }
+.v-rule { font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--ring); padding-top: 10px; margin-top: 6px; }
+.v-stamp { align-self: flex-start; margin-top: 10px; font-size: 15px; font-weight: 800; letter-spacing: .06em;
+           padding: 6px 12px; border-radius: 8px; border: 2.5px solid; transform-origin: center; }
+.v-stamp.pass { color: var(--good-ink); border-color: var(--good); background: color-mix(in srgb, var(--good) 12%, var(--surface)); }
+.v-stamp.fail { color: var(--critical); border-color: var(--critical); }
+@media (max-width: 760px) { .demo-cards.demo-valid { grid-template-columns: 1fr 1fr !important; overflow: auto; } }
+/* what an attack brought: its new pods and conversations at full strength */
+.brought .link.new { stroke-opacity: .95; stroke-width: 2.5px; }
+.brought .pod.new, .brought .ext.new, .brought .svc.new { fill: color-mix(in srgb, var(--critical) 28%, var(--surface)); stroke-width: 2px; }
+.demo-chips { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.demo-chips span { font-size: 15px; padding: 8px 14px; border-radius: 999px; background: var(--surface);
+                   border: 1px solid var(--ring); color: var(--muted); transition: all .25s; }
+.demo-chips span b { font-weight: 500; }
+.demo-chips span.on { color: #fff; background: var(--critical); border-color: var(--critical); font-weight: 650; }
+.demo-chips span.benign.on { background: var(--good-ink); border-color: var(--good-ink); }
 
 .controls .dots { display: inline-flex; align-items: center; gap: 6px; }
 .controls .dots button { width: 10px; height: 10px; padding: 0; border: 0; border-radius: 5px;

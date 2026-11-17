@@ -21,9 +21,20 @@ from core.data_io import MANIFEST_NAME, load_manifest, resolve_output
 from core.detectors import REGISTRY, build, flag_stats
 from core.features import DETECTION_FEATURES, load_all_windows, split_reference
 from core.reporting import plot_comparison, print_comparison
+from methods.scores import FORGET_SECONDS, warm_from
 
 # Every registered detector gets compared. Adding one here is the whole change.
 DETECTORS = list(REGISTRY)
+
+
+def warm_persistent(flags, scenario):
+    """Persistent windows of an attack recording past its first FORGET_SECONDS, the windows
+    experiments/novelty.py lets the state machine judge, so the two counts compare. Held-out
+    benign starts mid-recording and keeps every window, as there."""
+    flags = flags.reset_index(drop=True).copy()
+    if scenario != "benign":
+        flags[:warm_from(FORGET_SECONDS)] = False
+    return flag_stats(flags)["persistent"]
 
 
 def compare_detectors(manifest, features=DETECTION_FEATURES):
@@ -47,8 +58,10 @@ def compare_detectors(manifest, features=DETECTION_FEATURES):
                 if target is None:
                     continue
                 for name, detector in fitted.items():
+                    flags = pd.Series(detector.flag(target)).fillna(False).astype(bool)
                     rows.append({"detector": name, "scenario": scenario, "label": label,
-                                 "method": method, **flag_stats(detector.flag(target))})
+                                 "method": method, **flag_stats(flags),
+                                 "warm_persistent": warm_persistent(flags, scenario)})
     return (pd.DataFrame(rows)
             .sort_values(["detector", "label", "method", "scenario"])
             .reset_index(drop=True))

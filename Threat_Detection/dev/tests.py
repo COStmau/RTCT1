@@ -812,6 +812,19 @@ class DetectorComparisonChecks(unittest.TestCase):
                         "every detector must see the same windows")
         self.assertEqual(len(comparison), 2 * 3)  # two scenarios x three detectors
 
+    def test_warm_persistent_ignores_the_first_seconds_of_an_attack_only(self):
+        from experiments import compare
+        from methods.scores import FORGET_SECONDS, warm_from
+        cold = warm_from(FORGET_SECONDS)
+        early = pd.Series([True] * cold + [False] * 10)
+        self.assertEqual(compare.warm_persistent(early, "nginx attack"), 0)
+        self.assertEqual(compare.warm_persistent(early, "benign"),
+                         detectors.flag_stats(early)["persistent"])
+        late = pd.Series([False] * cold + [True] * 4)
+        self.assertEqual(compare.warm_persistent(late, "nginx attack"),
+                         detectors.flag_stats(late)["persistent"])
+        self.assertGreater(compare.warm_persistent(late, "nginx attack"), 0)
+
     def test_chart_name_carries_the_svm_nu(self):
         import inspect
         import core.detectors
@@ -4256,6 +4269,67 @@ class HarnessParityChecks(unittest.TestCase):
 
         self.assertEqual(sorted(harness["vantages"]), ["pod-lidar", "pod-nginx"])
         self.assertEqual(_strip_volatile(harness), _strip_volatile(static))
+
+
+class ConversionCheckChecks(unittest.TestCase):
+    """The validation slide's conversion tile: counts from the pcap diff, nothing without it."""
+
+    def test_counts_cells_and_short_captures(self):
+        import tempfile
+        from viz import page
+        path = Path(tempfile.mkdtemp()) / "pcap_diff.csv"
+        pd.DataFrame({"rows_sponsor": [10, 20, 30], "rows_regen": [10, 20, 25],
+                      "mismatch_cells": [0, 0, 0]}).to_csv(path, index=False)
+        self.assertEqual(page.conversion_check(path),
+                         {"captures": 3, "cells_differ": 0, "same_rows": 2, "short": 1})
+
+    def test_no_diff_no_check(self):
+        import tempfile
+        from viz import page
+        self.assertIsNone(page.conversion_check(Path(tempfile.mkdtemp()) / "pcap_diff.csv"))
+
+    def test_session_keeps_only_the_live_variant(self):
+        import tempfile
+        from viz import page
+        path = Path(tempfile.mkdtemp()) / "session_score.csv"
+        pd.DataFrame([
+            {"label": "pod-a", "rule": "whole", "channel": "frequency", "scenario": "benign",
+             "windows": 100, "alert_windows": 3},
+            {"label": "pod-a", "rule": "whole", "channel": "frequency", "scenario": "scan",
+             "attack": 0, "detected": True, "already_alerting": False, "latency_s": 2.345},
+            {"label": "pod-a", "rule": "sliced", "channel": "novelty", "scenario": "scan",
+             "attack": 0, "detected": False, "already_alerting": True},
+        ]).to_csv(path, index=False)
+        self.assertEqual(page.session_check(path), {
+            "attacks": [{"tap": "pod-a", "scenario": "scan", "attack": 0, "detected": True,
+                         "already": False, "latency": 2.35}],
+            "benign": [{"tap": "pod-a", "windows": 100, "alerts": 3}]})
+
+    def test_comparison_only_on_captures_both_scored(self):
+        import tempfile
+        from viz import page
+        folder = Path(tempfile.mkdtemp())
+        pd.DataFrame([
+            {"detector": "z_score", "label": "t", "method": "tcp", "scenario": "benign", "windows": 10, "persistent": 1, "warm_persistent": 1},
+            {"detector": "z_score", "label": "t", "method": "tcp", "scenario": "x attack", "windows": 10, "persistent": 4, "warm_persistent": 4},
+            {"detector": "z_score", "label": "t", "method": "tcp", "scenario": "y attack", "windows": 10, "persistent": 3, "warm_persistent": 0},
+            {"detector": "z_score", "label": "bulk", "method": "tcp", "scenario": "x attack", "windows": 10, "persistent": 4, "warm_persistent": 4},
+        ]).to_csv(folder / "c.csv", index=False)
+        pd.DataFrame([
+            {"label": "t", "method": "tcp", "scenario": s, "channel": ch, "scored_windows": 8, "persistent": p}
+            for s, ch, p in [("benign", "frequency", 0), ("x attack", "frequency", 0),
+                             ("benign", "either", 0), ("x attack", "either", 2),
+                             ("benign", "novelty", 5), ("x attack", "novelty", 2),
+                             ("y attack", "frequency", 0), ("y attack", "either", 0),
+                             ("y attack", "novelty", 0)]
+        ]).to_csv(folder / "n.csv", index=False)
+        rows = {r["detector"]: r for r in page.comparison_check(folder / "c.csv", folder / "n.csv")}
+        # y attack alerted only in its first seconds, which the state machine never judges
+        self.assertEqual(rows["z_score"], {"detector": "z_score", "caught": 1, "recordings": 2,
+                                           "benign_alerts": 1, "benign_windows": 10})
+        self.assertEqual(rows["state machine · frequency"]["caught"], 0)
+        self.assertEqual(rows["state machine · frequency + never-seen"]["caught"], 1)
+        self.assertEqual(len(rows), 3)
 
 
 class BakedPageChecks(unittest.TestCase):

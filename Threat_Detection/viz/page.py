@@ -169,6 +169,87 @@ def compose(pages, cluster, selected=None, unlearnable=None):
                          for vantage, block in pages.items()}}
 
 
+CONVERSION_CSV = "pcap_diff.csv"    # written by dev/experiments/pcap_diff.py
+
+
+def conversion_check(path=None):
+    """What the last capture-conversion diff found, as counts for the page's validation slide.
+
+    It is about the KUBEDATA captures, so only their bundle carries it. None when the diff has
+    not been run (no CSV).
+    """
+    path = Path(path) if path else resolve_output(CONVERSION_CSV)
+    if not path.exists():
+        return None
+    rows = pd.read_csv(path)
+    same = rows["rows_sponsor"] == rows["rows_regen"]
+    return {"captures": int(len(rows)), "cells_differ": int(rows["mismatch_cells"].sum()),
+            "same_rows": int(same.sum()), "short": int((~same).sum())}
+
+
+SESSION_CSV = "session_score.csv"       # dev/experiments/session_score.py
+SESSION_VARIANT = ("whole", "frequency")  # what the live monitor runs (dev/verdicts/session.py kept it)
+COMPARISON_CSV = "detector_comparison.csv"  # dev/experiments/compare.py
+NOVELTY_CSV = "novelty.csv"               # dev/experiments/novelty.py
+
+
+def session_check(path=None):
+    """The labelled live session, as the live monitor's detector scored it: one row per attack
+    at each tap, and each tap's benign windows. None without the CSV."""
+    path = Path(path) if path else resolve_output(SESSION_CSV)
+    if not path.exists():
+        return None
+    rows = pd.read_csv(path)
+    rows = rows[(rows["rule"] == SESSION_VARIANT[0]) & (rows["channel"] == SESSION_VARIANT[1])]
+    attacks = rows[rows["scenario"] != "benign"]
+    benign = rows[rows["scenario"] == "benign"]
+    return {"attacks": [{"tap": r.label, "scenario": r.scenario, "attack": int(r.attack),
+                         "detected": bool(r.detected), "already": bool(r.already_alerting),
+                         "latency": None if pd.isna(r.latency_s) else round(float(r.latency_s), 2)}
+                        for r in attacks.itertuples()],
+            "benign": [{"tap": r.label, "windows": int(r.windows), "alerts": int(r.alert_windows)}
+                       for r in benign.itertuples()]}
+
+
+def comparison_check(compare_path=None, novelty_path=None):
+    """Each detector on the captures both experiments scored: attack recordings that raised a
+    persistent alert after the first FORGET_SECONDS (the rule the state machine is scored by),
+    and held-out benign windows in alert. The state machine twice: its
+    frequency channel alone, and with the never-seen channel. None without both CSVs."""
+    compare_path = Path(compare_path) if compare_path else resolve_output(COMPARISON_CSV)
+    novelty_path = Path(novelty_path) if novelty_path else resolve_output(NOVELTY_CSV)
+    if not (compare_path.exists() and novelty_path.exists()):
+        return None
+    keys = ["label", "method", "scenario"]
+    novelty = pd.read_csv(novelty_path)
+    stats = pd.read_csv(compare_path).merge(novelty[keys].drop_duplicates(), on=keys)
+    machine = novelty[novelty["channel"].isin(["frequency", "either"])].rename(
+        columns={"scored_windows": "windows"})
+    machine = machine.assign(detector="state machine · " + machine["channel"].map(
+        {"frequency": "frequency", "either": "frequency + never-seen"}))
+    # The state machine never judges an attack's first FORGET_SECONDS; neither does this count.
+    stats = stats.assign(persistent=stats["warm_persistent"])
+    every = pd.concat([stats[["detector", *keys, "windows", "persistent"]],
+                       machine[["detector", *keys, "windows", "persistent"]]])
+    out = []
+    for detector, rows in every.groupby("detector", sort=False):
+        attack, benign = rows[rows["scenario"] != "benign"], rows[rows["scenario"] == "benign"]
+        out.append({"detector": detector, "caught": int((attack["persistent"] > 0).sum()),
+                    "recordings": int(len(attack)), "benign_alerts": int(benign["persistent"].sum()),
+                    "benign_windows": int(benign["windows"].sum())})
+    return out
+
+
+def with_validation(bundle):
+    """The KUBEDATA bundle with what the experiments in outputs/ found, for the demo's last
+    slides: the conversion diff, the labelled live session, the detector comparison. Each is
+    left out when its experiment has not been run."""
+    found = {"conversion": conversion_check(), "session": session_check(),
+             "comparison": comparison_check()}
+    found = {key: value for key, value in found.items() if value}
+    return dict(bundle, validation=found) if found else bundle
+
+
 def trim(bundle, keep):
     """The bundle with per-trace `terms` and `expired` dropped from every vantage but `keep`.
 
@@ -543,6 +624,7 @@ def main(argv=None, manifest=None):
                 or row["scenario"] in inputs.get(row["vantage"], (None, {}))[1])]
     built["source"] = sources.provenance(used, topology.K3S, args.forget, args.allow_bulk,
                                          vantages, [], origin="KUBEDATA manifest")
+    built = with_validation(built)
     out = write_html(built, args.out)
     for vantage, size in vantage_sizes(built).items():
         replays = ("" if vantage == "cluster" else " | held-out benign, " + ", ".join(

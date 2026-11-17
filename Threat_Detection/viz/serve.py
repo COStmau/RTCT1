@@ -104,7 +104,7 @@ class Harness:
     def preload(self):
         """Build today's default page from KUBEDATA, so the harness opens where the demo does."""
         rows = self.manifest_rows()
-        bundle = sources.build(rows, origin="KUBEDATA manifest")
+        bundle = page.with_validation(sources.build(rows, origin="KUBEDATA manifest"))
         with self.lock:
             self.bundle = bundle
         return bundle
