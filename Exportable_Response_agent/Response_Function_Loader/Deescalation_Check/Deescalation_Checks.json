@@ -1,0 +1,10 @@
+{
+    "manual_deescalation": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Deescalation_Check.Manual_Deescalation",
+        "function": "manual_deescalation"
+    },
+    "automated_deescalation": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Deescalation_Check.Auto_Deescalation_And_Retire",
+        "function": "auto_deescalation_and_retire"
+    }
+}

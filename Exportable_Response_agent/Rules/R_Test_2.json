@@ -1,0 +1,110 @@
+{
+  "rule_id": "R_TEST_002",
+  "name": "Suspicious Pod Isolation Test",
+  "description": "Four-tier response: initial detection, baseline restrictions, complete network isolation, and pod deletion.",
+  "enabled": true,
+  "priority": 50,
+
+  "conditions": {
+    "issue_type": "malicious_pod",
+    "location_type": "pod",
+    "minimum_severity": "low"
+  },
+
+  "required_Actions": [
+    "dummy_action",
+    "restrict_ingress_egress_baseline",
+    "isolate_pod",
+    "delete_target_pod"
+  ],
+
+  "required_Validations": [
+    "dummy_validation",
+    "Network_Policy_Check",
+    "validate_pod_uid_deleted"
+  ],
+
+  "required_Escalations": [
+    "severity_reached",
+    "manual_escalation"
+  ],
+
+  "tiers": {
+    "1": {
+      "name": "Initial Response",
+      "action": "dummy_action",
+      "parameters": {},
+      "validation": "dummy_validation",
+      "validation_parameters": {},
+      "verification_delay_seconds": 0,
+      "escalation": "severity_reached",
+      "escalation_parameters": {
+        "Threshold_Severity": "medium"
+      },
+
+      "deescalation_check": "manual_deescalation",
+      "deescalation_check_parameters": {},
+
+      "deescalation_action": null,
+      "deescalation_action_parameters": {}
+    },
+
+    "2": {
+      "name": "Restrict Communications to Baseline",
+      "action": "restrict_ingress_egress_baseline",
+      "parameters": {},
+
+      "validation": "Network_Policy_Check",
+      "validation_parameters": {},
+      "verification_delay_seconds": 0,
+      "escalation": "severity_reached",
+      "escalation_parameters": {
+        "Threshold_Severity": "high"
+      },
+
+      "deescalation_check": "manual_deescalation",
+      "deescalation_check_parameters": {},
+
+      "deescalation_action": "restrict_communications_deescalation",
+      "deescalation_action_parameters": {}
+    },
+
+    "3": {
+      "name": "Restrict All Communications",
+      "action": "isolate_pod",
+      "parameters": {},
+      "validation": "dummy_validation",
+      "validation_parameters": {},
+      "verification_delay_seconds": 0,
+      "escalation": "manual_escalation",
+      "escalation_parameters": {},
+
+      "deescalation_check": "manual_deescalation",
+      "deescalation_check_parameters": {},
+
+      "deescalation_action": "restrict_communications_deescalation",
+      "deescalation_action_parameters": {}
+    },
+
+    "4": {
+      "name": "delete target pod",
+      "action": "delete_target_pod",
+      "parameters": {},
+      "validation": "validate_pod_uid_deleted",
+      "validation_parameters": {},
+      "verification_delay_seconds": 0,
+      "escalation": null,
+      "escalation_parameters": {},
+
+      "deescalation_check": "automated_deescalation",
+      "deescalation_check_parameters": {"terminal_tier": 4},
+
+      "deescalation_action": null,
+      "deescalation_action_parameters": {}
+    }
+  },
+
+  "on_execution_failure": "manual_review",
+  "on_resolution": "begin_recovery",
+  "on_max_escalation": "manual_review"
+}

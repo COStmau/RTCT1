@@ -33,7 +33,13 @@
       "verification_delay_seconds": 0,
 
       "escalation": "manual_escalation",
-      "escalation_parameters": {}
+      "escalation_parameters": {},
+
+      "deescalation_check": "manual_deescalation",
+      "deescalation_check_parameters": {},
+
+      "deescalation_action": null,
+      "deescalation_action_parameters": {}
     },
 
     
@@ -45,7 +51,13 @@
     "validation_parameters": {},
     "verification_delay_seconds": 0,
     "escalation": "manual_escalation",
-    "escalation_parameters": {}
+    "escalation_parameters": {},
+
+    "deescalation_check": "manual_deescalation",
+    "deescalation_check_parameters": {},
+
+    "deescalation_action": "restrict_communications_deescalation",
+    "deescalation_action_parameters": {}
     }
 
   },

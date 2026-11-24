@@ -1,5 +1,5 @@
 from ..Kubernetes_API_calls.Kube_API_calls import (
-    read_namespace_pod,
+    read_namespaced_pod,
     list_network_policies,
     create_network_policy,
     patch_network_policy,
@@ -23,6 +23,7 @@ def restrict_ingress_egress_baseline(issue, Time, parameters,API):
     pod_name = issue["Resource_name"]
 
     exclusion_label = generate_exclusion_label(issue)
+    other_action_label = generate_exclusion_label(issue, "isolate_pod")
     suffix = exclusion_label.rsplit("-", 1)[-1]
     policy_name = f"baseline-{suffix}"
 
@@ -33,14 +34,22 @@ def restrict_ingress_egress_baseline(issue, Time, parameters,API):
         "exclusion_label": exclusion_label,
         "baseline_policy": policy_name,
         "modified_policies": [],
-        "status": "Pending"
+        "pod_uid": None,
+        "status": "Pending",
+        "pod_uid": None,
     }
 
     #Gets the current restrictions on a specific pod:
-    pod_info, error = check_pod_restrictions(issue, Time, parameters, API)
+    pod_info, error = check_pod_restrictions(
+        issue, Time, parameters, API,
+        ignored_exclusion_labels={other_action_label}
+    )
 
     if error:
+        result["status"] = "Failed"
         return result, error
+
+    result["pod_uid"] = pod_info["pod_uid"]
 
     matching_policies = pod_info["matching_policies"]
     pod_labels = pod_info["pod_labels"]
@@ -82,6 +91,11 @@ def restrict_ingress_egress_baseline(issue, Time, parameters,API):
         name = policy_info["name"]
         policy = policy_lookup[name]
 
+        # Never exclude the stronger, deny-all isolation policy.
+        isolation_policy_name = f"isolate-{other_action_label.rsplit('-', 1)[-1]}"
+        if name == isolation_policy_name:
+            continue
+
         matches, error = selector_matches_pod(
             selector=policy.spec.pod_selector,
             pod_labels=pod_labels,
@@ -89,7 +103,8 @@ def restrict_ingress_egress_baseline(issue, Time, parameters,API):
             policy=policy,
             networking_api=API["networking"],
             namespace=namespace,
-            apply=True
+            apply=True,
+            ignored_exclusion_labels={other_action_label}
         )
 
         if error:
@@ -104,6 +119,7 @@ def restrict_ingress_egress_baseline(issue, Time, parameters,API):
         policy_name=policy_name,
         pod_labels=baseline_labels,
         normal_traffic=normal_traffic,
+        higher_priority_exclusion_label=other_action_label,
         apply=True,
         networking_api=API["networking"]
     )
@@ -120,7 +136,7 @@ def restrict_ingress_egress_baseline(issue, Time, parameters,API):
         result["status"] = "Partial Failure"
         return result, error
 
-    pod, error = read_namespace_pod(
+    pod, error = read_namespaced_pod(
         API["core"], pod_name, namespace
     )
 
@@ -141,30 +157,31 @@ def restrict_ingress_egress_baseline(issue, Time, parameters,API):
     return result, None
 
 
-def generate_exclusion_label(issue):
+#Generates a unique exclusion label for the pod based on the issue ID and pod name.
+def generate_exclusion_label(issue, action_name="restrict_ingress_egress_baseline"):
+    """Action-scoped exclusion key for the same issue/Pod/namespace.
+
+    The other Pod action uses this exact generator with its own action_name,
+    so the resulting label keys differ but each action can predict the other's.
+    """
     issue_id = str(issue["Issue_ID"])
     pod_name = str(issue["Resource_name"])
+    namespace = str(issue["Namespace"])
+    rule_id = str(issue.get("Rule_ID") or "no-rule")
 
-    raw_name = f"{issue_id}-{pod_name}-temp-restriction"
-    safe_name = re.sub(
-        r"[^a-z0-9-]", "-", raw_name.lower()
-    ).strip("-")
-
-    # Short hash prevents collisions when truncating
-    suffix = hashlib.sha256(
-        raw_name.encode()
-    ).hexdigest()[:10]
-
+    raw_name = f"{rule_id}-{issue_id}-{namespace}-{pod_name}-{action_name}"
+    safe_name = re.sub(r"[^a-z0-9-]", "-", raw_name.lower()).strip("-")
+    suffix = hashlib.sha256(raw_name.encode()).hexdigest()[:10]
     label_name = f"{safe_name[:52].rstrip('-')}-{suffix}"
-
     return f"response-agent.example.com/{label_name}"
 
-
-def check_pod_restrictions(issue, Time, parameters,API):
+#Check current active pod restrictions
+def check_pod_restrictions(issue, Time, parameters, API,
+                           ignored_exclusion_labels=None):
     namespace = issue["Namespace"]
     pod_name = issue["Resource_name"]
 
-    pod, error = read_namespace_pod(
+    pod, error = read_namespaced_pod(
         API["core"], pod_name, namespace
     )
 
@@ -187,7 +204,10 @@ def check_pod_restrictions(issue, Time, parameters,API):
     for policy in policies.items:
 
         selector = policy.spec.pod_selector
-        matches, error = selector_matches_pod(selector, pod_labels)
+        matches, error = selector_matches_pod(
+            selector, pod_labels,
+            ignored_exclusion_labels=ignored_exclusion_labels
+        )
 
         if error:
             return None, error
@@ -228,7 +248,7 @@ def check_pod_restrictions(issue, Time, parameters,API):
 
     return result, None
 
-
+#Apply's the exclusion label to the pod to prevent it from being selected by existing policies.
 def apply_exclusion_label(issue, API):
     """
     Generates an issue-specific exclusion label and
@@ -244,6 +264,7 @@ def apply_exclusion_label(issue, API):
     """
 
     try:
+        print("Got_to apply exclusion label for issue:", issue["Issue_ID"])
         namespace = issue["Namespace"]
         pod_name = issue["Resource_name"]
 
@@ -251,7 +272,7 @@ def apply_exclusion_label(issue, API):
         exclusion_label = generate_exclusion_label(issue)
 
         # Retrieve target pod
-        pod, error = read_namespace_pod(
+        pod, error = read_namespaced_pod(
             API["core"],
             pod_name,
             namespace
@@ -302,7 +323,7 @@ def apply_exclusion_label(issue, API):
         return None, str(error)
 
 
-
+#Checks if a network policy selector matches a pod's labels and optionally applies an exclusion label to the policy.
 def selector_matches_pod(
     selector,
     pod_labels,
@@ -310,7 +331,8 @@ def selector_matches_pod(
     policy=None,
     networking_api=None,
     namespace=None,
-    apply=False
+    apply=False,
+    ignored_exclusion_labels=None
 ):
     """
     Checks whether a NetworkPolicy selects a pod.
@@ -324,6 +346,7 @@ def selector_matches_pod(
     """
 
     pod_labels = pod_labels or {}
+    ignored_exclusion_labels = set(ignored_exclusion_labels or [])
 
     if selector is None:
         return False, None
@@ -342,6 +365,11 @@ def selector_matches_pod(
         key = expression.key
         operator = expression.operator
         values = expression.values or []
+
+        # Only ignore the other response action's exclusion when discovering
+        # policies to protect. Preserve the real selector in the API patch.
+        if operator == "DoesNotExist" and key in ignored_exclusion_labels:
+            continue
 
         if operator == "In":
             if key not in pod_labels or pod_labels[key] not in values:
@@ -462,7 +490,7 @@ def selector_matches_pod(
         return matches, str(error)
 
 
-
+#Gets normal traffic for a pod. This is a placeholder function and should be replaced with actual logic to retrieve normal traffic data during 404.
 def get_normal_traffic(pod_name, namespace):
     """
     Retrieves normal ingress and egress traffic IPs
@@ -494,14 +522,15 @@ def get_normal_traffic(pod_name, namespace):
     except Exception as error:
         return None, str(error)
 
-
+#Creates the new policy based on the nominal traffic and applies it to the cluster.
 def create_baseline_network_policy(
     namespace,
     policy_name,
     pod_labels,
     normal_traffic,
     apply=False,
-    networking_api=None
+    networking_api=None,
+    higher_priority_exclusion_label=None
 ):
     """
     Create a NetworkPolicy from predefined normal traffic.
@@ -566,7 +595,11 @@ def create_baseline_network_policy(
             },
             "spec": {
                 "podSelector": {
-                    "matchLabels": pod_labels
+                    "matchLabels": pod_labels,
+                    "matchExpressions": ([{
+                        "key": higher_priority_exclusion_label,
+                        "operator": "DoesNotExist"
+                    }] if higher_priority_exclusion_label else [])
                 },
                 "policyTypes": [
                     "Ingress",

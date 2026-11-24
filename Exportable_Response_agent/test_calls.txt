@@ -1,0 +1,27 @@
+py -m Exportable_Response_agent.Response_Orchastrator_Beta
+
+$issue = @{
+    Issue_ID      = '001'
+    Issue_type    = 'traffic_flood'
+    Resource_type = 'pod'
+    Resource_name = 'pod-b'
+    Namespace     = 'network-test'
+    Severity      = 'high'
+    Information   = @{}
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/issues' -Method Post -ContentType 'application/json' -Body $issue
+
+
+kubectl get networkpolicies -n network-test
+
+$manual = @{
+    Issue_ID = '001'
+    Action   = 'escalate'
+} | ConvertTo-Json
+
+
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/manual' -Method Post -ContentType 'application/json' -Body $manual
+
+http://127.0.0.1:8000/docs
+

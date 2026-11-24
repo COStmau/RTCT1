@@ -1,0 +1,6 @@
+{
+    "restrict_communications_deescalation": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Deescalation_Actions.Restrict_Communications_Descalation",
+        "function": "undo_restrict_ingress_egress_baseline"
+    }
+}

@@ -16,7 +16,7 @@ def validate_baseline_policy(issue, Time, parameters, API):
 
     try:
         # Retrieve information from execution result
-        execution_result = issue["Execution_Result"]
+        execution_result = issue["Execution_Result"][str(issue["Current_Step"])]
 
         namespace = execution_result["namespace"]
         policy_name = execution_result["baseline_policy"]

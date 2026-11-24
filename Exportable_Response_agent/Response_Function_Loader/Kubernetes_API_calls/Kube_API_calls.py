@@ -12,7 +12,7 @@ def get_pod_names(vi,namespace="default"): #Get the names of all pods in a speci
     pod_names = [pod.metadata.name for pod in ret[0].items] #Extracts the names of the pods from the list of pod objects
     return pod_names, None #Returns a list of pod names in the specified namespace
 
-def read_namespace_pod(vi,name, namespace="default"): #inspects a specific pod
+def read_namespaced_pod(vi,name, namespace="default"): #inspects a specific pod
 
     return safe_api_call(vi.read_namespaced_pod, name=name, namespace=namespace) #Retrieves the details of a specific pod in the specified namespace and returns the result of the inspection operation
 
@@ -25,16 +25,23 @@ def read_namespaced_pod_status(vi,name, namespace="default"): #Reads the status 
     ret = safe_api_call(vi.read_namespaced_pod_status, name=name, namespace=namespace) #Retrieves the status of a specific pod in the specified namespace
     return ret #Returns the pod status object for the specified pod
 
+def delete_namespaced_deployment(vi, name, namespace="default", body=None):
+    # Deletes a specific deployment in the specified namespace
+    return safe_api_call(
+        vi.delete_namespaced_deployment,
+        name=name,
+        namespace=namespace,
+        body=body
+    )
 
-#Requires further testing: (Currently having issues reading pod logs for Response Agent.)
 def read_pod_log(vi,name, namespace="default"): #Reads the log of a specific pod.
     ret = vi.read_namespaced_pod_log(name=name, namespace=namespace) #Retrieves the log of a specific pod in the specified namespace
     return ret #Returns the log of the specified pod
 
 
-def delete_namespaced_pod(vi, name, namespace="default"): #Deletes a specific pod.
+def delete_namespaced_pod(vi, name, namespace="default",body=None): #Deletes a specific pod.
 
-    return safe_api_call(vi.delete_namespaced_pod, name=name, namespace=namespace) #Deletes a specific pod in the specified namespace and returns the result of the deletion operation
+    return safe_api_call(vi.delete_namespaced_pod, name=name, namespace=namespace, body=body) #Deletes a specific pod in the specified namespace and returns the result of the deletion operation
 
 def list_deployments(vi,namespace="default"): #List deployments in a specific namespace
 
@@ -47,6 +54,10 @@ def read_namespaced_deployment(vi,name, namespace="default"): #inspects a specif
 def patch_namespaced_deployment_scale(vi, name, namespace="default", body=None): #Patches the scale of a specific deployment
 
     return safe_api_call(vi.patch_namespaced_deployment_scale, name=name, namespace=namespace, body=body) #Patches the scale of a specific deployment in the specified namespace and returns the result of the patch operation
+
+def read_namespaced_deployment_scale(vi, name, namespace="default"): #Reads the current scale of a specific deployment
+
+    return safe_api_call(vi.read_namespaced_deployment_scale, name=name, namespace=namespace) #Returns the deployment's scale information
 
 def create_network_policy(vi, namespace="default", body=None): #Creates a new network policy
     
@@ -117,7 +128,7 @@ def add_pod_label(vi, pod_name, namespace, label_key, label_value): #Adds a labe
     :return: Updated pod object
     """
     # Read the current pod object
-    pod = read_namespace_pod(vi, pod_name, namespace="default")
+    pod = read_namespaced_pod(vi, pod_name, namespace=namespace)
     if( pod[0] is None):
         print("Error occurred while reading the pod:", pod[1])
         return pod  # Return the error if reading the pod failed

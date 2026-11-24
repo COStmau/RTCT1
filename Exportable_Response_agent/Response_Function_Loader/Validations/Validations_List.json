@@ -8,5 +8,11 @@
         "module": "Exportable_Response_agent.Response_Function_Loader.Validations.Dummy_Validation",
         "function": "dummy_validation",
         "Description": "test validaiton"
+    },
+    "validate_pod_uid_deleted": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Validations.Pod_Deleted_Check",
+        "function": "validate_pod_uid_deleted",
+        "Description": "validates pod uid is deleted"
     }
+    
 }

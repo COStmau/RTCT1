@@ -98,7 +98,9 @@ def create_issue(issue, Rule_selector,rules, timestamp=None):
         "Validation_Time": None,
         "Manual_Request": None,
         "Manual_Request_Time": None,
-        "Execution_Result": None
+        "Execution_Result": {},
+        "Number_of_tiers_to_deescalate": 0,
+        "Retire_Issue": False
     }
 
     return new_issue, rules

@@ -4,7 +4,7 @@ from .reaction_api import (
     list_lock
 )
 
-
+#Gets all pending API requests and clears the queues. List lock allows for safe access to the list.
 def get_pending_requests():
     """
     Retrieve all pending API requests and clear the queues.
@@ -25,7 +25,7 @@ def get_pending_requests():
     return incoming_issues, manual_requests
 
 
-
+#Test code for get_pending_requests function
 def main():
 
     # Simulate an incoming issue

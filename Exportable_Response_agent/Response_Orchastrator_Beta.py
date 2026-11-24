@@ -9,7 +9,7 @@ import uvicorn
 from pathlib import Path
 
 # Response logic
-from Exportable_Response_agent.Response_logic_functions import *
+from Exportable_Response_agent.Response_logic_functions import initialize_kubernetes
 
 # FastAPI application
 from Exportable_Response_agent.Response_Orchastrator_calling_fuctions.reaction_api import (
@@ -60,8 +60,10 @@ def main():
 
     Escalations = load_functions("Escalations","Escalations_List.json")
 
-    Deescalations = {}
-    #Deescalations = load_functions("Deescalations","Deescalations_List.json")
+    Deescalation_Checks = load_functions("Deescalation_Check","Deescalation_Checks.json")
+
+    Deescalation_Actions = load_functions("Deescalation_Actions","Deescalation_Actions.json")
+
 
     # Initialize rule selector
 
@@ -79,8 +81,8 @@ def main():
     # Start FastAPI
     start_api()
 
-    print("Orchestrator running...")
-
+    print("Up2 Orchestrator running...")
+    i = 0
     while True:
 
         current_time = datetime.now()
@@ -97,7 +99,7 @@ def main():
             current_time
         )
 
-        # Display newly processed issues
+        
 
     
         # 3. Process manual requests
@@ -111,7 +113,8 @@ def main():
                 Actions,
                 Validations,
                 Escalations,
-                Deescalations,
+                Deescalation_Actions,
+                Deescalation_Checks,
                 Active_rules,
                 current_time,
                 apis
@@ -121,6 +124,15 @@ def main():
                 print(f"Issue {ID} error: {error}", flush=True)
 
             issues[ID] = updated_issue
+
+            if updated_issue.get("Retired") is True:
+                del issues[ID]
+
+            i +=1
+            if i % 30 == 0:
+                print("issues: ", issues)
+
+                print("Active_rules: ", Active_rules)
 
 
         time.sleep(1)

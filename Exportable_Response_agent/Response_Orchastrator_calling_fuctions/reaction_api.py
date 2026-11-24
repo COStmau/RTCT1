@@ -31,6 +31,8 @@ class NewIssue(BaseModel):
 class ManualRequest(BaseModel):
     Issue_ID: str
     Action: str = Field(pattern="^(escalate|deescalate)$")
+    Number_of_tiers_to_deescalate: int = Field(default=0, ge=0)
+    Retire_Issue: bool = False
 
 
 # -----------------------------

@@ -2,5 +2,25 @@
     "manual_escalation": {
         "module": "Exportable_Response_agent.Response_Function_Loader.Escalations.Manual_Escalation",
         "function": "manual_escalation"
+    },
+
+    "severity_increase": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Escalations.Severity_Increase",
+        "function": "severity_increase"
+    },
+
+    "severity_reached": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Escalations.Severity_Reached",
+        "function": "severity_reached"
+    },
+
+    "time_elapsed": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Escalations.Time_Elapsed",
+        "function": "time_elapsed"
+    },
+
+    "auto_escalate": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Escalations.Auto_Escalate",
+        "function": "auto_escalate"
     }
 }

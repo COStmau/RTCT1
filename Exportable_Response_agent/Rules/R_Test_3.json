@@ -1,0 +1,68 @@
+
+{
+  "rule_id": "R_TEST_003",
+  "name": "Malicious Deployment Response",
+  "description": "Scales down a malicious deployment and restricts its communications to baseline. Deletes as final action.",
+  "enabled": true,
+  "priority": 50,
+
+  "conditions": {
+    "issue_type": "malicious_deployment",
+    "location_type": "deployment",
+    "minimum_severity": "medium"
+  },
+
+  "required_Actions": [
+    "dummy_action",
+    "restrict_ingress_egress_baseline"
+  ],
+
+  "required_Validations": [
+    "dummy_validation",
+    "network_policy_check"
+  ],
+
+  "tiers": {
+    "1": {
+      "name": "Restrict_Deployment_Communications",
+      "action": "isolate_deployment",
+      "parameters": {},
+
+      "validation": "dummy_validation",
+      "validation_parameters": {},
+      "verification_delay_seconds": 0,
+
+      "escalation": "manual_escalation",
+      "escalation_parameters": {},
+
+      "deescalation_check": "manual_deescalation",
+      "deescalation_check_parameters": {},
+
+      "deescalation_action": null,
+      "deescalation_action_parameters": {}
+    },
+
+    
+    "2": {
+    "name": "Scale Down Deployment",
+    "action": "scale_down_deployment",
+    "parameters": {},
+    "validation": "dummy_validation",
+    "validation_parameters": {},
+    "verification_delay_seconds": 0,
+    "escalation": "manual_escalation",
+    "escalation_parameters": {},
+
+    "deescalation_check": "manual_deescalation",
+    "deescalation_check_parameters": {},
+
+    "deescalation_action": null,
+    "deescalation_action_parameters": {}
+    }
+
+  },
+
+  "on_execution_failure": "manual_review",
+  "on_resolution": "begin_recovery",
+  "on_max_escalation": "manual_review"
+}

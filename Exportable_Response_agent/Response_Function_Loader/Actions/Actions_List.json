@@ -11,5 +11,34 @@
         "module": "Exportable_Response_agent.Response_Function_Loader.Actions.Dummy_Action",
         "function": "dummy_action",
         "description": "Test Action"
+    },
+    
+    "isolate_pod": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Actions.Isolate_Pod",
+        "function": "isolate_pod",
+        "description": "Isolates a pod from network communication."
+    },
+    
+    "delete_target_pod": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Actions.Delete_Target_Pod",
+        "function": "delete_target_pod",
+        "description": "Deletes a target pod."
+    },
+
+    "isolate_deployment": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Actions.Isolate_Deployment",
+        "function": "isolate_deployment",
+        "description": "Isolates a deployment from network communication."
+    },
+    "scale_down_deployment": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Actions.Scale_Deployment_Down",
+        "function": "scale_down_deployment",
+        "description": "Scales a deployment to a specified number of replicas."
+    },
+    "delete_target_deployment": {
+        "module": "Exportable_Response_agent.Response_Function_Loader.Actions.Delete_Target_Deployment",
+        "function": "delete_target_deployment",
+        "description": "Deletes a target deployment."
     }
+
 }
