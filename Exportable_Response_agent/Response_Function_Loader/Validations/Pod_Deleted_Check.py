@@ -11,23 +11,25 @@ def validate_pod_uid_deleted(issue, Time, parameters, API):
     """
 
     try:
-        # Retrieve information from execution result
-        execution_result = issue["Execution_Result"][str(issue["Current_Step"])]
-        
+        # Retrieve current tier's execution result
+        current_step = str(issue["Current_Step"])
+        execution_result = issue["Execution_Result"][current_step]
 
         namespace = execution_result["namespace"]
         pod_uid = execution_result["pod_uid"]
 
-        # List all pods in the namespace and check for the UID
+        # List all pods in the namespace
         pods, error = list_namespace_pods(API["core"], namespace)
+
         if error:
             return None, error
 
+        # Check whether the original pod still exists
         for pod in pods.items:
             if pod.metadata.uid == pod_uid:
-                return False, None  # Pod still exists
+                return False, None
 
-        return True, None  # Pod has been deleted
+        return True, None
 
     except Exception as e:
         return None, str(e)

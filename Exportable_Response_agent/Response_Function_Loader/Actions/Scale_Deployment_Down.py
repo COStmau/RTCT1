@@ -97,6 +97,9 @@ def scale_down_deployment(issue, Time, parameters, API):
         original = scale.spec.replicas
 
         if original is None:
+            original = deployment.spec.replicas
+
+        if original is None:
             result["status"] = "Failed"
             return result, "Could not read the Deployment's current replica count"
 
@@ -163,13 +166,18 @@ def scale_down_deployment(issue, Time, parameters, API):
         )
 
         # Verify requested replica count
-        if updated.spec.replicas != target:
+        verified_replicas = updated.spec.replicas
+
+        if verified_replicas is None:
+            verified_replicas = 0
+
+        if verified_replicas != target:
             result["status"] = "Verification Failed"
             return result, (
                 f"Requested {target} replicas, but the Deployment "
-                f"currently specifies {updated.spec.replicas}"
+                f"currently specifies {verified_replicas}"
             )
-
+        
         # 7. Mark action completed
         result["status"] = "Completed"
         issue["Execution_Status"] = "Completed"

@@ -1,0 +1,5 @@
+Retool logging to include when issues are added
+implement connection test to prove that network tests are running
+Finalize de-escalation commands for rule 3
+Containerize current build and ensure it remains opperational.
+Implement Error handling so it doesn't loop continuasly when it breaks.

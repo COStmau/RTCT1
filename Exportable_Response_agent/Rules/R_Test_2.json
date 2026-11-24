@@ -56,6 +56,7 @@
 
       "validation": "Network_Policy_Check",
       "validation_parameters": {},
+
       "verification_delay_seconds": 0,
       "escalation": "severity_reached",
       "escalation_parameters": {
@@ -73,9 +74,11 @@
       "name": "Restrict All Communications",
       "action": "isolate_pod",
       "parameters": {},
-      "validation": "dummy_validation",
+
+      "validation": "Network_Policy_Check",
       "validation_parameters": {},
       "verification_delay_seconds": 0,
+
       "escalation": "manual_escalation",
       "escalation_parameters": {},
 
@@ -89,10 +92,13 @@
     "4": {
       "name": "delete target pod",
       "action": "delete_target_pod",
+
       "parameters": {},
       "validation": "validate_pod_uid_deleted",
+
       "validation_parameters": {},
       "verification_delay_seconds": 0,
+      
       "escalation": null,
       "escalation_parameters": {},
 

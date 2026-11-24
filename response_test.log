@@ -262,3 +262,321 @@
 2026-11-23 22:00:00,599 - read_namespaced_pod failed: HTTP 404 - Not Found
 2026-11-23 22:00:00,608 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
 2026-11-23 22:00:00,620 - delete_namespaced_network_policy succeeded with arguments: {'name': 'baseline-c6c6982d03', 'namespace': 'network-test'}
+2026-11-24 09:45:21,383 - Action executed
+2026-11-24 09:45:21,393 - Validation executed
+2026-11-24 09:45:22,412 - read_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-6whnc', 'namespace': 'network-test'}
+2026-11-24 09:45:22,416 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:45:22,419 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:45:22,426 - create_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'body': {'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy', 'metadata': {'name': 'baseline-f3f819e0d4', 'namespace': 'network-test'}, 'spec': {'podSelector': {'matchLabels': {'response-agent.example.com/r-test-002-001-network-test-test-deployment-7b8d4c9c-f3f819e0d4': 'true'}, 'matchExpressions': [{'key': 'response-agent.example.com/r-test-002-001-network-test-test-deployment-7b8d4c9c-87444b2b29', 'operator': 'DoesNotExist'}]}, 'policyTypes': ['Ingress', 'Egress'], 'ingress': [{'from': [{'ipBlock': {'cidr': '192.168.1.100/32'}}, {'ipBlock': {'cidr': '192.168.1.101/32'}}]}], 'egress': [{'to': [{'ipBlock': {'cidr': '192.168.1.200/32'}}, {'ipBlock': {'cidr': '10.0.0.50/32'}}]}]}}}
+2026-11-24 09:45:22,431 - read_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-6whnc', 'namespace': 'network-test'}
+2026-11-24 09:45:22,441 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-6whnc', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/r-test-002-001-network-test-test-deployment-7b8d4c9c-f3f819e0d4': 'true'}}}}
+2026-11-24 09:45:22,446 - read_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-6whnc', 'namespace': 'network-test'}
+2026-11-24 09:46:05,472 - read_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-6whnc', 'namespace': 'network-test'}
+2026-11-24 09:46:05,478 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:46:05,482 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:46:05,489 - create_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'body': {'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy', 'metadata': {'name': 'isolate-87444b2b29', 'namespace': 'network-test'}, 'spec': {'podSelector': {'matchLabels': {'response-agent.example.com/r-test-002-001-network-test-test-deployment-7b8d4c9c-87444b2b29': 'true'}}, 'policyTypes': ['Ingress', 'Egress'], 'ingress': [], 'egress': []}}}
+2026-11-24 09:46:05,495 - read_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-6whnc', 'namespace': 'network-test'}
+2026-11-24 09:46:05,510 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-6whnc', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/r-test-002-001-network-test-test-deployment-7b8d4c9c-87444b2b29': 'true'}}}}
+2026-11-24 09:46:05,519 - read_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-6whnc', 'namespace': 'network-test'}
+2026-11-24 09:48:21,591 - read_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-6whnc', 'namespace': 'network-test'}
+2026-11-24 09:48:21,605 - delete_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-6whnc', 'namespace': 'network-test', 'body': {'api_version': None,
+ 'dry_run': None,
+ 'grace_period_seconds': None,
+ 'ignore_store_read_error_with_cluster_breaking_potential': None,
+ 'kind': None,
+ 'orphan_dependents': None,
+ 'preconditions': {'resource_version': None,
+                   'uid': '0c2b168f-940c-41b9-a6fc-3e1d25b29774'},
+ 'propagation_policy': None}}
+2026-11-24 09:48:21,627 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:48:22,639 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:48:22,644 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:48:22,647 - read_namespaced_pod failed: HTTP 404 - Not Found
+2026-11-24 09:48:22,652 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:48:22,658 - delete_namespaced_network_policy succeeded with arguments: {'name': 'isolate-87444b2b29', 'namespace': 'network-test'}
+2026-11-24 09:48:22,662 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:48:22,665 - read_namespaced_pod failed: HTTP 404 - Not Found
+2026-11-24 09:48:22,669 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:48:22,674 - delete_namespaced_network_policy succeeded with arguments: {'name': 'baseline-f3f819e0d4', 'namespace': 'network-test'}
+2026-11-24 09:50:56,744 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:50:56,754 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:50:56,759 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:50:57,769 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:50:57,779 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:50:57,785 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:50:58,794 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:50:58,803 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:50:58,808 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:50:59,817 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:50:59,838 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:50:59,842 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:00,851 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:00,860 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:00,865 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:01,875 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:01,884 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:01,889 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:02,899 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:02,909 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:02,913 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:03,923 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:03,933 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:03,937 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:04,945 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:04,954 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:04,958 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:05,968 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:05,978 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:05,982 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:06,996 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:07,010 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:07,015 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:08,025 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:08,036 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:08,040 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:09,049 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:09,058 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:09,063 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:10,071 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:10,081 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:10,085 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:11,094 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:11,104 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:11,109 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:12,119 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:12,127 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:12,131 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:13,141 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:13,151 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:13,155 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:14,164 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:14,175 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:14,179 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:15,189 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:15,201 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:15,205 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:16,215 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:16,225 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:16,229 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:17,238 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:17,248 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:17,252 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:18,261 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:18,271 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:18,275 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:19,285 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:19,295 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:19,300 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:20,309 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:20,319 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:20,324 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:21,333 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:21,342 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:21,346 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:22,358 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:22,367 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:22,372 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:23,380 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:23,391 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:23,395 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:24,405 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:24,417 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:24,422 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:25,434 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:25,447 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:25,454 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:26,465 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:26,478 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:26,486 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:27,496 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:27,509 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:27,514 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:28,525 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:28,537 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:28,541 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:29,552 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:29,564 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:29,570 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:30,579 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:30,590 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:30,595 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:31,606 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:31,616 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:31,623 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:32,632 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:32,642 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:32,646 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:33,657 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:33,666 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:33,671 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:34,686 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:34,702 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:34,708 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:35,723 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:35,740 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:35,747 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:36,757 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:36,766 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:36,771 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:37,780 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:37,790 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:37,794 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:38,804 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:38,813 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:51:38,818 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:53:25,918 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:53:25,929 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:53:25,932 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:53:25,937 - create_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'body': {'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy', 'metadata': {'name': 'isolate-7544887911', 'namespace': 'network-test'}, 'spec': {'podSelector': {'matchLabels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}, 'policyTypes': ['Ingress', 'Egress'], 'ingress': [], 'egress': []}}}
+2026-11-24 09:53:25,946 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-77d8c', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}}}
+2026-11-24 09:53:25,957 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-7wfmg', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}}}
+2026-11-24 09:53:25,960 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-gswbq', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}}}
+2026-11-24 09:53:25,984 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:53:25,998 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:53:26,021 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:53:26,032 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:53:26,039 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 09:53:26,040 - Validation executed
+2026-11-24 09:53:57,055 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:53:57,059 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:53:57,067 - patch_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test', 'body': {'metadata': {'resourceVersion': '1544'}, 'spec': {'replicas': 0}}}
+2026-11-24 09:53:57,070 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:53:58,114 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:53:58,119 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:53:59,125 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:53:59,130 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:54:00,135 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:54:00,139 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:54:01,144 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:54:01,147 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:54:02,152 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:54:02,155 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:54:03,161 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:54:03,164 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:54:04,169 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:54:04,172 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:54:05,177 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 09:54:05,182 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:08:54,431 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:54,444 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:54,450 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:55,460 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:55,469 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:55,474 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:56,484 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:56,494 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:56,499 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:57,508 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:57,518 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:57,522 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:58,531 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:58,542 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:58,546 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:59,556 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:59,565 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:08:59,570 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:00,579 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:00,588 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:00,593 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:01,604 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:01,614 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:01,618 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:02,628 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:02,637 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:02,642 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:03,651 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:03,660 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:03,665 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:04,676 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:04,685 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:04,691 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:05,700 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:05,710 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:05,714 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:06,723 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:06,733 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:09:06,738 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:12:44,523 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:12:44,536 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:12:44,542 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:12:44,548 - create_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'body': {'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy', 'metadata': {'name': 'isolate-7544887911', 'namespace': 'network-test'}, 'spec': {'podSelector': {'matchLabels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}, 'policyTypes': ['Ingress', 'Egress'], 'ingress': [], 'egress': []}}}
+2026-11-24 10:12:44,558 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-6kp7p', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}}}
+2026-11-24 10:12:44,572 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-h9q9b', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}}}
+2026-11-24 10:12:44,582 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-vxg2r', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}}}
+2026-11-24 10:12:44,599 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:12:44,624 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:12:44,636 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:12:44,648 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:12:44,653 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:12:44,654 - Validation executed
+2026-11-24 10:12:53,661 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:12:53,665 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:12:53,674 - patch_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test', 'body': {'metadata': {'resourceVersion': '862'}, 'spec': {'replicas': 0}}}
+2026-11-24 10:12:53,677 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:12:53,677 - Validation executed
+2026-11-24 10:18:24,794 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:18:24,805 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:18:24,810 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:18:24,816 - create_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'body': {'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy', 'metadata': {'name': 'isolate-7544887911', 'namespace': 'network-test'}, 'spec': {'podSelector': {'matchLabels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}, 'policyTypes': ['Ingress', 'Egress'], 'ingress': [], 'egress': []}}}
+2026-11-24 10:18:24,828 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-7p5qx', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}}}
+2026-11-24 10:18:24,840 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-pdt8d', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}}}
+2026-11-24 10:18:24,851 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-t575f', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}}}
+2026-11-24 10:18:24,872 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:18:24,892 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:18:24,905 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:18:24,920 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:18:24,926 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:18:24,927 - Validation executed
+2026-11-24 10:18:29,935 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:29,938 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:29,956 - patch_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test', 'body': {'metadata': {'resourceVersion': '935'}, 'spec': {'replicas': 0}}}
+2026-11-24 10:18:29,961 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:29,961 - Validation executed
+2026-11-24 10:18:37,970 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:37,973 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:38,979 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:38,982 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:39,988 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:39,991 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:40,997 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:41,001 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:42,006 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:42,010 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:43,015 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:43,019 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:44,024 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:44,028 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:45,033 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:45,036 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:46,041 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:18:46,045 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:26:12,034 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:26:12,047 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:26:12,052 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:26:12,059 - create_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'body': {'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy', 'metadata': {'name': 'isolate-7544887911', 'namespace': 'network-test'}, 'spec': {'podSelector': {'matchLabels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}, 'policyTypes': ['Ingress', 'Egress'], 'ingress': [], 'egress': []}}}
+2026-11-24 10:26:12,070 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-7qxwq', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}}}
+2026-11-24 10:26:12,082 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-djzln', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}}}
+2026-11-24 10:26:12,092 - patch_namespaced_pod succeeded with arguments: {'name': 'test-deployment-7b8d4c9c4f-f5qkg', 'namespace': 'network-test', 'body': {'metadata': {'labels': {'response-agent.example.com/004-test-deployment-temp-restriction-7544887911': 'true'}}}}
+2026-11-24 10:26:12,112 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:26:12,127 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:26:12,166 - list_namespaced_replica_set succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:26:12,180 - list_namespaced_pod succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:26:12,185 - list_namespaced_network_policy succeeded with arguments: {'namespace': 'network-test', 'watch': False}
+2026-11-24 10:26:12,185 - Validation executed
+2026-11-24 10:26:20,192 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:26:20,196 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:26:20,204 - patch_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test', 'body': {'metadata': {'resourceVersion': '966'}, 'spec': {'replicas': 0}}}
+2026-11-24 10:26:20,207 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:26:20,207 - Validation executed
+2026-11-24 10:26:25,214 - read_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:26:25,217 - read_namespaced_deployment_scale succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test'}
+2026-11-24 10:26:25,236 - delete_namespaced_deployment succeeded with arguments: {'name': 'test-deployment', 'namespace': 'network-test', 'body': {'api_version': None,
+ 'dry_run': None,
+ 'grace_period_seconds': None,
+ 'ignore_store_read_error_with_cluster_breaking_potential': None,
+ 'kind': None,
+ 'orphan_dependents': None,
+ 'preconditions': {'resource_version': '1014',
+                   'uid': '5de3c2ed-452b-48e8-be22-c808f6e71c63'},
+ 'propagation_policy': 'Foreground'}}
+2026-11-24 10:26:25,237 - Validation executed

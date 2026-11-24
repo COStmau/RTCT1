@@ -1,8 +1,3 @@
-# Place this in the same module as generate_exclusion_label and selector_matches_pod,
-# or import those helpers from your existing Pod isolation action.
-# Assumes imports: create_network_policy, list_network_policies,
-# patch_namespace_pod, kubernetes.client.rest.ApiException.
-
 
 import hashlib
 
@@ -19,31 +14,50 @@ from ..Kubernetes_API_calls.Kube_API_calls import (
     list_network_policies,
     create_network_policy,
     patch_network_policy,
-    patch_namespace_pod
+    patch_namespace_pod,
+    list_namespace_pods,
+    list_namespace_replicasets
 )
 
 def get_deployment_pods(deployment, API, namespace):
     """Get Pods owned by any ReplicaSet controlled by this Deployment."""
-    replicasets = API["apps"].list_namespaced_replica_set(namespace=namespace).items
+
+    # Retrieve all ReplicaSets in the namespace
+    replicasets, error = list_namespace_replicasets(API["apps"], namespace)
+
+    if error:
+        return None, error
+
+    # Identify ReplicaSets controlled by the Deployment
     rs_uids = {
         rs.metadata.uid
-        for rs in replicasets
+        for rs in replicasets.items
         if any(
-            ref.kind == "Deployment" and ref.uid == deployment.metadata.uid
+            ref.kind == "Deployment"
+            and ref.uid == deployment.metadata.uid
             and ref.controller
             for ref in (rs.metadata.owner_references or [])
         )
     }
 
-    pods = API["core"].list_namespaced_pod(namespace=namespace).items
-    return [
-        pod for pod in pods
+    # Retrieve all Pods in the namespace
+    pods, error = list_namespace_pods(API["core"], namespace)
+
+    if error:
+        return None, error
+
+    # Identify Pods controlled by the Deployment's ReplicaSets
+    deployment_pods = [
+        pod for pod in pods.items
         if any(
-            ref.kind == "ReplicaSet" and ref.uid in rs_uids
+            ref.kind == "ReplicaSet"
+            and ref.uid in rs_uids
             and ref.controller
             for ref in (pod.metadata.owner_references or [])
         )
     ]
+
+    return deployment_pods, None
 
 
 def isolate_deployment(issue, Time, parameters, API):
@@ -75,7 +89,9 @@ def isolate_deployment(issue, Time, parameters, API):
         if exclusion_label in template_labels:
             return result, "Deployment is already labeled for this issue"
 
-        pods = get_deployment_pods(deployment, API, namespace)
+        pods, error = get_deployment_pods(deployment, API, namespace)
+        if error:
+            return result, error
         policies, error = list_network_policies(API["networking"], namespace)
         if error:
             return result, error
@@ -163,7 +179,12 @@ def isolate_deployment(issue, Time, parameters, API):
         result["deployment_template_patched"] = True
 
         # Catch Pods created during the operation from older ReplicaSets.
-        for pod in get_deployment_pods(deployment, API, namespace):
+        new_pods, error = get_deployment_pods(deployment, API, namespace)
+        if error:
+            result["status"] = "Partial Failure"
+            return result, error
+
+        for pod in new_pods:
             error = label_pod(pod)
             if error:
                 result["status"] = "Partial Failure"
@@ -179,7 +200,10 @@ def isolate_deployment(issue, Time, parameters, API):
 
         # Configuration-level check. Full network validation requires an
         # actual traffic test, and continuous reconciliation may be needed.
-        current_pods = get_deployment_pods(updated, API, namespace)
+        current_pods, error = get_deployment_pods(updated, API, namespace)
+        if error:
+            result["status"] = "Verification Failed"
+            return result, error
         current_policies, error = list_network_policies(API["networking"], namespace)
         if error:
             result["status"] = "Verification Failed"

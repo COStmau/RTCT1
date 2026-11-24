@@ -38,6 +38,9 @@ def read_pod_log(vi,name, namespace="default"): #Reads the log of a specific pod
     ret = vi.read_namespaced_pod_log(name=name, namespace=namespace) #Retrieves the log of a specific pod in the specified namespace
     return ret #Returns the log of the specified pod
 
+def list_namespace_replicasets(vi, namespace="default"): # List ReplicaSets in a specific namespace
+
+    return safe_api_call(vi.list_namespaced_replica_set, namespace=namespace, watch=False) # Retrieves a list of all ReplicaSets in the specified namespace
 
 def delete_namespaced_pod(vi, name, namespace="default",body=None): #Deletes a specific pod.
 

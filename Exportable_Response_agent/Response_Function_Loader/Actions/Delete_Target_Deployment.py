@@ -100,11 +100,16 @@ def delete_target_deployment(issue, Time, parameters, API):
 
         current_replicas = scale.spec.replicas
 
+        # Fall back to the Deployment's desired replica count
+        if current_replicas is None:
+            current_replicas = deployment.spec.replicas
+
         if current_replicas is None:
             result["status"] = "Failed"
             return result, "Could not determine current replica count"
 
         result["replicas_at_deletion"] = current_replicas
+
 
         # 4. Optionally require the Deployment to be scaled to zero
         if require_zero and current_replicas != 0:
@@ -143,7 +148,8 @@ def delete_target_deployment(issue, Time, parameters, API):
         delete_options = client.V1DeleteOptions(
             propagation_policy="Foreground",
             preconditions=client.V1Preconditions(
-                uid=uid
+                uid=uid,
+                resource_version=deployment.metadata.resource_version
             )
         )
 

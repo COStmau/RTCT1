@@ -38,7 +38,7 @@
       "deescalation_check": "manual_deescalation",
       "deescalation_check_parameters": {},
 
-      "deescalation_action": null,
+      "deescalation_action": "undo_isolate_deployment",
       "deescalation_action_parameters": {}
     },
 
@@ -46,20 +46,39 @@
     "2": {
     "name": "Scale Down Deployment",
     "action": "scale_down_deployment",
+
     "parameters": {},
     "validation": "dummy_validation",
     "validation_parameters": {},
     "verification_delay_seconds": 0,
+
     "escalation": "manual_escalation",
     "escalation_parameters": {},
 
     "deescalation_check": "manual_deescalation",
     "deescalation_check_parameters": {},
 
+    "deescalation_action": "undo_scale_down_deployment",
+    "deescalation_action_parameters": {}
+    },
+  
+    "3": {
+    "name": "Delete Deployment",
+    "action": "delete_target_deployment",
+    "parameters": {},
+    "validation": "dummy_validation",
+    "validation_parameters": {},
+    "verification_delay_seconds": 0,
+
+    "escalation": "manual_escalation",
+    "escalation_parameters": {},
+
+    "deescalation_check": "automated_deescalation",
+    "deescalation_check_parameters": {"terminal_tier": 3},
+
     "deescalation_action": null,
     "deescalation_action_parameters": {}
     }
-
   },
 
   "on_execution_failure": "manual_review",
